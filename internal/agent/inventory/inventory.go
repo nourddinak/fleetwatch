@@ -4,7 +4,6 @@ package inventory
 import (
 	"context"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -91,16 +90,7 @@ func (c *Collector) Collect(ctx context.Context, roots []string) proto.Inventory
 	// binary in a "Go + React" project) or fills in when the process says nothing.
 	for i := range inv.Processes {
 		p := &inv.Processes[i]
-		if rt := runtimes[p.Project]; rt != "" {
-			switch {
-			case p.Runtime == "", strings.HasPrefix(rt, p.Runtime+" + "):
-				p.Runtime = rt
-			case p.Runtime == "Node.js" && jsOnly[rt]:
-				p.Runtime = rt
-			case backends[p.Runtime] && jsOnly[rt]: // Go binary serving a React build
-				p.Runtime += " + " + rt
-			}
-		}
+		p.Runtime = projects.Combine(p.Runtime, runtimes[p.Project])
 		if p.Runtime == "" && p.Likely {
 			p.Runtime = "Binary"
 		}
@@ -114,12 +104,6 @@ func (c *Collector) Collect(ctx context.Context, roots []string) proto.Inventory
 	c.mu.Unlock()
 	return inv
 }
-
-// backends are process runtimes that can sit behind a JavaScript frontend.
-var backends = map[string]bool{"Go": true, "Rust": true, "Python": true, "PHP": true, "Ruby": true, "Java": true, ".NET": true}
-
-// jsOnly are project runtimes that refine a Node.js process.
-var jsOnly = map[string]bool{"Next.js": true, "Nuxt": true, "Remix": true, "Astro": true, "Angular": true, "Svelte": true, "Vue": true, "React": true}
 
 // LogFiles returns a PM2 app's output files from the latest inventory.
 func (c *Collector) LogFiles(manager, key string) (outLog, errLog string) {
