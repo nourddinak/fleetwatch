@@ -37,7 +37,7 @@ export function Notifications() {
         <FilterBar>
           <SearchInput value={q} onChange={setQ} placeholder="Search notifications…" className="lg:w-64" />
           <Select value={provider} onChange={(e) => setProvider(e.target.value)} className="lg:!w-auto">
-            <option value="all">All providers</option><option value="ntfy">ntfy</option><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="webhook">Webhook</option>
+            <option value="all">All providers</option><option value="ntfy">ntfy</option><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="webhook">Webhook</option><option value="push">Push</option>
           </Select>
           <Select value={event} onChange={(e) => setEvent(e.target.value)} className="lg:!w-auto">
             <option value="all">All events</option>

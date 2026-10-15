@@ -206,6 +206,27 @@ Before a deploy or a reboot, open the server or app and choose **Maintenance…*
 - **When it ends**, on time or with **End now**, one summary alert is sent if anything is still broken, for example "Maintenance on api ended: 2 problem(s) still open". With a webhook, its `event` is `maintenance.ended`.
 - **After that**, alerts work normally again.
 
+### Push notifications (phone and desktop)
+
+The dashboard can send alerts straight to your devices, with no ntfy, Telegram or Discord needed.
+
+1. Open the dashboard on the device, on its `https://` domain. Push needs HTTPS.
+2. Settings → Notifications → **Push notifications** → **Turn on for this device**, and allow notifications.
+3. **Send test**.
+
+On each platform:
+
+- **Android and desktop (Chrome, Edge, Firefox):** works in the browser. Installing the dashboard as an app (browser menu → **Install**) gives it its own window and icon.
+- **iPhone and iPad (iOS 16.4+):** works only in the installed app. Tap Share → **Add to Home Screen**, open Fleetwatch from the home screen, then turn push on there.
+
+How it behaves:
+
+- **Rules:** push follows the same alert rules, cooldown and maintenance windows as the other channels.
+- **Critical alerts** stay on screen until dismissed. A newer alert for the same incident replaces the older one.
+- **Tapping** an alert opens the Incidents page.
+- **Devices:** every device is listed with its last delivery. Remove one there, or with **Turn off on this device**. Devices that uninstall the app or revoke permission are removed automatically.
+- **Signing keys:** the dashboard creates its push signing key (VAPID) on first use and stores the private part encrypted. Messages are encrypted end to end to each device; the browser's push service (Google, Mozilla, Apple) only relays them.
+
 ### Custom webhooks
 
 Settings → Notifications → **Custom webhook** sends every alert as a JSON `POST` to your URL, for n8n, Zapier, Slack workflows, Home Assistant or your own code. The URL and the signing secret are stored encrypted and never shown again.

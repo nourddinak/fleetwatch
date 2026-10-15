@@ -8,7 +8,7 @@ Self-hosted monitoring and control for the apps on your own VPSs. One dashboard 
 - **Logs:** live tail plus 7 days of full-text search.
 - **Metrics:** CPU, RAM, disk and network per server and per app.
 - **Health checks and incidents:** HTTP health checks, and incidents opened automatically for downtime, crash loops, failing checks, high resource use and repeated errors. They resolve themselves when the problem clears.
-- **Alerts** through ntfy, Telegram, Discord or a custom webhook (signed JSON).
+- **Alerts** as push notifications to your phone or desktop (installable app), or through ntfy, Telegram, Discord or a custom webhook (signed JSON).
 - **Domains:** SSL certificate (public and on the server) and domain registration expiry, with alerts 14 days ahead.
 - **API tokens and Prometheus:** read-only tokens for scripts and Grafana, `/metrics` for Prometheus.
 - **Maintenance mode:** pause alerts for a server or app while you deploy; a summary is sent if something is still broken afterwards.

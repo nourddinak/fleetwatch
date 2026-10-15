@@ -104,7 +104,13 @@ func TestChannelsKeepSecrets(t *testing.T) {
 	}
 	views, _ := s.Channels()
 	raw, _ := json.Marshal(views)
-	if strings.Contains(string(raw), "s3cret") || !views[0].Secrets["token"] || views[0].Fields["topic"] != "ops2" {
+	var ntfy ChannelView
+	for _, v := range views {
+		if v.Provider == "ntfy" {
+			ntfy = v
+		}
+	}
+	if strings.Contains(string(raw), "s3cret") || !ntfy.Secrets["token"] || ntfy.Fields["topic"] != "ops2" {
 		t.Fatalf("view: %s", raw)
 	}
 	var enc []byte

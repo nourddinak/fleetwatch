@@ -37,6 +37,7 @@ import (
 	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
+	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
 	"fleetwatch/internal/server/tokens"
@@ -232,6 +233,11 @@ func serve() error {
 	incStore := incidents.NewStore(d, bus)
 	detector := incidents.NewDetector(incStore, d, hub.Connected, serverName)
 	notifier := notify.New(d, box, bus)
+	pushSvc := push.New(d, box)
+	if u := os.Getenv("OPS_PUBLIC_URL"); strings.HasPrefix(u, "https://") {
+		pushSvc.Subscriber = u // identifies this dashboard to browser push services
+	}
+	notifier.Push = pushSvc
 	notifier.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	notifier.ServerName = serverName
 	notifier.AppName = func(id string) string {
@@ -394,7 +400,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

@@ -8,19 +8,21 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/secret"
 	"fleetwatch/internal/server/settings"
 	"fleetwatch/internal/server/valid"
 )
 
 // Providers lists the supported provider names, in display order.
-var Providers = []string{"ntfy", "telegram", "discord", "webhook"}
+var Providers = []string{"push", "ntfy", "telegram", "discord", "webhook"}
 
 var ErrUnknownProvider = errors.New("unknown notification provider")
 
@@ -106,6 +108,7 @@ type Service struct {
 	ServerName func(serverID string) string
 	AppName    func(appID string) string
 	PublicURL  string
+	Push       *push.Service // browser push; optional
 	Now        func() time.Time
 
 	queue chan job
@@ -149,8 +152,9 @@ func (s *Service) load(provider string) (enabled bool, cfg map[string]string, er
 }
 
 // Webhook URLs often embed tokens, so they are secrets like Discord's.
-var secretFields = map[string][]string{"ntfy": {"token", "password"}, "telegram": {"botToken"}, "discord": {"webhook"}, "webhook": {"url", "secret"}}
-var plainFields = map[string][]string{"ntfy": {"url", "topic", "username"}, "telegram": {"chatId"}, "discord": {}, "webhook": {}}
+// Push has no fields: its devices subscribe from their own browser.
+var secretFields = map[string][]string{"push": {}, "ntfy": {"token", "password"}, "telegram": {"botToken"}, "discord": {"webhook"}, "webhook": {"url", "secret"}}
+var plainFields = map[string][]string{"push": {}, "ntfy": {"url", "topic", "username"}, "telegram": {"chatId"}, "discord": {}, "webhook": {}}
 
 func (s *Service) Channels() ([]ChannelView, error) {
 	out := []ChannelView{}
@@ -159,7 +163,10 @@ func (s *Service) Channels() ([]ChannelView, error) {
 		if err != nil {
 			return nil, err
 		}
-		v := ChannelView{Provider: p, Enabled: enabled, Configured: len(cfg) > 0, Fields: map[string]string{}, Secrets: map[string]bool{}}
+		v := ChannelView{Provider: p, Enabled: enabled, Configured: s.configured(p, cfg), Fields: map[string]string{}, Secrets: map[string]bool{}}
+		if p == "push" && s.Push != nil {
+			v.Fields["devices"] = strconv.Itoa(s.Push.Count())
+		}
 		for _, f := range plainFields[p] {
 			v.Fields[f] = cfg[f]
 		}
@@ -229,7 +236,7 @@ func (s *Service) SaveChannel(provider string, enabled bool, fields map[string]s
 		}
 		cfg[k] = v
 	}
-	if enabled || len(fields) > 0 {
+	if provider != "push" && (enabled || len(fields) > 0) {
 		if _, err := build(provider, cfg); err != nil {
 			return err
 		}
@@ -341,12 +348,42 @@ func (s *Service) enqueue(j job) {
 }
 
 // Test sends a test message through one provider synchronously.
+// configured reports whether a channel can send: its settings are saved, or for push,
+// at least one device is subscribed.
+func (s *Service) configured(provider string, cfg map[string]string) bool {
+	if provider == "push" {
+		return s.Push != nil && s.Push.Count() > 0
+	}
+	return len(cfg) > 0
+}
+
+func (s *Service) provider(name string, cfg map[string]string) (Provider, error) {
+	if name == "push" {
+		if s.Push == nil {
+			return nil, ErrUnknownProvider
+		}
+		return pushProvider{s.Push}, nil
+	}
+	return build(name, cfg)
+}
+
+// pushProvider sends to every device subscribed in Settings -> Notifications.
+type pushProvider struct{ s *push.Service }
+
+func (p pushProvider) Send(ctx context.Context, m Message) error {
+	tag := m.Details.IncidentID
+	if tag == "" {
+		tag = m.Details.Event
+	}
+	return p.s.Send(ctx, push.Message{Title: m.Title, Body: m.Body, URL: "/#/incidents", Tag: tag, Severity: m.Severity})
+}
+
 func (s *Service) Test(ctx context.Context, provider string) (HistoryItem, error) {
 	_, cfg, err := s.load(provider)
 	if err != nil {
 		return HistoryItem{}, err
 	}
-	if len(cfg) == 0 {
+	if !s.configured(provider, cfg) {
 		return HistoryItem{}, valid.Error("save the " + provider + " settings first")
 	}
 	return s.deliver(ctx, provider, cfg, job{event: "Test", msg: Message{Title: "Fleetwatch test notification", Body: "If you can read this, " + provider + " notifications work.", Severity: "info", Details: Details{Event: "test"}}}), nil
@@ -361,7 +398,7 @@ func (s *Service) Run(ctx context.Context) {
 		case j := <-s.queue:
 			for _, p := range Providers {
 				enabled, cfg, err := s.load(p)
-				if err != nil || !enabled || len(cfg) == 0 {
+				if err != nil || !enabled || !s.configured(p, cfg) {
 					continue
 				}
 				if h := s.deliver(ctx, p, cfg, j); h.Result == "failed" {
@@ -381,7 +418,7 @@ func (s *Service) Run(ctx context.Context) {
 func (s *Service) deliver(ctx context.Context, provider string, cfg map[string]string, j job) HistoryItem {
 	h := HistoryItem{TS: s.Now().UnixMilli(), Event: j.event, Provider: provider, ServerID: j.serverID, AppID: j.appID, IncidentID: j.incident,
 		Title: j.msg.Title, Message: j.msg.Body, Result: "delivered"}
-	p, err := build(provider, cfg)
+	p, err := s.provider(provider, cfg)
 	if err == nil {
 		start := time.Now()
 		sctx, cancel := context.WithTimeout(ctx, 15*time.Second)

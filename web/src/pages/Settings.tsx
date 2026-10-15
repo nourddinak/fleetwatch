@@ -7,6 +7,7 @@ import { relTime, dateTime, fmtMB } from "../mock/util";
 import { Badge, Button, Card, ErrorState, Field, Gate, Input, KV, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, ServerStatus, Spinner, Table, Textarea, Td, Toggle, ToggleRow, Tr, CopyButton } from "../components/ui";
 import { cn } from "../utils/cn";
 import { UpdateCard } from "../components/PlatformUpdate";
+import { PushCard } from "../components/PushCard";
 
 const NAV = [
   ["account", "Account"],
@@ -563,7 +564,7 @@ export function MetricsSettings() {
 
 /* ---------------- Notifications ---------------- */
 interface Channel {
-  provider: "ntfy" | "telegram" | "discord" | "webhook";
+  provider: "push" | "ntfy" | "telegram" | "discord" | "webhook";
   enabled: boolean;
   configured: boolean;
   fields: Record<string, string>;
@@ -571,7 +572,7 @@ interface Channel {
 }
 type NotifyRules = Record<string, boolean>;
 type FieldDef = [key: string, label: string, placeholder: string, secret?: boolean];
-const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: string; fields: FieldDef[] }> = {
+const CHANNEL_FIELDS: Record<Exclude<Channel["provider"], "push">, { title: string; help: string; fields: FieldDef[] }> = {
   ntfy: {
     title: "ntfy",
     help: "Use a hard-to-guess topic on ntfy.sh, or your own ntfy server. Token or username/password only if the topic is protected.",
@@ -596,7 +597,7 @@ const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: string;
 
 function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => void }) {
   const { toast } = useStore();
-  const def = CHANNEL_FIELDS[ch.provider];
+  const def = CHANNEL_FIELDS[ch.provider as Exclude<Channel["provider"], "push">];
   const [enabled, setEnabled] = useState(ch.enabled);
   const [f, setF] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"" | "save" | "test">("");
@@ -688,7 +689,13 @@ export function NotificationSettings() {
   };
   return (
     <div className="space-y-6">
-      {chans.data.map((ch) => <ChannelCard key={ch.provider + JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />)}
+      {chans.data.map((ch) =>
+        ch.provider === "push" ? (
+          <PushCard key="push" enabled={ch.enabled} onChange={chans.reload} />
+        ) : (
+          <ChannelCard key={ch.provider + JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />
+        ),
+      )}
       <Card>
         <SectionTitle title="Notification rules" sub="Which incident events send a notification. Per-server and per-app overrides live on their settings pages. A 10-minute cooldown prevents repeats." />
         <div className="divide-y divide-line">
