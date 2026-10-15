@@ -34,7 +34,7 @@ export function Applications() {
         if (server !== "all" && a.serverId !== server) return false;
         if (manager !== "all" && a.manager !== manager) return false;
         if (runtime !== "all" && !a.runtime.split(" + ").includes(runtime)) return false; // "Go + React" matches Go and React
-        if (status === "attention" ? a.status === "online" && a.healthStatus !== "failed" : status !== "all" && a.status !== status) return false;
+        if (status === "down" ? a.status !== "offline" && a.status !== "crash-loop" : status === "attention" ? a.status === "online" && a.healthStatus !== "failed" : status !== "all" && a.status !== status) return false;
         if (inc === "with" && !incCount(a.id)) return false;
         if (inc === "without" && incCount(a.id)) return false;
         if (domain === "with" && !a.domain) return false;
@@ -68,6 +68,7 @@ export function Applications() {
           <Select value={status} onChange={(e) => set("status", e.target.value)} className="lg:!w-auto">
             <option value="all">All statuses</option>
             <option value="attention">Needs attention</option>
+            <option value="down">Offline or crash-looping</option>
             {["online", "warning", "starting", "offline", "stopped", "crash-loop", "unknown"].map((s) => <option key={s} value={s}>{s}</option>)}
           </Select>
           <Select value={inc} onChange={(e) => set("incidents", e.target.value)} className="lg:!w-auto">

@@ -36,7 +36,9 @@ export function Overview() {
   const active = incidents.filter((i) => i.status === "active");
   const critical = active.filter((i) => i.severity === "critical");
   const appsOnline = apps.filter((a) => a.status === "online").length;
-  const appsOff = apps.filter((a) => ["offline", "crash-loop", "stopped"].includes(a.status)).length;
+  // Down when they should be up; apps stopped on purpose are not an alert.
+  const appsOff = apps.filter((a) => a.status === "offline" || a.status === "crash-loop").length;
+  const appsStopped = apps.filter((a) => a.status === "stopped").length;
   const appsWarn = apps.filter((a) => a.status === "warning" || a.healthStatus === "failed").length;
 
   const needServers = empty ? [] : servers.filter((s) => s.status !== "online");
@@ -71,7 +73,7 @@ export function Overview() {
           <MetricCard to="/servers" label="Servers offline" value={offline} tone={offline ? "crit" : undefined} sub="agent disconnected" />
           <MetricCard to="/applications" label="Applications" value={apps.length} sub={`${pm2} PM2 · ${apps.length - pm2} systemd`} />
           <MetricCard to="/applications?status=online" label="Apps online" value={appsOnline} tone="ok" sub={`${Math.round((appsOnline / Math.max(1, apps.length)) * 100)}% of fleet`} />
-          <MetricCard to="/applications?status=offline" label="Apps offline" value={appsOff} tone={appsOff ? "crit" : undefined} sub="offline · crash-loop · stopped" />
+          <MetricCard to="/applications?status=down" label="Apps offline" value={appsOff} tone={appsOff ? "crit" : undefined} sub={appsStopped ? `crashed or offline · ${appsStopped} stopped on purpose` : "crashed or offline"} />
           <MetricCard to="/applications?status=warning" label="Apps with warnings" value={appsWarn} tone={appsWarn ? "warn" : undefined} sub="warning or failing health" />
           <MetricCard to="/incidents" label="Active incidents" value={active.length} tone={active.length ? "warn" : "ok"} sub={`${incidents.filter((i) => i.status === "acknowledged").length} acknowledged`} />
           <MetricCard to="/incidents" label="Critical incidents" value={critical.length} tone={critical.length ? "crit" : "ok"} sub="need attention" />
