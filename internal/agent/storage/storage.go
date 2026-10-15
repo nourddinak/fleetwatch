@@ -1,5 +1,6 @@
 // Package storage measures application folders. Scans are throttled, bounded in
-// entries and time, run one at a time, and repeat at most every few hours.
+// entries and time, run one at a time, and repeat every 15 minutes, less often for
+// folders that are slow to measure.
 package storage
 
 import (
@@ -16,7 +17,9 @@ import (
 )
 
 const (
-	Every       = 6 * time.Hour
+	MinEvery    = 15 * time.Minute // typical app folders: sizes stay current
+	MaxEvery    = 6 * time.Hour    // huge trees, so rescans never dominate disk IO
+	costFactor  = 30               // wait at least 30x the last scan's duration
 	maxEntries  = 2_000_000
 	maxDuration = 10 * time.Minute
 	topItems    = 12
@@ -101,13 +104,14 @@ type Scanner struct {
 	mu      sync.Mutex
 	targets map[string]proto.StorageTarget
 	last    map[string]time.Time
+	every   map[string]time.Duration // per app, from how long its last scan took
 	queue   []proto.StorageTarget
 	results []proto.StorageResult
 	wake    chan struct{}
 }
 
 func NewScanner() *Scanner {
-	return &Scanner{targets: map[string]proto.StorageTarget{}, last: map[string]time.Time{}, wake: make(chan struct{}, 1)}
+	return &Scanner{targets: map[string]proto.StorageTarget{}, last: map[string]time.Time{}, every: map[string]time.Duration{}, wake: make(chan struct{}, 1)}
 }
 
 func (s *Scanner) Set(targets []proto.StorageTarget) {
@@ -153,11 +157,19 @@ func (s *Scanner) next() (proto.StorageTarget, bool) {
 		return t, true
 	}
 	for id, t := range s.targets {
-		if time.Since(s.last[id]) > Every {
+		if time.Since(s.last[id]) > s.every[id] {
 			return t, true
 		}
 	}
 	return proto.StorageTarget{}, false
+}
+
+// interval is how long to wait before measuring a folder again.
+func interval(res proto.StorageResult) time.Duration {
+	if res.Truncated {
+		return MaxEvery // hit the entry or time limit: a very large tree
+	}
+	return min(MaxEvery, max(MinEvery, costFactor*time.Duration(res.DurationMs)*time.Millisecond))
 }
 
 func (s *Scanner) Run(ctx context.Context) {
@@ -172,6 +184,7 @@ func (s *Scanner) Run(ctx context.Context) {
 			res := Measure(ctx, target.AppID, target.Path)
 			s.mu.Lock()
 			s.last[target.AppID] = time.Now()
+			s.every[target.AppID] = interval(res)
 			s.results = append(s.results, res)
 			s.mu.Unlock()
 		}

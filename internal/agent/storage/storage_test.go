@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"fleetwatch/internal/proto"
 )
 
 func TestMeasure(t *testing.T) {
@@ -39,6 +42,24 @@ func TestMeasureRefusesSystemRoots(t *testing.T) {
 	for _, root := range []string{"/", "/proc", "/sys/"} {
 		if r := Measure(context.Background(), "a1", root); r.Error == "" || r.TotalBytes != 0 {
 			t.Errorf("%s measured: %+v", root, r)
+		}
+	}
+}
+
+func TestInterval(t *testing.T) {
+	cases := []struct {
+		ms        int64
+		truncated bool
+		want      time.Duration
+	}{
+		{200, false, MinEvery},            // a normal app folder
+		{60_000, false, 30 * time.Minute}, // a one-minute scan waits 30 minutes
+		{20 * 60_000, false, MaxEvery},    // capped
+		{1_000, true, MaxEvery},           // hit the entry/time limit
+	}
+	for _, c := range cases {
+		if got := interval(proto.StorageResult{DurationMs: c.ms, Truncated: c.truncated}); got != c.want {
+			t.Errorf("%d ms truncated=%v: %s, want %s", c.ms, c.truncated, got, c.want)
 		}
 	}
 }

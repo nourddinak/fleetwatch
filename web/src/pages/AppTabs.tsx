@@ -378,7 +378,7 @@ export function AppStorage() {
             {scan.files.toLocaleString()} files · scanned {relTime(scan.scannedAt)} in {(scan.durationMs / 1000).toFixed(1)}s{scan.truncated && " · stopped early (very large folder)"}
           </p>
         )}
-        <p className="mt-1 text-xs text-muted">Rescanned automatically every 6 hours; scans are throttled to keep disk IO low.</p>
+        <p className="mt-1 text-xs text-muted">Rescanned automatically every 15 minutes (less often for very large folders); scans are throttled to keep disk IO low.</p>
         <Button className="mt-4" variant="secondary" size="sm" onClick={rescan} disabled={busy || !a.path}>
           {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} {busy ? "Scanning…" : "Rescan now"}
         </Button>
