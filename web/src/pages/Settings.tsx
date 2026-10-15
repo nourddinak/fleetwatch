@@ -546,7 +546,7 @@ export function MetricsSettings() {
 
 /* ---------------- Notifications ---------------- */
 interface Channel {
-  provider: "ntfy" | "telegram" | "discord";
+  provider: "ntfy" | "telegram" | "discord" | "webhook";
   enabled: boolean;
   configured: boolean;
   fields: Record<string, string>;
@@ -569,6 +569,11 @@ const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: string;
     title: "Discord",
     help: "Channel settings → Integrations → Webhooks → New webhook → Copy URL.",
     fields: [["webhook", "Webhook URL", "https://discord.com/api/webhooks/…", true]],
+  },
+  webhook: {
+    title: "Custom webhook",
+    help: "Fleetwatch POSTs a JSON body (event, severity, title, message, server, app, incident, link) to your URL, e.g. n8n, Zapier, Slack workflows, Home Assistant or your own endpoint. With a signing secret, requests carry X-Fleetwatch-Signature: sha256=<HMAC of the body>.",
+    fields: [["url", "Webhook URL", "https://example.com/hooks/fleetwatch", true], ["secret", "Signing secret (optional)", "any random string", true]],
   },
 };
 
@@ -613,7 +618,7 @@ function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => 
               autoComplete="off"
               className="font-mono"
               value={f[k] ?? (secret ? "" : ch.fields[k] ?? "")}
-              placeholder={secret && ch.secrets[k] ? `•••••••• ${k === "webhook" ? ch.fields.webhookHint ?? "" : ""}` : ph}
+              placeholder={secret && ch.secrets[k] ? `•••••••• ${ch.fields[k + "Hint"] ?? ""}` : ph}
               onChange={(e) => setF({ ...f, [k]: e.target.value })}
             />
           </Field>

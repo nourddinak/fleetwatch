@@ -8,7 +8,7 @@ Self-hosted monitoring and control for the apps on your own VPSs. One dashboard 
 - **Logs:** live tail plus 7 days of full-text search.
 - **Metrics:** CPU, RAM, disk and network per server and per app.
 - **Health checks and incidents:** HTTP health checks, and incidents opened automatically for downtime, crash loops, failing checks, high resource use and repeated errors. They resolve themselves when the problem clears.
-- **Alerts** through ntfy, Telegram or Discord.
+- **Alerts** through ntfy, Telegram, Discord or a custom webhook (signed JSON).
 - **Safe actions:** start, stop, restart and reload, plus commands you define per app. There is no browser shell.
 - **Security:** argon2id passwords, TOTP 2FA, an audit log and encrypted secrets.
 

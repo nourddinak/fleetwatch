@@ -3,6 +3,9 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -181,5 +184,66 @@ func TestIncidentFiltering(t *testing.T) {
 	s.Incident(ev("opened", "app_offline", "critical"))
 	if n := queued(); n != 1 {
 		t.Fatalf("after cooldown: %d", n)
+	}
+}
+
+func TestWebhook(t *testing.T) {
+	type req struct {
+		event, sig, ua string
+		body           []byte
+	}
+	got := make(chan req, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- req{r.Header.Get("X-Fleetwatch-Event"), r.Header.Get("X-Fleetwatch-Signature"), r.Header.Get("User-Agent"), b}
+	}))
+	defer srv.Close()
+
+	m := Message{Title: "API is offline", Body: "App Offline · CRITICAL · API on VPS-1", Severity: "critical", Link: "https://ops.example/#/incidents",
+		Details: Details{Event: "incident.opened", Type: "app_offline", TypeLabel: "App Offline", IncidentID: "inc_1", ServerID: "srv_1", ServerName: "VPS-1", AppID: "app_1", AppName: "API"}}
+	if err := (Webhook{URL: srv.URL + "/hook?token=t0k", Secret: "s3cret"}).Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	r := <-got
+	var p WebhookPayload
+	if err := json.Unmarshal(r.body, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Event != "incident.opened" || p.Type != "app_offline" || p.AppName != "API" || p.ServerName != "VPS-1" || p.Severity != "critical" || p.Title != "API is offline" || p.TS == 0 || r.event != "incident.opened" || r.ua != "Fleetwatch" {
+		t.Fatalf("payload: %+v headers %+v", p, r)
+	}
+	mac := hmac.New(sha256.New, []byte("s3cret"))
+	mac.Write(r.body)
+	if r.sig != "sha256="+hex.EncodeToString(mac.Sum(nil)) {
+		t.Fatalf("signature %q does not verify", r.sig)
+	}
+	if err := (Webhook{URL: srv.URL}).Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-got; r.sig != "" {
+		t.Fatal("unsigned webhook sent a signature")
+	}
+	for _, bad := range []string{"", "ftp://x/y", "not a url", "https://"} {
+		if (Webhook{URL: bad}).validate() == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+
+	// Through the service: secrets stay hidden, a hint shows which endpoint it is.
+	s := setup(t)
+	if err := s.SaveChannel("webhook", true, map[string]string{"url": srv.URL + "/hook?token=t0k", "secret": "s3cret"}); err != nil {
+		t.Fatal(err)
+	}
+	views, _ := s.Channels()
+	raw, _ := json.Marshal(views)
+	if strings.Contains(string(raw), "t0k") || strings.Contains(string(raw), "s3cret") || !strings.Contains(string(raw), `"urlHint"`) {
+		t.Fatalf("channel view leaks or lacks the hint: %s", raw)
+	}
+	h, err := s.Test(context.Background(), "webhook")
+	if err != nil || h.Result != "delivered" {
+		t.Fatalf("test send: %+v %v", h, err)
+	}
+	if r := <-got; r.event != "test" || r.sig == "" {
+		t.Fatalf("test delivery: %+v", r)
 	}
 }

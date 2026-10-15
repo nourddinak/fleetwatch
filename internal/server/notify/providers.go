@@ -5,6 +5,9 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -23,6 +26,19 @@ type Message struct {
 	Body     string
 	Severity string // info | warning | critical | ok
 	Link     string // deep link into the dashboard, when OPS_PUBLIC_URL is known
+	Details  Details
+}
+
+// Details are the structured facts behind a message, for machine receivers (webhooks).
+type Details struct {
+	Event      string `json:"event"`          // incident.opened | incident.resolved | test
+	Type       string `json:"type,omitempty"` // incident type key, e.g. app_offline
+	TypeLabel  string `json:"typeLabel,omitempty"`
+	IncidentID string `json:"incidentId,omitempty"`
+	ServerID   string `json:"serverId,omitempty"`
+	ServerName string `json:"serverName,omitempty"`
+	AppID      string `json:"appId,omitempty"`
+	AppName    string `json:"appName,omitempty"`
 }
 
 // Provider sends a message. Add a provider by implementing this and registering it in
@@ -155,6 +171,47 @@ func (d Discord) Send(ctx context.Context, m Message) error {
 	}
 	body, _ := json.Marshal(map[string]any{"username": "Fleetwatch", "embeds": []any{embed}, "allowed_mentions": map[string]any{"parse": []string{}}})
 	return post(ctx, d.Webhook, "application/json", body, nil)
+}
+
+// ---------- custom webhook ----------
+
+// Webhook POSTs a JSON document to any URL. With a secret, the body is signed:
+// X-Fleetwatch-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed by the secret>.
+type Webhook struct {
+	URL    string `json:"url"`
+	Secret string `json:"secret"`
+}
+
+func (w Webhook) validate() error {
+	u, err := url.Parse(w.URL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return valid.Error("webhook URL must look like https://example.com/hooks/fleetwatch")
+	}
+	if len(w.Secret) > 256 {
+		return valid.Error("signing secret is too long")
+	}
+	return nil
+}
+
+// WebhookPayload is the documented body of a webhook request.
+type WebhookPayload struct {
+	Details
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Message  string `json:"message"`
+	Link     string `json:"link,omitempty"`
+	TS       int64  `json:"ts"` // unix milliseconds
+}
+
+func (w Webhook) Send(ctx context.Context, m Message) error {
+	body, _ := json.Marshal(WebhookPayload{Details: m.Details, Severity: m.Severity, Title: m.Title, Message: m.Body, Link: m.Link, TS: time.Now().UnixMilli()})
+	h := map[string]string{"User-Agent": "Fleetwatch", "X-Fleetwatch-Event": m.Details.Event}
+	if w.Secret != "" {
+		mac := hmac.New(sha256.New, []byte(w.Secret))
+		mac.Write(body)
+		h["X-Fleetwatch-Signature"] = "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	return post(ctx, w.URL, "application/json", body, h)
 }
 
 func trunc(s string, n int) string {

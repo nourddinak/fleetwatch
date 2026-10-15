@@ -229,7 +229,7 @@ export interface NotificationRec {
   serverId: string; // "" when not tied to a server (tests)
   appId: string;
   incidentId: string;
-  provider: "ntfy" | "telegram" | "discord";
+  provider: "ntfy" | "telegram" | "discord" | "webhook";
   title: string;
   message: string;
   result: "delivered" | "failed";

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 )
 
 // Providers lists the supported provider names, in display order.
-var Providers = []string{"ntfy", "telegram", "discord"}
+var Providers = []string{"ntfy", "telegram", "discord", "webhook"}
 
 var ErrUnknownProvider = errors.New("unknown notification provider")
 
@@ -147,8 +148,9 @@ func (s *Service) load(provider string) (enabled bool, cfg map[string]string, er
 	return enabled, cfg, nil
 }
 
-var secretFields = map[string][]string{"ntfy": {"token", "password"}, "telegram": {"botToken"}, "discord": {"webhook"}}
-var plainFields = map[string][]string{"ntfy": {"url", "topic", "username"}, "telegram": {"chatId"}, "discord": {}}
+// Webhook URLs often embed tokens, so they are secrets like Discord's.
+var secretFields = map[string][]string{"ntfy": {"token", "password"}, "telegram": {"botToken"}, "discord": {"webhook"}, "webhook": {"url", "secret"}}
+var plainFields = map[string][]string{"ntfy": {"url", "topic", "username"}, "telegram": {"chatId"}, "discord": {}, "webhook": {}}
 
 func (s *Service) Channels() ([]ChannelView, error) {
 	out := []ChannelView{}
@@ -166,6 +168,11 @@ func (s *Service) Channels() ([]ChannelView, error) {
 		}
 		if p == "discord" && cfg["webhook"] != "" {
 			v.Fields["webhookHint"] = "…" + cfg["webhook"][max(0, len(cfg["webhook"])-6):]
+		}
+		if p == "webhook" && cfg["url"] != "" {
+			if u, err := url.Parse(cfg["url"]); err == nil {
+				v.Fields["urlHint"] = u.Scheme + "://" + u.Host + "/…" // which endpoint, without its token
+			}
 		}
 		out = append(out, v)
 	}
@@ -187,6 +194,10 @@ func build(provider string, cfg map[string]string) (Provider, error) {
 		var d Discord
 		json.Unmarshal(raw, &d)
 		return d, d.validate()
+	case "webhook":
+		var w Webhook
+		json.Unmarshal(raw, &w)
+		return w, w.validate()
 	}
 	return nil, ErrUnknownProvider
 }
@@ -276,14 +287,18 @@ func (s *Service) Incident(ev incidents.Event) {
 	s.last[ck] = s.Now()
 	s.mu.Unlock()
 
-	where := ""
+	d := Details{Event: "incident." + ev.Kind, Type: x.TypeKey, TypeLabel: x.Type, IncidentID: x.ID, ServerID: x.ServerID, AppID: appID}
 	if s.ServerName != nil {
-		where = s.ServerName(x.ServerID)
+		d.ServerName = s.ServerName(x.ServerID)
 	}
 	if appID != "" && s.AppName != nil {
-		where = s.AppName(appID) + " on " + where
+		d.AppName = s.AppName(appID)
 	}
-	msg := Message{Title: x.Title, Severity: x.Severity}
+	where := d.ServerName
+	if d.AppName != "" {
+		where = d.AppName + " on " + where
+	}
+	msg := Message{Title: x.Title, Severity: x.Severity, Details: d}
 	if ev.Kind == "resolved" {
 		msg.Title, msg.Severity = "Resolved: "+x.Title, "ok"
 		msg.Body = fmt.Sprintf("%s\n%s", x.Resolution, where)
@@ -320,7 +335,7 @@ func (s *Service) Test(ctx context.Context, provider string) (HistoryItem, error
 	if len(cfg) == 0 {
 		return HistoryItem{}, valid.Error("save the " + provider + " settings first")
 	}
-	return s.deliver(ctx, provider, cfg, job{event: "Test", msg: Message{Title: "Fleetwatch test notification", Body: "If you can read this, " + provider + " notifications work.", Severity: "info"}}), nil
+	return s.deliver(ctx, provider, cfg, job{event: "Test", msg: Message{Title: "Fleetwatch test notification", Body: "If you can read this, " + provider + " notifications work.", Severity: "info", Details: Details{Event: "test"}}}), nil
 }
 
 // Run delivers queued notifications until ctx ends.

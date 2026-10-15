@@ -144,6 +144,45 @@ The dashboard opens an "Agent Offline" incident once an agent has been away for 
 - **Log collection is per app:** check the app's Settings tab.
 - **Dropped lines:** lines longer than the maximum line size (16 KB by default) are cut. During long outages, the agent drops its oldest buffered lines and records a marker.
 
+### Custom webhooks
+
+Settings → Notifications → **Custom webhook** sends every alert as a JSON `POST` to your URL, for n8n, Zapier, Slack workflows, Home Assistant or your own code. The URL and the signing secret are stored encrypted and never shown again.
+
+The body looks like this:
+
+```json
+{
+  "event": "incident.opened",
+  "type": "app_offline",
+  "typeLabel": "App Offline",
+  "incidentId": "inc_8f2c1a",
+  "serverId": "srv_466816c1b51c",
+  "serverName": "VPS-1",
+  "appId": "app_5149c42f7cd5",
+  "appName": "api",
+  "severity": "critical",
+  "title": "api is offline",
+  "message": "App Offline · CRITICAL · api on VPS-1",
+  "link": "https://ops.example.com/#/incidents",
+  "ts": 1792090000000
+}
+```
+
+- **`event`** is `incident.opened`, `incident.resolved` or `test`. It is also sent in the `X-Fleetwatch-Event` header.
+- **`severity`** is `critical`, `warning` or `info`, and `ok` for resolutions.
+- **Fields that don't apply are left out**, for example `appId` on server incidents.
+- **Signing secret:** if you set one, each request carries `X-Fleetwatch-Signature: sha256=<hex>`. That value is the HMAC-SHA256 of the raw request body, keyed by the secret. Check it before trusting the request. In Node.js:
+
+```js
+const crypto = require("crypto");
+const expected = "sha256=" + crypto.createHmac("sha256", process.env.SECRET).update(rawBody).digest("hex");
+const got = Buffer.from(req.headers["x-fleetwatch-signature"] ?? "");
+const want = Buffer.from(expected);
+const ok = got.length === want.length && crypto.timingSafeEqual(got, want); // timingSafeEqual throws on unequal lengths
+```
+
+The receiver should answer with a 2xx status; anything else counts as a failed delivery and is retried once.
+
 ### Notifications don't arrive
 
 - Use **Send test** under Settings → Notifications. The exact provider error appears there and in the Notifications history.
