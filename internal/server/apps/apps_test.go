@@ -285,3 +285,19 @@ func TestStaticSites(t *testing.T) {
 		t.Fatalf("passing check: %s", v.Status)
 	}
 }
+
+func TestRootCwdIsNotAnAppFolder(t *testing.T) {
+	s := newService(t)
+	inv := inventory(false, false, "")
+	inv.Processes = append(inv.Processes, proto.Process{Manager: "systemd", Key: "ops-server.service", Status: "online", PID: 9, Likely: true, Cwd: "/"})
+	s.Ingest("srv1", inv)
+	v, err := s.Create(Input{ServerID: "srv1", Name: "ops-server", Manager: "systemd", ProcessKey: "ops-server.service"}, "manual")
+	if err != nil || v.Path != "" {
+		t.Fatalf("path %q, %v", v.Path, err)
+	}
+	for _, target := range s.StorageTargets("srv1") {
+		if target.AppID == v.ID {
+			t.Fatal("app without a folder got a storage scan")
+		}
+	}
+}

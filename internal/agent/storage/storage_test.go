@@ -34,3 +34,11 @@ func TestMeasure(t *testing.T) {
 		t.Fatal("file accepted as directory")
 	}
 }
+
+func TestMeasureRefusesSystemRoots(t *testing.T) {
+	for _, root := range []string{"/", "/proc", "/sys/"} {
+		if r := Measure(context.Background(), "a1", root); r.Error == "" || r.TotalBytes != 0 {
+			t.Errorf("%s measured: %+v", root, r)
+		}
+	}
+}

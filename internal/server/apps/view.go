@@ -252,7 +252,7 @@ func (s *Service) view(a App, inv *proto.Inventory) View {
 		return v
 	}
 	v.ProcessFound = true
-	if v.Path == "" {
+	if v.Path == "" && p.Cwd != "/" { // "/" is systemd's default cwd, not an app folder
 		v.Path = p.Cwd
 	}
 	if p.Runtime != "" {

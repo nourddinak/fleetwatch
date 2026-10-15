@@ -6,6 +6,7 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -22,10 +23,17 @@ const (
 	pauseEvery  = 2000 // entries between short sleeps, to keep disk IO polite
 )
 
+// pseudoFS are kernel filesystems that are never part of an app's disk use.
+var pseudoFS = map[string]bool{"/proc": true, "/sys": true, "/dev": true, "/run": true}
+
 // Measure walks root without following symlinks and sizes its top-level entries.
 func Measure(ctx context.Context, appID, root string) proto.StorageResult {
 	start := time.Now()
 	res := proto.StorageResult{AppID: appID, Path: root, ScannedAt: start.UnixMilli(), Items: []proto.StorageItem{}}
+	if clean := path.Clean(filepath.ToSlash(root)); clean == "/" || pseudoFS[clean] {
+		res.Error = "refusing to measure " + root + ": not an application folder"
+		return res
+	}
 	fi, err := os.Lstat(root)
 	if err != nil || !fi.IsDir() {
 		res.Error = "not a directory: " + root
@@ -42,9 +50,12 @@ func Measure(ctx context.Context, appID, root string) proto.StorageResult {
 	for _, e := range entries {
 		item := proto.StorageItem{Name: e.Name(), Dir: e.IsDir()}
 		if e.IsDir() {
-			filepath.WalkDir(filepath.Join(root, e.Name()), func(_ string, d fs.DirEntry, err error) error {
+			filepath.WalkDir(filepath.Join(root, e.Name()), func(name string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return nil // unreadable subtree: skip, keep going
+				}
+				if d.IsDir() && pseudoFS[name] {
+					return filepath.SkipDir // virtual files such as /proc/kcore report huge sizes
 				}
 				seen++
 				if seen%pauseEvery == 0 {
