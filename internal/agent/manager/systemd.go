@@ -90,7 +90,7 @@ func ParseShow(out string, bootMs int64) []proto.Process {
 			p.StartedAt = bootMs + mono/1000
 		}
 		p.Likely, p.Reason = Classify(props)
-		p.Runtime = projects.RuntimeFromExec(p.ExecStart)
+		p.Runtime = projects.ExecRuntime(p.ExecStart, p.PID)
 		list = append(list, p)
 	}
 	return list

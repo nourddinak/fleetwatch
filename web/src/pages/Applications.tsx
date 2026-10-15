@@ -25,7 +25,7 @@ export function Applications() {
   const inc = get("incidents");
   const domain = get("domain");
 
-  const runtimes = Array.from(new Set(apps.map((a) => a.runtime)));
+  const runtimes = Array.from(new Set(apps.flatMap((a) => (a.runtime ? a.runtime.split(" + ") : [])))).sort();
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const incCount = (id: string) => incidents.filter((i) => i.appId === id && i.status === "active").length;
@@ -33,7 +33,7 @@ export function Applications() {
       .filter((a) => {
         if (server !== "all" && a.serverId !== server) return false;
         if (manager !== "all" && a.manager !== manager) return false;
-        if (runtime !== "all" && a.runtime !== runtime) return false;
+        if (runtime !== "all" && !a.runtime.split(" + ").includes(runtime)) return false; // "Go + React" matches Go and React
         if (status === "attention" ? a.status === "online" && a.healthStatus !== "failed" : status !== "all" && a.status !== status) return false;
         if (inc === "with" && !incCount(a.id)) return false;
         if (inc === "without" && incCount(a.id)) return false;

@@ -215,7 +215,7 @@ func ParseJList(raw []byte, home string) ([]proto.Process, error) {
 		p := byName[n]
 		p.Runtime = projects.RuntimeFromExec(p.Interpreter)
 		if p.Runtime == "" && p.Interpreter == "none" {
-			p.Runtime = projects.RuntimeFromExec(p.Script)
+			p.Runtime = projects.ExecRuntime(p.Script, p.PID)
 		}
 		out = append(out, *p)
 	}

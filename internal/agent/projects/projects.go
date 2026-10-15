@@ -2,6 +2,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,44 +47,115 @@ func Detect(dir string) *proto.Project {
 			p.Files = append(p.Files, name)
 		}
 	}
+	// Split projects keep each half in a folder (backend/go.mod, frontend/package.json).
+	subdirs := 0
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || skipSubdirs[e.Name()] || subdirs >= maxFiles {
+			continue
+		}
+		subdirs++
+		for _, m := range subMarkers {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), m)); err == nil {
+				p.Markers = append(p.Markers, e.Name()+"/"+m)
+			}
+		}
+	}
 	if len(p.Markers) == 0 {
 		return nil
 	}
 	sort.Strings(p.Markers)
-	p.Runtime = Runtime(p.Markers)
+	p.Runtime = Runtime(dir, p.Markers)
 	_, _, p.Owner, _ = sysexec.Owner(dir)
 	return p
 }
 
-// Runtime guesses the runtime from marker files.
-func Runtime(markers []string) string {
-	has := func(names ...string) bool {
-		for _, n := range names {
-			if slices.Contains(markers, n) {
+// subMarkers are looked for one folder down; skipSubdirs never hold the app itself.
+var (
+	subMarkers  = []string{"package.json", "go.mod", "Cargo.toml", "requirements.txt", "pyproject.toml", "composer.json", "Gemfile", "next.config.js", "next.config.mjs", "next.config.ts"}
+	skipSubdirs = map[string]bool{"node_modules": true, "vendor": true, "dist": true, "build": true, "target": true, "venv": true, "__pycache__": true}
+)
+
+// jsFrameworks maps package.json dependencies to a name, most specific first.
+var jsFrameworks = [][2]string{{"next", "Next.js"}, {"nuxt", "Nuxt"}, {"@remix-run/react", "Remix"}, {"astro", "Astro"}, {"@angular/core", "Angular"}, {"svelte", "Svelte"}, {"vue", "Vue"}, {"react", "React"}}
+
+// jsRuntime names the JavaScript side of a project: a framework when package.json
+// uses one, else the runtime.
+func jsRuntime(dir string, pkgDirs []string, has func(...string) bool) string {
+	if has("next.config.js", "next.config.mjs", "next.config.ts") {
+		return "Next.js"
+	}
+	for _, d := range pkgDirs {
+		raw, err := os.ReadFile(filepath.Join(dir, d, "package.json"))
+		if err != nil || len(raw) > 1<<20 {
+			continue
+		}
+		var pkg struct{ Dependencies, DevDependencies map[string]any }
+		if json.Unmarshal(raw, &pkg) != nil {
+			continue
+		}
+		for _, fw := range jsFrameworks {
+			if pkg.Dependencies[fw[0]] != nil || pkg.DevDependencies[fw[0]] != nil {
+				return fw[1]
+			}
+		}
+	}
+	switch {
+	case has("bun.lockb"):
+		return "Bun"
+	case len(pkgDirs) > 0:
+		return "Node.js"
+	case has("deno.json"):
+		return "Deno"
+	}
+	return ""
+}
+
+// Runtime names what a project in dir is built with, from its marker files (which may
+// sit one folder down, like "backend/go.mod"). A backend language next to a JavaScript
+// frontend reads "Go + React".
+func Runtime(dir string, markers []string) string {
+	names := map[string]bool{}
+	var pkgDirs []string
+	for _, m := range markers {
+		d, name := "", m
+		if i := strings.LastIndex(m, "/"); i >= 0 {
+			d, name = m[:i], m[i+1:]
+		}
+		names[name] = true
+		if name == "package.json" {
+			pkgDirs = append(pkgDirs, d)
+		}
+	}
+	sort.Slice(pkgDirs, func(i, j int) bool { return pkgDirs[i] < pkgDirs[j] }) // top level ("") first
+	has := func(ns ...string) bool {
+		for _, n := range ns {
+			if names[n] {
 				return true
 			}
 		}
 		return false
 	}
+	backend := ""
 	switch {
-	case has("next.config.js", "next.config.mjs", "next.config.ts"):
-		return "Next.js"
-	case has("bun.lockb"):
-		return "Bun"
-	case has("deno.json"):
-		return "Deno"
-	case has("package.json"):
-		return "Node.js"
 	case has("go.mod"):
-		return "Go"
+		backend = "Go"
 	case has("Cargo.toml"):
-		return "Rust"
+		backend = "Rust"
 	case has("requirements.txt", "pyproject.toml", "Pipfile", "manage.py"):
-		return "Python"
+		backend = "Python"
 	case has("composer.json"):
-		return "PHP"
+		backend = "PHP"
 	case has("Gemfile"):
-		return "Ruby"
+		backend = "Ruby"
+	}
+	js := jsRuntime(dir, pkgDirs, has)
+	switch {
+	case backend != "" && js != "":
+		return backend + " + " + js
+	case backend != "":
+		return backend
+	case js != "":
+		return js
 	case has("index.html"):
 		return "Static"
 	}
