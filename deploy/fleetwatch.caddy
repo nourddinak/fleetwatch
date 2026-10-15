@@ -1,0 +1,14 @@
+# Fleetwatch site for Caddy, installed as /etc/caddy/fleetwatch.caddy and pulled into
+# /etc/caddy/Caddyfile with one line:  import /etc/caddy/fleetwatch.caddy
+#
+# install-server.sh writes this file (with your --domain) and overwrites it on upgrade.
+# Using your own Caddy setup? Copy this block and replace ops.example.com.
+#
+# ops-server only trusts X-Forwarded-For / X-Forwarded-Proto from loopback, so Caddy
+# must run on the same host. Caddy sets both headers and proxies WebSockets by default.
+
+ops.example.com {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8090
+}

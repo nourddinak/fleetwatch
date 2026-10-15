@@ -17,7 +17,8 @@ set -euo pipefail
 REPO="nourddinak/fleetwatch"
 DOMAIN="" VERSION="latest" CADDY=1 UNINSTALL=0 PURGE=0
 DATA=/var/lib/ops-server ENVFILE=/etc/ops-server.env UNIT=/etc/systemd/system/ops-server.service
-BIN=/usr/local/bin/ops-server CADDYFILE=/etc/caddy/Caddyfile
+BIN=/usr/local/bin/ops-server CADDYFILE=/etc/caddy/Caddyfile SITE=/etc/caddy/fleetwatch.caddy
+IMPORT="import $SITE"
 
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
@@ -37,10 +38,10 @@ done
 [ "$(id -u)" -eq 0 ] || die "run as root (pipe into 'sudo bash')"
 command -v systemctl >/dev/null || die "systemd is required"
 
-remove_caddy_block() {
-  [ -f "$CADDYFILE" ] && grep -q '^# >>> fleetwatch' "$CADDYFILE" || return 0
-  sed -i '/^# >>> fleetwatch/,/^# <<< fleetwatch/d' "$CADDYFILE"
-  systemctl reload caddy 2>/dev/null || true
+# Drops our import line and the inline block that v0.9.0 wrote.
+unhook_caddyfile() {
+  [ -f "$CADDYFILE" ] || return 0
+  sed -i -e "\#^$IMPORT\$#d" -e '/^# >>> fleetwatch/,/^# <<< fleetwatch/d' "$CADDYFILE"
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
@@ -48,7 +49,11 @@ if [ "$UNINSTALL" -eq 1 ]; then
   systemctl disable --now ops-server >/dev/null 2>&1 || true
   rm -f "$UNIT" "$BIN"
   systemctl daemon-reload
-  remove_caddy_block
+  if [ -f "$SITE" ] || grep -qs 'fleetwatch' "$CADDYFILE"; then
+    unhook_caddyfile
+    rm -f "$SITE"
+    systemctl reload caddy 2>/dev/null || true
+  fi
   if [ "$PURGE" -eq 1 ]; then
     rm -rf "$DATA" "$ENVFILE"
     id ops >/dev/null 2>&1 && userdel ops
@@ -142,20 +147,17 @@ if [ "$CADDY" -eq 1 ]; then
     apt-get update -qq
     apt-get install -y -qq caddy >/dev/null
   fi
-  # Replace Caddy's placeholder site; otherwise add (or refresh) our block only.
-  if [ -f "$CADDYFILE" ] && grep -q '/usr/share/caddy' "$CADDYFILE" && ! grep -q '^# >>> fleetwatch' "$CADDYFILE"; then
-    : > "$CADDYFILE"
+  # Our site lives in its own file (deploy/fleetwatch.caddy in the repo, shipped inside
+  # ops-server); the Caddyfile only gets one import line.
+  "$BIN" caddy-config "$DOMAIN" > "$SITE"
+  chmod 0644 "$SITE"
+  # Caddy's placeholder site would also claim port 80: replace it.
+  if grep -qs '/usr/share/caddy' "$CADDYFILE"; then
+    printf '# Sites are kept in separate files and imported here.\n' > "$CADDYFILE"
   fi
-  remove_caddy_block
-  cat >> "$CADDYFILE" <<EOF
-# >>> fleetwatch (managed by install-server.sh)
-$DOMAIN {
-	encode zstd gzip
-	header Strict-Transport-Security "max-age=31536000"
-	reverse_proxy 127.0.0.1:8090
-}
-# <<< fleetwatch
-EOF
+  unhook_caddyfile
+  printf '%s\n' "$IMPORT" >> "$CADDYFILE"
+  say "Wrote $SITE and added '$IMPORT' to $CADDYFILE"
   caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 || die "Caddy rejected $CADDYFILE; fix it and run: systemctl reload caddy"
   systemctl enable caddy >/dev/null 2>&1
   systemctl reload caddy 2>/dev/null || systemctl restart caddy

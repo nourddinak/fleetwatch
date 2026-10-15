@@ -23,7 +23,7 @@ jobs:
       # The server embeds the UI, so it must be built before Go compiles.
       - run: npm ci && npx tsc --noEmit -p . && npm run build
         working-directory: web
-      - run: test -z "$(gofmt -l cmd internal web)"
+      - run: test -z "$(gofmt -l cmd internal web deploy)"
       - run: go vet ./...
       - run: go test ./...
       - run: bash -n scripts/install-server.sh internal/server/agentbin/uninstall.sh

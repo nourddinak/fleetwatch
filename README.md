@@ -24,7 +24,7 @@ The installer:
 
 1. downloads the latest release and checks its SHA-256;
 2. sets up a systemd service;
-3. installs Caddy for HTTPS;
+3. installs Caddy for HTTPS, putting the site in its own file (`/etc/caddy/fleetwatch.caddy`, from [`deploy/`](deploy/fleetwatch.caddy)) and adding only an `import` line to your Caddyfile;
 4. prints a one-time setup code.
 
 **2. Open `https://ops.example.com`.** Enter the setup code and create your admin account in the setup wizard.
@@ -93,6 +93,7 @@ cd web; npm run dev          # UI on Vite, proxies /api and /ws to an ops-server
 | `internal/proto` | the agent ↔ server protocol (JSON envelopes over WebSocket) |
 | `web/` | React dashboard, embedded into `ops-server` |
 | `scripts/` | build script and the server installer |
+| `deploy/` | the Caddy site file the installer uses, embedded into `ops-server` |
 
 ## Contributing
 

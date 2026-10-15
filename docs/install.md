@@ -23,7 +23,7 @@ The installer:
 3. creates the `ops` system user, `/var/lib/ops-server` and `/etc/ops-server.env`;
 4. sets up the systemd unit shown below;
 5. installs Caddy from its official apt repository if it is missing;
-6. adds a site block for your domain to `/etc/caddy/Caddyfile`, marked `# >>> fleetwatch`. If that file still holds Caddy's placeholder site, it replaces it.
+6. writes the Fleetwatch site to its own file, `/etc/caddy/fleetwatch.caddy` (from [`deploy/fleetwatch.caddy`](../deploy/fleetwatch.caddy)), and adds a single `import /etc/caddy/fleetwatch.caddy` line to `/etc/caddy/Caddyfile`. Your other sites in the Caddyfile are left alone. If the Caddyfile only holds Caddy's placeholder site, the placeholder is replaced.
 
 At the end it prints a one-time **setup code**. Open your domain, enter the code, and create the admin account in the setup wizard. If the code was not printed, find it with `journalctl -u ops-server | grep 'setup code'`. The code is printed again on every restart until the admin exists.
 
@@ -32,7 +32,7 @@ At the end it prints a one-time **setup code**. Open your domain, enter the code
 | `--domain NAME` | Public domain for HTTPS through Caddy. |
 | `--no-caddy` | Skip Caddy and use your own reverse proxy. It must run on the same host (see below). |
 | `--version vX.Y.Z` | Install a specific release instead of the latest. |
-| `--uninstall` | Stop and remove the server and its Caddy block. The database and `/etc/ops-server.env` are kept. |
+| `--uninstall` | Stop and remove the server, `/etc/caddy/fleetwatch.caddy` and its import line. The database and `/etc/ops-server.env` are kept. |
 | `--uninstall --purge` | Also delete the database, secret key, config and the `ops` user. |
 
 To upgrade, re-run the install command. Data and settings are kept.
@@ -112,7 +112,13 @@ These two variables are read on first start only. To change the password later, 
 
 ## 2. Caddy
 
-`/etc/caddy/Caddyfile`:
+The installer handles this. To do it by hand, write the site file, which is the same file as [`deploy/fleetwatch.caddy`](../deploy/fleetwatch.caddy) in this repo:
+
+```bash
+sudo sh -c 'ops-server caddy-config ops.example.com > /etc/caddy/fleetwatch.caddy'
+```
+
+That writes:
 
 ```caddyfile
 ops.example.com {
@@ -120,6 +126,12 @@ ops.example.com {
 	header Strict-Transport-Security "max-age=31536000"
 	reverse_proxy 127.0.0.1:8090
 }
+```
+
+Add one line to `/etc/caddy/Caddyfile`:
+
+```caddyfile
+import /etc/caddy/fleetwatch.caddy
 ```
 
 Then reload Caddy with `sudo systemctl reload caddy`.

@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/term"
 
+	"fleetwatch/deploy"
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/api"
 	"fleetwatch/internal/server/apps"
@@ -45,6 +46,7 @@ commands:
   hash-password   print an argon2id hash for ADMIN_PASSWORD_HASH
   reset-admin     set a new admin password, disable 2FA, sign out all sessions
   backup FILE     write a consistent copy of the database to FILE (safe while serving)
+  caddy-config DOMAIN  print the Caddy site block (deploy/fleetwatch.caddy) for DOMAIN
   version         print the version
 
 environment:
@@ -73,6 +75,8 @@ func main() {
 		err = resetAdmin()
 	case "backup":
 		err = backup(os.Args[2:])
+	case "caddy-config":
+		err = caddyConfig(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	default:
@@ -110,6 +114,17 @@ func openStore() (*sql.DB, *auth.Service, *secret.Box, error) {
 		return nil, nil, nil, err
 	}
 	return d, auth.NewService(d, box), box, nil
+}
+
+func caddyConfig(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: ops-server caddy-config DOMAIN")
+	}
+	site, err := deploy.CaddySite(args[0])
+	if err == nil {
+		fmt.Print(site)
+	}
+	return err
 }
 
 func backup(args []string) error {
