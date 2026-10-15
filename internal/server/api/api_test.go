@@ -30,6 +30,7 @@ import (
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/tokens"
 )
 
 var ui = fstest.MapFS{
@@ -70,7 +71,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	detector := incidents.NewDetector(incStore, d, hub.Connected, func(string) string { return "" })
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus)}))
+		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d)}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }

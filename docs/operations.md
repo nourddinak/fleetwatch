@@ -161,6 +161,43 @@ The **Domains** page lists every site the dashboard knows: Caddy's sites on each
   - a site that cannot be reached is shown as such but does not open an incident.
 - **What leaves the dashboard:** registration lookups send the domain name to its registry. The certificate check connects to the site like any visitor.
 
+### API tokens and Prometheus
+
+Settings → **API tokens** creates read-only tokens for scripts, Grafana or Prometheus. Creating one needs your password. The token (`fwt_…`) is shown once; only a hash is stored. Each token shows when and from where it was last used, and revoking one stops it immediately. Creating and revoking tokens are recorded in the audit log.
+
+- **What a token can do:** read every `GET /api/...` endpoint the dashboard uses.
+- **What it cannot do:** change anything, run commands, or read sessions, the audit log, the token list or the live WebSocket.
+- **Usage:** send it as `Authorization: Bearer fwt_…`:
+
+```bash
+curl -H "Authorization: Bearer fwt_…" https://ops.example.com/api/servers
+```
+
+`GET /metrics` serves the Prometheus text format:
+
+```yaml
+scrape_configs:
+  - job_name: fleetwatch
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      credentials: fwt_…
+    static_configs:
+      - targets: ["ops.example.com"]
+```
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `fleetwatch_server_up` | server, name | 1 while the agent is connected |
+| `fleetwatch_server_cpu_percent`, `_memory_percent`, `_disk_percent`, `_load1`, `_network_receive_mbps`, `_network_transmit_mbps`, `_uptime_seconds` | server, name | latest sample |
+| `fleetwatch_app_up` | app, name, server | 1 while the app is online |
+| `fleetwatch_app_cpu_percent`, `fleetwatch_app_memory_bytes`, `fleetwatch_app_restarts_total` | app, name, server | process tree usage, restarts |
+| `fleetwatch_app_health_up` | app, name, server | 1 while the health check passes (only with a health check) |
+| `fleetwatch_incidents_open` | severity | open incidents |
+| `fleetwatch_certificate_expiry_timestamp_seconds` | domain, where (`public`/`origin`) | certificate expiry |
+| `fleetwatch_domain_expiry_timestamp_seconds` | domain | registration expiry |
+| `fleetwatch_info` | version | always 1 |
+
 ### Maintenance mode
 
 Before a deploy or a reboot, open the server or app and choose **Maintenance…**. You can pause alerts for 30 minutes, 1, 4 or 24 hours, or until you end it.

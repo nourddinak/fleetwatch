@@ -25,6 +25,7 @@ import (
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/release"
+	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/valid"
 )
 
@@ -47,6 +48,7 @@ type Deps struct {
 	Release    *release.Checker
 	Maint      *maintenance.Service
 	Domains    *domains.Checker
+	Tokens     *tokens.Service
 }
 
 type server struct{ Deps }
@@ -74,6 +76,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.Incidents != nil {
 		s.incidentRoutes(mux)
+	}
+	if d.Tokens != nil {
+		s.tokenRoutes(mux)
 	}
 	if d.Domains != nil {
 		mux.HandleFunc("GET /api/domains", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {

@@ -19,6 +19,7 @@ const NAV = [
   ["metrics", "Metrics"],
   ["notifications", "Notifications"],
   ["incidents", "Incident rules"],
+  ["tokens", "API tokens"],
   ["system", "System"],
 ];
 

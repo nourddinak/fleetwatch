@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/skip2/go-qrcode"
@@ -41,6 +42,10 @@ type authedHandler func(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 // authed only lets fully signed-in sessions (password + 2FA if enabled) through.
 func (s *server) authed(h authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && s.Tokens != nil {
+			s.tokenAuthed(w, r, strings.TrimSpace(bearer), h)
+			return
+		}
 		sess, err := s.Auth.Authenticate(cookieToken(r))
 		if err != nil || sess.MFAPending {
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "Not signed in.")

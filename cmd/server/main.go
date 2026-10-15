@@ -39,6 +39,7 @@ import (
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/tokens"
 	"fleetwatch/web"
 )
 
@@ -393,7 +394,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
