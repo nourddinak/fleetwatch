@@ -113,6 +113,7 @@ The dashboard opens an "Agent Offline" incident once an agent has been away for 
   - they have a working directory, a non-root user, or a binary outside the system paths.
 - **Project folders** are found one level below the discovery roots (Settings → System; default `/var/www`).
 - If a discovery was ignored, it stays ignored until its process name or path changes.
+- **Static sites** are recognized when Caddy serves their folder (`root` + `file_server`, also through `import`ed files). Their status comes from Caddy's admin API (`localhost:2019`, on by default) or, if that is turned off, from a health check. Turn on a health check for `https://your-domain/` to get alerts when a static site goes down.
 
 ### Logs are missing
 

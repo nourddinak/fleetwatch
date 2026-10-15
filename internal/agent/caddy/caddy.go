@@ -1,5 +1,6 @@
-// Package caddy reads reverse-proxy routes (domain → upstream) from a local Caddy,
-// via its admin API or, failing that, by parsing the Caddyfile. It never writes.
+// Package caddy reads routes from a local Caddy: reverse proxies (domain → upstream
+// port) and static sites (domain → root directory), via its admin API or, failing
+// that, by parsing the Caddyfile and the files it imports. It never writes.
 package caddy
 
 import (
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +21,7 @@ import (
 	"fleetwatch/internal/proto"
 )
 
-const ttl = 5 * time.Minute
+const ttl = time.Minute // static sites take their up/down state from this; the admin API call is cheap
 
 type Cache struct {
 	mu     sync.Mutex
@@ -34,11 +36,12 @@ func (c *Cache) Routes(ctx context.Context) []proto.Route {
 		return c.routes
 	}
 	c.routes = fromAdminAPI(ctx)
-	if c.routes == nil {
-		if f, err := os.Open("/etc/caddy/Caddyfile"); err == nil {
-			c.routes = ParseCaddyfile(f)
-			f.Close()
+	if c.routes != nil {
+		for i := range c.routes {
+			c.routes[i].Live = true
 		}
+	} else {
+		c.routes = parseFile("/etc/caddy/Caddyfile", 0)
 	}
 	if c.routes == nil {
 		c.routes = []proto.Route{}
@@ -72,6 +75,7 @@ type jsonRoute struct {
 
 type jsonHandler struct {
 	Handler   string      `json:"handler"`
+	Root      string      `json:"root"` // vars (from the root directive) or file_server
 	Routes    []jsonRoute `json:"routes"`
 	Upstreams []struct {
 		Dial string `json:"dial"`
@@ -93,6 +97,7 @@ func ParseJSONConfig(raw []byte) []proto.Route {
 		return nil
 	}
 	out := []proto.Route{}
+	seen := map[string]bool{}
 	var walk func(routes []jsonRoute, hosts []string)
 	walk = func(routes []jsonRoute, hosts []string) {
 		for _, r := range routes {
@@ -112,6 +117,15 @@ func ParseJSONConfig(raw []byte) []proto.Route {
 					}
 				case "subroute":
 					walk(hd.Routes, h)
+				case "vars", "file_server":
+					if root := cleanRoot(hd.Root); root != "" {
+						for _, host := range h {
+							if !seen[host+"|"+root] {
+								seen[host+"|"+root] = true
+								out = append(out, proto.Route{Host: host, Root: root})
+							}
+						}
+					}
 				}
 			}
 		}
@@ -122,9 +136,20 @@ func ParseJSONConfig(raw []byte) []proto.Route {
 	return out
 }
 
-// ParseCaddyfile handles the common shape: site blocks containing reverse_proxy.
-// shortcut: no import/snippet expansion or env placeholders; good enough for suggestions.
-func ParseCaddyfile(r io.Reader) []proto.Route {
+// ParseCaddyfile handles the common shape: site blocks containing reverse_proxy or root.
+// shortcut: no snippet expansion or env placeholders; good enough for suggestions.
+func ParseCaddyfile(r io.Reader) []proto.Route { return parse(r, "", 0) }
+
+func parseFile(name string, nesting int) []proto.Route {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	return parse(f, filepath.Dir(name), nesting)
+}
+
+func parse(r io.Reader, dir string, nesting int) []proto.Route {
 	out := []proto.Route{}
 	var hosts []string
 	depth := 0
@@ -138,11 +163,31 @@ func ParseCaddyfile(r io.Reader) []proto.Route {
 			continue
 		}
 		opens, closes := strings.Count(line, "{"), strings.Count(line, "}")
+		// Top-level file imports (e.g. import /etc/caddy/fleetwatch.caddy, import sites/*);
+		// snippet imports have no path and match no file.
+		if fields := strings.Fields(line); depth == 0 && dir != "" && nesting < 5 && len(fields) == 2 && fields[0] == "import" {
+			pattern := fields[1]
+			if !filepath.IsAbs(pattern) {
+				pattern = filepath.Join(dir, pattern)
+			}
+			matches, _ := filepath.Glob(pattern)
+			for _, m := range matches {
+				out = append(out, parseFile(m, nesting+1)...)
+			}
+			continue
+		}
 		if depth == 0 && strings.HasSuffix(line, "{") && !strings.HasPrefix(line, "(") && line != "{" {
 			hosts = siteHosts(strings.TrimSuffix(line, "{"))
 		}
 		if depth > 0 {
 			fields := strings.Fields(line)
+			if len(fields) > 1 && fields[0] == "root" {
+				if root := cleanRoot(fields[len(fields)-1]); root != "" {
+					for _, h := range hosts {
+						out = append(out, proto.Route{Host: h, Root: root})
+					}
+				}
+			}
 			if len(fields) > 1 && fields[0] == "reverse_proxy" {
 				for _, f := range fields[1:] {
 					if f == "{" || strings.HasPrefix(f, "/") || strings.HasPrefix(f, "@") || f == "*" {
@@ -176,6 +221,14 @@ func siteHosts(addr string) []string {
 		}
 	}
 	return hosts
+}
+
+// cleanRoot keeps absolute, placeholder-free directories.
+func cleanRoot(root string) string {
+	if !strings.HasPrefix(root, "/") || strings.Contains(root, "{") {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(root))
 }
 
 func route(host, upstream string) proto.Route {

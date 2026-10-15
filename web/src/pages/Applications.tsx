@@ -50,7 +50,7 @@ export function Applications() {
 
   return (
     <>
-      <PageHeader title="Applications" sub={`${apps.length} applications across all servers — PM2 and systemd`} actions={<Button onClick={() => openAddApp()}><Plus size={15} /> Add application</Button>} />
+      <PageHeader title="Applications" sub={`${apps.length} applications across all servers: PM2, systemd and static sites`} actions={<Button onClick={() => openAddApp()}><Plus size={15} /> Add application</Button>} />
       <Gate>
         <FilterBar>
           <SearchInput value={q} onChange={(v) => set("q", v)} placeholder="Search name, path, domain, port…" className="lg:w-72" />

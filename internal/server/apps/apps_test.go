@@ -237,3 +237,51 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("events: %+v", ev)
 	}
 }
+
+func TestStaticSites(t *testing.T) {
+	s := newService(t)
+	inv := inventory(false, false, "")
+	inv.Projects = append(inv.Projects, proto.Project{Path: "/var/www/docs", Markers: []string{"package.json"}, Runtime: "Node.js"})
+	inv.Routes = append(inv.Routes,
+		proto.Route{Host: "static.example.test", Root: "/var/www/static-site/dist", Live: true},
+		proto.Route{Host: "outside.example.test", Root: "/srv/landing", Live: true})
+	s.Ingest("srv1", inv)
+
+	d := pending(t, s)
+	if x := d["static-site"]; x.SuggestedDomain != "static.example.test" || x.Headline != "Static site served by Caddy" || x.Runtime != "Static" {
+		t.Fatalf("served folder discovery: %+v", x)
+	}
+	if x := d["outside.example.test"]; x.Path != "/srv/landing" || x.SuggestedDomain != "outside.example.test" {
+		t.Fatalf("root outside discovery roots: %+v", d)
+	}
+	if x := d["docs"]; x.SuggestedDomain != "" || x.Runtime != "Node.js" {
+		t.Fatalf("unserved folder: %+v", x)
+	}
+
+	site, _ := s.Create(Input{ServerID: "srv1", Name: "Site", Manager: "standalone", Path: "/var/www/static-site"}, "manual")
+	docs, _ := s.Create(Input{ServerID: "srv1", Name: "Docs", Manager: "standalone", Path: "/var/www/docs"}, "manual")
+	if v, _ := s.Get(site.ID); v.Status != "online" || v.Runtime != "Static" || v.SuggestedDomain != "static.example.test" || !strings.Contains(v.RawStatus, "/var/www/static-site/dist") {
+		t.Fatalf("live static site: %+v", v)
+	}
+	if v, _ := s.Get(docs.ID); v.Status != "unknown" || v.RawStatus != "not served by Caddy" {
+		t.Fatalf("unserved standalone: %s %q", v.Status, v.RawStatus)
+	}
+
+	// Caddy config read from the Caddyfile only (admin API off): status needs a health check.
+	inv.Routes[1].Live = false
+	s.Ingest("srv1", inv)
+	if v, _ := s.Get(site.ID); v.Status != "unknown" || !strings.Contains(v.RawStatus, "health check") {
+		t.Fatalf("config-only static site: %s %q", v.Status, v.RawStatus)
+	}
+	if _, err := s.SetHealth(site.ID, HealthView{Enabled: true, URL: "https://static.example.test/", IntervalSec: 30, TimeoutMs: 5000, ExpectedStatus: 200}); err != nil {
+		t.Fatal(err)
+	}
+	s.IngestHealth("srv1", []proto.HealthResult{{AppID: site.ID, OK: false, Error: "HTTP 502", TS: 1_800_000_000_000}})
+	if v, _ := s.Get(site.ID); v.Status != "warning" {
+		t.Fatalf("failing check: %s", v.Status)
+	}
+	s.IngestHealth("srv1", []proto.HealthResult{{AppID: site.ID, OK: true, Status: 200, TS: 1_800_000_001_000}})
+	if v, _ := s.Get(site.ID); v.Status != "online" {
+		t.Fatalf("passing check: %s", v.Status)
+	}
+}

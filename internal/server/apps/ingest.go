@@ -120,10 +120,39 @@ func candidates(inv *proto.Inventory, apps []App) []candidate {
 		if claimed[path] || paths[path] {
 			continue
 		}
+		data := discoveryData{Project: pr}
+		if r := servingRoute(inv.Routes, path); r != nil {
+			data.Domain = r.Host // a static site served by Caddy
+		}
 		out = append(out, candidate{
 			fingerprint: Fingerprint("folder", path, path), kind: "folder",
 			name: path[strings.LastIndex(path, "/")+1:], key: path, path: path,
-			data: discoveryData{Project: pr},
+			data: data,
+		})
+	}
+	// Static sites Caddy serves from a folder outside the discovery roots.
+	covered := func(dir string) bool {
+		for p := range projects {
+			if dir == p || strings.HasPrefix(dir, p+"/") {
+				return true
+			}
+		}
+		for p := range paths {
+			if dir == p || strings.HasPrefix(dir, p+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range inv.Routes {
+		if r.Root == "" || covered(r.Root) {
+			continue
+		}
+		paths[r.Root] = true // one candidate per folder, even with several hosts
+		out = append(out, candidate{
+			fingerprint: Fingerprint("folder", r.Root, r.Root), kind: "folder",
+			name: r.Host, key: r.Root, path: r.Root,
+			data: discoveryData{Domain: r.Host},
 		})
 	}
 	return out

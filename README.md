@@ -4,7 +4,7 @@ Self-hosted monitoring and control for the apps on your own VPSs. One dashboard 
 
 - **One central server** (`ops-server`, a single Go binary with SQLite and the dashboard built in).
 - **A small agent per VPS** (`ops-agent`, a systemd service) that connects out over WSS. No inbound ports on your VPSs.
-- **Finds your apps by itself:** PM2 processes, systemd services, project folders, ports, git info, Caddy domains.
+- **Finds your apps by itself:** PM2 processes, systemd services, static sites served by Caddy, project folders, ports, git info and domains.
 - **Logs:** live tail plus 7 days of full-text search.
 - **Metrics:** CPU, RAM, disk and network per server and per app.
 - **Health checks and incidents:** HTTP health checks, and incidents opened automatically for downtime, crash loops, failing checks, high resource use and repeated errors. They resolve themselves when the problem clears.

@@ -145,6 +145,44 @@ func match(a App, inv *proto.Inventory) (*proto.Process, *proto.Project) {
 	return p, nil
 }
 
+// servingRoute finds the Caddy route that serves files from dir (its root is dir or
+// a folder inside it, such as dir/dist).
+func servingRoute(routes []proto.Route, dir string) *proto.Route {
+	if dir == "" || dir == "/" {
+		return nil
+	}
+	for i := range routes {
+		if r := routes[i].Root; r == dir || strings.HasPrefix(r, dir+"/") {
+			return &routes[i]
+		}
+	}
+	return nil
+}
+
+// staticSite fills in a process-less app that Caddy serves as a static site: its state
+// comes from Caddy and from its health check (a failing check shows as "warning" and
+// raises a Health Check Failed incident, not a second "offline" one).
+func staticSite(v *View, a App, routes []proto.Route) {
+	r := servingRoute(routes, v.Path)
+	if r == nil {
+		v.RawStatus = "not served by Caddy"
+		return
+	}
+	v.Runtime = "Static"
+	if a.Domain == "" {
+		v.SuggestedDomain = r.Host
+	}
+	v.RawStatus = "served by Caddy from " + r.Root
+	switch {
+	case v.HealthStatus == "failed":
+		v.Status = "warning"
+	case v.HealthStatus == "healthy" || r.Live:
+		v.Status = "online"
+	default:
+		v.RawStatus += " (Caddy admin API unreachable: enable a health check to confirm the site is up)"
+	}
+}
+
 // appStatus maps the manager's state to the UI status vocabulary.
 func appStatus(p *proto.Process) string {
 	switch p.Status {
@@ -205,7 +243,10 @@ func (s *Service) view(a App, inv *proto.Inventory) View {
 	}
 	connected := s.Connected == nil || s.Connected(a.ServerID)
 	if p == nil {
-		if inv != nil && connected && a.Manager != "standalone" {
+		switch {
+		case a.Manager == "standalone" && inv != nil && connected:
+			staticSite(&v, a, inv.Routes)
+		case inv != nil && connected:
 			v.Status = "offline" // the manager no longer knows this process
 		}
 		return v

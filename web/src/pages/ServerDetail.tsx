@@ -127,7 +127,7 @@ export function ServerApplications() {
   return (
     <Card pad={false}>
       <div className="p-5 pb-2"><SectionTitle title={`Applications on ${s.name}`} sub={`${list.length} discovered or manually added`} action={<Button size="sm" variant="secondary" onClick={() => openAddApp(s.id)}><Plus size={13} /> Add</Button>} /></div>
-      {list.length ? <AppsTable apps={list} showServer={false} /> : <div className="p-5"><EmptyState title="No applications on this server" desc="Discovered PM2 and systemd apps appear under Discoveries. You can also add one manually." /></div>}
+      {list.length ? <AppsTable apps={list} showServer={false} /> : <div className="p-5"><EmptyState title="No applications on this server" desc="Discovered PM2, systemd and static sites appear under Discoveries. You can also add one manually." /></div>}
     </Card>
   );
 }

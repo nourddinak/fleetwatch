@@ -44,9 +44,18 @@ export function AppOverview() {
       {a.manager !== "standalone" && !a.processFound && s?.status !== "disconnected" && (
         <div className="rounded-2xl bg-crit-soft px-5 py-3 text-sm text-crit">{a.manager} on {s?.name} does not know <span className="font-mono">{a.processKey}</span>. Check the process name in Settings, or start it on the server.</div>
       )}
+      {a.manager === "standalone" && (
+        <div className="rounded-2xl bg-surface2 px-5 py-3 text-sm">
+          {a.rawStatus.startsWith("served by Caddy") ? (
+            <>Static site, {a.rawStatus}. {a.health.enabled ? "Its health check decides whether it is up." : <><Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Turn on a health check</Link> to be alerted when it goes down.</>}</>
+          ) : (
+            <>No process belongs to this app and Caddy does not serve its folder, so its state is unknown. <Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Add a health check</Link> to monitor it.</>
+          )}
+        </div>
+      )}
       {a.suggestedDomain && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-info-soft px-5 py-3 text-sm text-info">
-          <span className="min-w-0 flex-1">Caddy routes <b>{a.suggestedDomain}</b> to this app’s port. Use it as the app’s domain?</span>
+          <span className="min-w-0 flex-1">Caddy {a.ports.length ? "routes" : "serves this app’s folder at"} <b>{a.suggestedDomain}</b>{a.ports.length ? " to this app’s port" : ""}. Use it as the app’s domain?</span>
           <Button size="sm" variant="secondary" onClick={useDomain}>Use domain</Button>
         </div>
       )}
@@ -210,7 +219,8 @@ interface HealthResultRow {
 function HealthEdit({ a, open, onClose }: { a: App; open: boolean; onClose: () => void }) {
   const { upsertApp, toast } = useStore();
   const port = a.ports.find((p) => p.proto === "TCP")?.port;
-  const [h, setH] = useState({ ...a.health, url: a.health.url || (port ? `http://127.0.0.1:${port}/health` : "") });
+  const site = a.domain ?? a.suggestedDomain;
+  const [h, setH] = useState({ ...a.health, url: a.health.url || (port ? `http://127.0.0.1:${port}/health` : site ? `https://${site}/` : "") });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const save = async () => {

@@ -64,6 +64,9 @@ func (s *Service) discoveryView(id, serverID, kind, name, key, dir, state, raw s
 			v.Git, v.GitRemote = true, g.Remote
 		}
 	}
+	if kind == "folder" && d.Domain != "" {
+		v.Headline, v.Runtime = "Static site served by Caddy", "Static"
+	}
 	if p := d.Process; p != nil {
 		if p.Runtime != "" {
 			v.Runtime = p.Runtime

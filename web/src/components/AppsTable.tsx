@@ -33,7 +33,7 @@ export function AppsTable({ apps, showServer = true }: { apps: App[]; showServer
               <Td className="whitespace-nowrap tabular-nums">{a.pid ? fmtMB(a.ram) : "—"}</Td>
               <Td className="whitespace-nowrap text-muted">{a.pid ? fmtDur(a.uptimeSec) : "—"}</Td>
               <Td className="font-mono text-xs">{a.ports.length ? a.ports.map((p) => p.port).join(", ") : "—"}</Td>
-              <Td className="max-w-[170px] truncate text-muted">{a.domain ?? "—"}</Td>
+              <Td className="max-w-[170px] truncate text-muted">{a.domain ?? (a.suggestedDomain ? <span className="italic" title="Detected from Caddy; confirm it on the app page">{a.suggestedDomain}</span> : "—")}</Td>
               <Td className="whitespace-nowrap tabular-nums">{a.folderMB ? fmtMB(a.folderMB) : "—"}</Td>
               <Td>{inc(a.id) ? <Badge tone="crit">{inc(a.id)}</Badge> : <span className="text-muted">0</span>}</Td>
             </Tr>
