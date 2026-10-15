@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 
 	"fleetwatch/deploy"
 	"fleetwatch/internal/proto"
+	"fleetwatch/internal/server/agentbin"
 	"fleetwatch/internal/server/api"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
@@ -304,6 +306,33 @@ func serve() error {
 	addr := env("OPS_LISTEN", "127.0.0.1:8090")
 	updates := release.New(os.Getenv("OPS_UPDATE_SOURCE"), version, env("OPS_DATA_DIR", "data"))
 	updates.OnChange = func(st release.Status) { bus.Publish("update", st) }
+	// "Update the agents too": for an hour after such an update, every agent that
+	// connects on an older version is asked once to install this version's agent.
+	var agentsUntil time.Time
+	if updates.AgentsFollow() {
+		agentsUntil = time.Now().Add(time.Hour)
+		slog.Info("platform updated; updating agents as they reconnect", "version", version)
+	}
+	var asked sync.Map
+	hub.OnConnect = func(serverID, agentVersion string) {
+		if agentVersion == version || time.Now().After(agentsUntil) {
+			return
+		}
+		if _, done := asked.LoadOrStore(serverID, true); done {
+			return
+		}
+		go func() {
+			time.Sleep(3 * time.Second) // let the agent finish starting up
+			u, ok := agentbin.UpdateMessage(version)
+			if !ok {
+				return
+			}
+			if err := hub.Send(serverID, proto.TypeUpdate, u); err == nil {
+				hub.Reg.AddEvent(serverID, "agent", "Update to v"+version+" started automatically (platform update)")
+				hub.Publish(serverID)
+			}
+		}()
+	}
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{

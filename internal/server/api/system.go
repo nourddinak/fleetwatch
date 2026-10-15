@@ -23,11 +23,14 @@ func (s *server) updateCheck(w http.ResponseWriter, r *http.Request, _ auth.Sess
 // updateApply asks the root helper to install a newer release; ops-server restarts
 // when it is done and the UI reloads once /api/health reports the new version.
 func (s *server) updateApply(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	var in struct{ Version string }
+	var in struct {
+		Version string
+		Agents  bool // also update outdated agents once the new version runs
+	}
 	if !decode(w, r, &in) {
 		return
 	}
-	err := s.Release.Request(in.Version)
+	err := s.Release.Request(in.Version, in.Agents)
 	switch {
 	case errors.Is(err, release.ErrNoHelper), errors.Is(err, release.ErrNotNewer), errors.Is(err, release.ErrUnavailable):
 		writeError(w, http.StatusConflict, "cannot_update", capitalize(err.Error())+".")
@@ -36,6 +39,10 @@ func (s *server) updateApply(w http.ResponseWriter, r *http.Request, _ auth.Sess
 		fail(w, err)
 		return
 	}
-	s.audit(r, "system.update", in.Version, "from "+s.Version)
+	detail := "from " + s.Version
+	if in.Agents {
+		detail += ", agents too"
+	}
+	s.audit(r, "system.update", in.Version, detail)
 	writeJSON(w, http.StatusAccepted, s.Release.Status())
 }

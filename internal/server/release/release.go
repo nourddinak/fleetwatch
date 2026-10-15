@@ -41,6 +41,8 @@ const HelperUnit = "/etc/systemd/system/ops-server-update.path"
 
 const (
 	requestFile = "update-request"
+	agentsFile  = "update-agents" // "update the agents too", read by the new version on start
+	agentsStale = time.Hour
 	statusFile  = "update-status.json"
 	checkEvery  = 15 * time.Minute // one redirect lookup; GitHub does not rate-limit it like its API
 	freshFor    = 2 * time.Minute  // opening the dashboard re-checks when the last check is older
@@ -210,8 +212,9 @@ func (c *Checker) Status() Status {
 }
 
 // Request asks the root helper to install tag, which must be newer than the running
-// version. The helper starts as soon as the file appears.
-func (c *Checker) Request(tag string) error {
+// version. The helper starts as soon as the file appears. With agents, the new
+// version updates outdated agents as they reconnect (see AgentsFollow).
+func (c *Checker) Request(tag string, agents bool) error {
 	if c.disabled() {
 		return ErrUnavailable
 	}
@@ -221,11 +224,39 @@ func (c *Checker) Request(tag string) error {
 	if _, err := os.Stat(c.HelperPath); err != nil {
 		return ErrNoHelper
 	}
+	if agents {
+		if err := os.WriteFile(filepath.Join(c.DataDir, agentsFile), []byte(tag+"\n"), 0o644); err != nil {
+			return err
+		}
+	} else {
+		os.Remove(filepath.Join(c.DataDir, agentsFile))
+	}
 	tmp := filepath.Join(c.DataDir, requestFile+".tmp")
 	if err := os.WriteFile(tmp, []byte(tag+"\n"), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(c.DataDir, requestFile))
+}
+
+// AgentsFollow is called once on start. It reports whether an update was installed
+// with "update the agents too", which the new version then does as agents reconnect.
+// A note for a version that did not get installed (a failed update) is dropped once
+// it is old, so a later restart does not act on it.
+func (c *Checker) AgentsFollow() bool {
+	path := filepath.Join(c.DataDir, agentsFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	tag := strings.TrimSpace(string(raw))
+	if !Newer(tag, c.Current) { // we are that version (or newer): the update went through
+		os.Remove(path)
+		return true
+	}
+	if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) > agentsStale {
+		os.Remove(path)
+	}
+	return false
 }
 
 // Newer reports whether tag vX.Y.Z is newer than current ("0.9.2", "0.9.2-rc1",

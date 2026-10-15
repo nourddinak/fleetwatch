@@ -202,13 +202,8 @@ func (s *server) restartAgent(w http.ResponseWriter, r *http.Request, _ auth.Ses
 // updateAgent asks the agent to install the agent build embedded in this server.
 func (s *server) updateAgent(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 	id := r.PathValue("id")
-	u := proto.Update{Version: s.Version, SHA256: map[string]string{}}
-	for _, p := range agentbin.Platforms {
-		if sum, ok := agentbin.SHA256(p); ok {
-			u.SHA256[p] = sum
-		}
-	}
-	if len(u.SHA256) == 0 {
+	u, ok := agentbin.UpdateMessage(s.Version)
+	if !ok {
 		writeError(w, http.StatusConflict, "no_agent_build", "This server build contains no agent binaries.")
 		return
 	}

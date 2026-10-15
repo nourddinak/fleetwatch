@@ -72,16 +72,16 @@ func TestCheckRequestInstall(t *testing.T) {
 	if !st.Available || st.Latest != "v0.9.3" || st.CanApply || st.URL != srv.URL+"/tag/v0.9.3" {
 		t.Fatalf("status: %+v", st)
 	}
-	if err := c.Request("v0.9.3"); err != ErrNoHelper {
+	if err := c.Request("v0.9.3", false); err != ErrNoHelper {
 		t.Fatalf("request without helper: %v", err)
 	}
 	os.WriteFile(c.HelperPath, nil, 0o644)
 	for _, bad := range []string{"v0.9.2", "v0.9.1", "../../x", "v1.0.0; rm -rf /"} {
-		if err := c.Request(bad); err == nil {
+		if err := c.Request(bad, false); err == nil {
 			t.Fatalf("request %q accepted", bad)
 		}
 	}
-	if err := c.Request("v0.9.3"); err != nil || !c.Status().Applying {
+	if err := c.Request("v0.9.3", false); err != nil || !c.Status().Applying {
 		t.Fatalf("request: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestInstallRejectsBadChecksum(t *testing.T) {
 
 func TestDisabled(t *testing.T) {
 	c := New("off", "0.9.2", t.TempDir())
-	if err := c.Check(context.Background()); err != ErrUnavailable || !c.Status().Disabled || c.Request("v9.9.9") != ErrUnavailable {
+	if err := c.Check(context.Background()); err != ErrUnavailable || !c.Status().Disabled || c.Request("v9.9.9", false) != ErrUnavailable {
 		t.Fatal("off must disable checks and requests")
 	}
 }
@@ -182,5 +182,48 @@ func TestLivePushAndRefresh(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if n := hits.Load() - before; n != 1 {
 		t.Fatalf("refresh made %d requests, want 1", n)
+	}
+}
+
+func TestAgentsFollowTheUpdate(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "helper")
+	os.WriteFile(helper, nil, 0o644)
+	old := New("http://x", "0.9.2", dir)
+	old.HelperPath = helper
+	note := filepath.Join(dir, agentsFile)
+
+	if err := old.Request("v0.9.3", true); err != nil {
+		t.Fatal(err)
+	}
+	// The old version restarting (say the update failed) must not act on the note...
+	if New("http://x", "0.9.2", dir).AgentsFollow() {
+		t.Fatal("old version followed an update it did not install")
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Fatal("fresh note dropped too early")
+	}
+	// ...the new version does, once.
+	if !New("http://x", "0.9.3", dir).AgentsFollow() {
+		t.Fatal("new version ignored the note")
+	}
+	if New("http://x", "0.9.3", dir).AgentsFollow() {
+		t.Fatal("note acted on twice")
+	}
+
+	// A note for an update that never happened expires.
+	old.Request("v0.9.3", true)
+	past := time.Now().Add(-2 * agentsStale)
+	os.Chtimes(note, past, past)
+	New("http://x", "0.9.2", dir).AgentsFollow()
+	if _, err := os.Stat(note); !os.IsNotExist(err) {
+		t.Fatal("stale note kept")
+	}
+
+	// Updating without "agents too" clears an earlier note.
+	old.Request("v0.9.3", true)
+	old.Request("v0.9.3", false)
+	if New("http://x", "0.9.3", dir).AgentsFollow() {
+		t.Fatal("agents updated although not asked")
 	}
 }

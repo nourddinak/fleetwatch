@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	"fleetwatch/internal/proto"
 )
 
 //go:embed bin install.sh.tmpl uninstall.sh ops-agent.service
@@ -56,6 +58,18 @@ var script = template.Must(template.New("install.sh.tmpl").Funcs(template.FuncMa
 func UninstallScript() []byte {
 	b, _ := files.ReadFile("uninstall.sh")
 	return b
+}
+
+// UpdateMessage tells an agent to install the agents built into this server, with
+// each platform's checksum. ok is false when the build has no agent binaries.
+func UpdateMessage(version string) (u proto.Update, ok bool) {
+	u = proto.Update{Version: version, SHA256: map[string]string{}}
+	for _, p := range Platforms {
+		if sum, found := SHA256(p); found {
+			u.SHA256[p] = sum
+		}
+	}
+	return u, len(u.SHA256) > 0
 }
 
 // InstallScript renders install.sh for agents that will connect to serverURL.

@@ -47,7 +47,12 @@ A check is a single request to the release page's `latest` link, not to GitHub's
 3. that service downloads the release, checks it against the release's `SHA256SUMS`, swaps `/usr/local/bin/ops-server` and restarts the server;
 4. the page reloads once the new version answers.
 
-If anything fails, nothing is replaced and the error shows under Settings → System. The helper's log is in `journalctl -u ops-server-update`.
+If anything fails, nothing is replaced and the error shows under Settings → System.
+
+**Agents too, in the same click:** the update dialog has "Also update the agents", ticked by default.
+- **How it works:** the dashboard leaves a note before restarting. When the new version starts, it asks every agent that connects on an older version to install the matching agent, once each. Agents normally reconnect within seconds, and offline agents are covered for the next hour.
+- **Progress:** a line at the top of the dashboard shows it ("Updating agents: 2 of 3 done").
+- **After the hour:** agents that come back later can be updated from Settings → Agents → **Update agents**. The helper's log is in `journalctl -u ops-server-update`.
 
 - **Why the root helper:** the dashboard runs as the unprivileged `ops` user and cannot replace its own binary. Through the helper it can only ask for an official release that is newer than the running one and passes the checksum.
 - **Older installs:** installs from before v0.9.3 lack the two helper units; re-run the install command once.

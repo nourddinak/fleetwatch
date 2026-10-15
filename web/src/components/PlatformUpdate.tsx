@@ -20,11 +20,24 @@ export interface UpdateStatus {
 
 const INSTALL_CMD = "curl -fsSL https://raw.githubusercontent.com/nourddinak/fleetwatch/main/scripts/install-server.sh | sudo bash -s -- --domain <your-domain>";
 const DISMISS_KEY = "fw.update.dismissed";
+const AGENTS_KEY = "fw.update.agents"; // version whose agents are being updated after the reload
+
+function remember(key: string, value: string | null) {
+  try {
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
+  } catch {
+    /* private mode: the progress line is just not shown */
+  }
+}
 
 /** Installs the latest release: asks the server, waits for it to come back on the new version, reloads. */
 export function UpdateDialog({ st, open, onClose }: { st: UpdateStatus; open: boolean; onClose: () => void }) {
+  const { servers } = useStore();
   const [phase, setPhase] = useState<"confirm" | "installing" | "failed">("confirm");
   const [err, setErr] = useState("");
+  const [agents, setAgents] = useState(true);
+  const paired = servers.filter((s) => s.status !== "pending").length;
 
   useEffect(() => {
     if (open) {
@@ -67,7 +80,8 @@ export function UpdateDialog({ st, open, onClose }: { st: UpdateStatus; open: bo
   const start = async () => {
     setErr("");
     try {
-      await api("POST", "/api/system/update/apply", { version: st.latest });
+      await api("POST", "/api/system/update/apply", { version: st.latest, agents: agents && paired > 0 });
+      remember(AGENTS_KEY, agents && paired > 0 ? st.latest.replace(/^v/, "") : null);
       setPhase("installing");
     } catch (e) {
       setErr((e as ApiError).message);
@@ -109,7 +123,15 @@ export function UpdateDialog({ st, open, onClose }: { st: UpdateStatus; open: bo
         ) : (
           <>
             <p>You run <b>v{st.current}</b>. The server downloads <b>{st.latest}</b> from the official release, verifies it against the release's SHA256SUMS, replaces itself and restarts. The dashboard is unavailable for a few seconds; agents reconnect on their own.</p>
-            <p className="text-muted">After that, update the agents from Settings → Agents.</p>
+            {paired > 0 ? (
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-surface2 px-4 py-3">
+                <input type="checkbox" className="mt-0.5 h-4 w-4 accent-current" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
+                <span>
+                  <span className="block font-medium">{paired === 1 ? "Also update the agent on your server" : `Also update the agents on all ${paired} servers`}</span>
+                  <span className="block text-muted">Each agent installs the matching version as soon as it reconnects to the updated dashboard. Agents offline right now are updated when they come back within the next hour.</span>
+                </span>
+              </label>
+            ) : null}
             {st.url && <a href={st.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">What's new in {st.latest} <ExternalLink size={12} /></a>}
           </>
         )}
@@ -143,7 +165,7 @@ export function UpdateBanner() {
       off();
     };
   }, [subscribeLive]);
-  if (!st?.available || dismissed === st.latest) return null;
+  if (!st?.available || dismissed === st.latest) return <AgentsProgress />;
   const dismiss = () => {
     setDismissed(st.latest);
     try {
@@ -165,6 +187,43 @@ export function UpdateBanner() {
       </div>
       <UpdateDialog st={st} open={open} onClose={() => setOpen(false)} />
     </>
+  );
+}
+
+/** After "update agents too", shows live progress until every connected agent runs the new version. */
+function AgentsProgress() {
+  const { servers } = useStore();
+  const [target, setTarget] = useState(() => {
+    try {
+      return sessionStorage.getItem(AGENTS_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const connected = servers.filter((s) => s.status !== "pending" && s.status !== "disconnected");
+  const done = connected.filter((s) => s.agentVersion === target).length;
+  const finished = target !== "" && connected.length > 0 && done === connected.length;
+  useEffect(() => {
+    if (!finished) return;
+    const t = setTimeout(() => {
+      remember(AGENTS_KEY, null);
+      setTarget("");
+    }, 15_000); // keep "all updated" visible briefly
+    return () => clearTimeout(t);
+  }, [finished]);
+  if (!target || connected.length === 0 || servers[0]?.latestAgentVersion !== target) return null;
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm" role="status">
+      {finished ? <ArrowUpCircle size={18} className="shrink-0 text-ok" /> : <Spinner size={16} />}
+      <span className="min-w-0 flex-1">
+        {finished ? (
+          <>Fleetwatch and {connected.length === 1 ? "its agent" : `all ${connected.length} agents`} now run <b>v{target}</b>.</>
+        ) : (
+          <>Updating agents to <b>v{target}</b>: {done} of {connected.length} done.</>
+        )}
+      </span>
+      <Link to="/settings/agents" className="text-muted underline underline-offset-2">Agents</Link>
+    </div>
   );
 }
 

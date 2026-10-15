@@ -49,6 +49,7 @@ type Hub struct {
 	OnLogs        func(serverID string, lines []proto.LogLine)
 	OnMetrics     func(serverID string, m proto.Metrics)
 	OnStateChange func(serverID string) // agent connected or disconnected
+	OnConnect     func(serverID, agentVersion string)
 	// Handlers receive other agent message types, keyed by Envelope.Type.
 	Handlers map[string]func(serverID string, data json.RawMessage)
 
@@ -129,6 +130,9 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, serverID, remoteIP,
 		old.ws.Close(websocket.StatusPolicyViolation, "replaced by a newer connection")
 	}
 	log.Info("agent connected", "version", hello.AgentVersion)
+	if h.OnConnect != nil {
+		h.OnConnect(serverID, hello.AgentVersion)
+	}
 
 	defer func() {
 		h.mu.Lock()
