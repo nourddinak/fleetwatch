@@ -206,7 +206,7 @@ Before a deploy or a reboot, open the server or app and choose **Maintenance…*
 - **When it ends**, on time or with **End now**, one summary alert is sent if anything is still broken, for example "Maintenance on api ended: 2 problem(s) still open". With a webhook, its `event` is `maintenance.ended`.
 - **After that**, alerts work normally again.
 
-### Push notifications (phone and desktop)
+### Push notifications (phones)
 
 The dashboard can send alerts straight to your devices, with no ntfy, Telegram or Discord needed.
 
@@ -216,7 +216,8 @@ The dashboard can send alerts straight to your devices, with no ntfy, Telegram o
 
 On each platform:
 
-- **Android and desktop (Chrome, Edge, Firefox):** works in the browser. Installing the dashboard as an app (browser menu → **Install**) gives it its own window and icon.
+- **Android (Chrome, Edge, Firefox):** works in the browser. Installing the dashboard as an app (browser menu → **Install app**) gives it its own icon.
+- **Computers:** push is set up from phones only. On a computer the card lists your phones, and you can pause push or remove a phone there.
 - **iPhone and iPad (iOS 16.4+):** works only in the installed app. Tap Share → **Add to Home Screen**, open Fleetwatch from the home screen, then turn push on there.
 
 How it behaves:

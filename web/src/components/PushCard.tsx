@@ -26,7 +26,9 @@ function deviceName(ua: string) {
 }
 
 const supported = typeof window !== "undefined" && window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-const isIOS = typeof navigator !== "undefined" && /iPhone|iPad/.test(navigator.userAgent);
+const isIOS = typeof navigator !== "undefined" && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+// Push is set up from phones and tablets only; computers just see and manage the devices.
+const isPhone = typeof navigator !== "undefined" && (isIOS || /Android|Mobile/i.test(navigator.userAgent));
 
 /** Settings → Notifications: push notifications to this browser / installed app. */
 export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
@@ -99,10 +101,14 @@ export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: ()
     <Card>
       <SectionTitle
         title="Push notifications"
-        sub="Alerts straight to your phone or computer from this dashboard: no ntfy, Telegram or Discord needed. Turn it on in each browser or installed app that should get them."
+        sub="Alerts straight to your phone from this dashboard: no ntfy, Telegram or Discord needed. Turn it on from each phone that should get them."
         action={<Toggle checked={enabled} disabled={list.length === 0 || !!busy} onChange={setEnabled} />}
       />
-      {!supported ? (
+      {!isPhone ? (
+        <p className="rounded-2xl bg-surface2 px-4 py-3 text-sm text-muted">
+          Open this page on your phone to turn push notifications on there.{isIOS ? "" : " On iPhone, add the dashboard to the home screen first."}
+        </p>
+      ) : !supported ? (
         <p className="rounded-2xl bg-surface2 px-4 py-3 text-sm text-muted">
           {isIOS
             ? "On iPhone and iPad, push works in the installed app: tap Share → Add to Home Screen, open Fleetwatch from the home screen, then turn it on here (iOS 16.4 or later)."
@@ -138,7 +144,7 @@ export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: ()
           ))}
         </ul>
       )}
-      {!isIOS && supported && <p className="mt-3 text-xs text-muted">Tip: install the dashboard as an app (browser menu → Install) so alerts open it in its own window.</p>}
+      {isPhone && !isIOS && supported && <p className="mt-3 text-xs text-muted">Tip: add the dashboard to your home screen (browser menu → Install app) so alerts open it like an app.</p>}
     </Card>
   );
 }

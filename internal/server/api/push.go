@@ -25,9 +25,11 @@ func (s *server) pushRoutes(mux *http.ServeMux) {
 	}))
 	// subscribe registers this browser (its PushSubscription JSON).
 	mux.HandleFunc("POST /api/push/subscribe", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		// The browser's PushSubscription.toJSON() shape, field for field.
 		var in struct {
-			Endpoint string
-			Keys     struct{ P256dh, Auth string }
+			Endpoint       string
+			ExpirationTime *int64 // always null in practice; accepted and ignored
+			Keys           struct{ P256dh, Auth string }
 		}
 		if !decode(w, r, &in) {
 			return
