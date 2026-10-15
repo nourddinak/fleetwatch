@@ -134,6 +134,9 @@ func sameOrigin(r *http.Request) bool {
 
 // clientIP is the peer address, or the proxy-reported one when the peer is a
 // loopback reverse proxy (Caddy on the same host appends the real client last).
+// When that client is a Cloudflare edge (the domain is proxied by Cloudflare), the
+// real address is Cloudflare's CF-Connecting-IP. The header is trusted only from
+// Cloudflare's own networks, so a direct request to the server cannot fake it.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -143,8 +146,13 @@ func clientIP(r *http.Request) string {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			if last := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(last) != nil {
-				return last
+				host = last
 			}
+		}
+	}
+	if isCloudflare(host) {
+		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); net.ParseIP(cf) != nil {
+			return cf
 		}
 	}
 	return host

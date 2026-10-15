@@ -301,19 +301,33 @@ func TestTwoFactorOverHTTP(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
-	cases := []struct{ remote, xff, want string }{
-		{"127.0.0.1:5000", "198.51.100.7", "198.51.100.7"},
-		{"127.0.0.1:5000", "10.0.0.1, 198.51.100.7", "198.51.100.7"}, // only the proxy-appended entry counts
-		{"127.0.0.1:5000", "not-an-ip", "127.0.0.1"},
-		{"203.0.113.9:5000", "198.51.100.7", "203.0.113.9"}, // never trust XFF from a remote peer
-		{"[::1]:5000", "2001:db8::1", "2001:db8::1"},
+	cases := []struct{ remote, xff, cf, want string }{
+		{"127.0.0.1:5000", "198.51.100.7", "", "198.51.100.7"},
+		{"127.0.0.1:5000", "10.0.0.1, 198.51.100.7", "", "198.51.100.7"}, // only the proxy-appended entry counts
+		{"127.0.0.1:5000", "not-an-ip", "", "127.0.0.1"},
+		{"203.0.113.9:5000", "198.51.100.7", "", "203.0.113.9"}, // never trust XFF from a remote peer
+		{"[::1]:5000", "2001:db8::1", "", "2001:db8::1"},
+		// Behind Cloudflare: Caddy reports a Cloudflare edge, Cloudflare reports the client.
+		{"127.0.0.1:5000", "172.70.246.23", "203.0.113.50", "203.0.113.50"},
+		{"127.0.0.1:5000", "2606:4700:10::ac43:1", "2001:db8::50", "2001:db8::50"},
+		{"162.158.1.1:443", "", "203.0.113.50", "203.0.113.50"}, // no Caddy, Cloudflare straight in
+		{"127.0.0.1:5000", "172.70.246.23", "garbage", "172.70.246.23"},
+		// Spoofing: the header is ignored unless the request came from Cloudflare.
+		{"127.0.0.1:5000", "198.51.100.7", "203.0.113.50", "198.51.100.7"},
+		{"203.0.113.9:5000", "", "1.2.3.4", "203.0.113.9"},
+		{"127.0.0.1:5000", "172.70.246.23, 198.51.100.7", "1.2.3.4", "198.51.100.7"}, // fake Cloudflare hop in XFF
 	}
 	for _, x := range cases {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.RemoteAddr = x.remote
-		r.Header.Set("X-Forwarded-For", x.xff)
+		if x.xff != "" {
+			r.Header.Set("X-Forwarded-For", x.xff)
+		}
+		if x.cf != "" {
+			r.Header.Set("CF-Connecting-IP", x.cf)
+		}
 		if got := clientIP(r); got != x.want {
-			t.Errorf("%s + %q: got %s want %s", x.remote, x.xff, got, x.want)
+			t.Errorf("%s + XFF %q + CF %q: got %s want %s", x.remote, x.xff, x.cf, got, x.want)
 		}
 	}
 }

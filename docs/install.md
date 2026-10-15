@@ -140,6 +140,7 @@ Then reload Caddy with `sudo systemctl reload caddy`.
 - **Proxied traffic:** Caddy obtains the certificate and proxies both the dashboard and the agent WebSocket (`/agent/ws`); nothing else is needed.
 - **Why Caddy must be on the same host:** `ops-server` only trusts `X-Forwarded-For` and `X-Forwarded-Proto` from a loopback peer. That is how it learns the client IP (for lockout and the audit log) and knows the connection is HTTPS (for Secure cookies).
 - **Restricting access by IP:** do it in Caddy with a `remote_ip` matcher.
+- **Cloudflare in front (orange cloud):** this works without changes. When a request reaches the server from one of [Cloudflare's networks](https://www.cloudflare.com/ips/), the real address is taken from Cloudflare's `CF-Connecting-IP` header. That address is what the dashboard shows for each server and uses for login lockout and the audit log. The header is ignored on requests that do not come from Cloudflare, so it cannot be faked by connecting to the server directly. Use SSL mode "Full (strict)" so Cloudflare talks to Caddy over HTTPS.
 
 Open `https://ops.example.com` and sign in. Enable 2FA under Settings → 2FA.
 
