@@ -1,0 +1,15 @@
+[Unit]
+Description=Fleetwatch monitoring agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Root is required to read every process, every user's PM2, journald and to manage units.
+User=root
+ExecStart=/usr/local/bin/ops-agent run
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

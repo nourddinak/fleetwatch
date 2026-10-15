@@ -1,0 +1,165 @@
+// Package notify delivers alerts through pluggable providers (ntfy, Telegram,
+// Discord) and keeps a delivery history.
+package notify
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"fleetwatch/internal/server/valid"
+)
+
+// Message is provider-neutral.
+type Message struct {
+	Title    string
+	Body     string
+	Severity string // info | warning | critical | ok
+	Link     string // deep link into the dashboard, when OPS_PUBLIC_URL is known
+}
+
+// Provider sends a message. Add a provider by implementing this and registering it in
+// Providers.
+type Provider interface {
+	Send(ctx context.Context, m Message) error
+}
+
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+func post(ctx context.Context, rawURL, contentType string, body []byte, headers map[string]string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return redact(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(res.Body, 300))
+		return fmt.Errorf("HTTP %d: %s", res.StatusCode, strings.TrimSpace(string(detail)))
+	}
+	return nil
+}
+
+// redact keeps tokens embedded in URLs (Telegram, Discord) out of stored errors.
+func redact(err error) error {
+	if ue, ok := err.(*url.Error); ok {
+		return fmt.Errorf("%s request failed: %v", ue.Op, ue.Err)
+	}
+	return err
+}
+
+// ---------- ntfy ----------
+
+type Ntfy struct {
+	URL      string `json:"url"`
+	Topic    string `json:"topic"`
+	Token    string `json:"token"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (n Ntfy) validate() error {
+	u, err := url.Parse(n.URL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return valid.Error("ntfy server URL must look like https://ntfy.sh")
+	}
+	if n.Topic == "" || strings.ContainsAny(n.Topic, "/?# ") || len(n.Topic) > 64 {
+		return valid.Error("ntfy topic must be a single word (letters, digits, - and _)")
+	}
+	return nil
+}
+
+func (n Ntfy) Send(ctx context.Context, m Message) error {
+	prio := map[string]string{"critical": "5", "warning": "4", "info": "3", "ok": "3"}[m.Severity]
+	tags := map[string]string{"critical": "rotating_light", "warning": "warning", "ok": "white_check_mark", "info": "information_source"}[m.Severity]
+	h := map[string]string{"Title": m.Title, "Priority": prio, "Tags": tags}
+	if m.Link != "" {
+		h["Click"] = m.Link
+	}
+	switch {
+	case n.Token != "":
+		h["Authorization"] = "Bearer " + n.Token
+	case n.Username != "":
+		req, _ := http.NewRequest("GET", "/", nil)
+		req.SetBasicAuth(n.Username, n.Password)
+		h["Authorization"] = req.Header.Get("Authorization")
+	}
+	return post(ctx, strings.TrimRight(n.URL, "/")+"/"+url.PathEscape(n.Topic), "text/plain; charset=utf-8", []byte(m.Body), h)
+}
+
+// ---------- Telegram ----------
+
+type Telegram struct {
+	BotToken string `json:"botToken"`
+	ChatID   string `json:"chatId"`
+	apiBase  string // tests
+}
+
+func (t Telegram) validate() error {
+	if !strings.Contains(t.BotToken, ":") || len(t.BotToken) > 100 || strings.ContainsAny(t.BotToken, "/?# ") {
+		return valid.Error("Telegram bot token looks like 123456:ABC-DEF… (from @BotFather)")
+	}
+	if t.ChatID == "" || len(t.ChatID) > 40 {
+		return valid.Error("Telegram chat ID is required")
+	}
+	return nil
+}
+
+func (t Telegram) Send(ctx context.Context, m Message) error {
+	base := t.apiBase
+	if base == "" {
+		base = "https://api.telegram.org"
+	}
+	icon := map[string]string{"critical": "🔴", "warning": "🟠", "ok": "🟢", "info": "🔵"}[m.Severity]
+	text := fmt.Sprintf("%s <b>%s</b>\n%s", icon, html.EscapeString(m.Title), html.EscapeString(m.Body))
+	if m.Link != "" {
+		text += fmt.Sprintf("\n<a href=\"%s\">Open in Fleetwatch</a>", html.EscapeString(m.Link))
+	}
+	body, _ := json.Marshal(map[string]any{"chat_id": t.ChatID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": true})
+	return post(ctx, base+"/bot"+t.BotToken+"/sendMessage", "application/json", body, nil)
+}
+
+// ---------- Discord ----------
+
+type Discord struct {
+	Webhook string `json:"webhook"`
+}
+
+func (d Discord) validate() error {
+	u, err := url.Parse(d.Webhook)
+	if err != nil || u.Scheme != "https" || (u.Host != "discord.com" && u.Host != "discordapp.com" && !strings.HasSuffix(u.Host, ".discord.com")) || !strings.HasPrefix(u.Path, "/api/webhooks/") {
+		return valid.Error("Discord webhook must be https://discord.com/api/webhooks/…")
+	}
+	return nil
+}
+
+func (d Discord) Send(ctx context.Context, m Message) error {
+	color := map[string]int{"critical": 0xE5484D, "warning": 0xF5A524, "ok": 0x30A46C, "info": 0x3E63DD}[m.Severity]
+	embed := map[string]any{"title": trunc(m.Title, 250), "description": trunc(m.Body, 3500), "color": color}
+	if m.Link != "" {
+		embed["url"] = m.Link
+	}
+	body, _ := json.Marshal(map[string]any{"username": "Fleetwatch", "embeds": []any{embed}, "allowed_mentions": map[string]any{"parse": []string{}}})
+	return post(ctx, d.Webhook, "application/json", body, nil)
+}
+
+func trunc(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}

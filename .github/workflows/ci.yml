@@ -1,0 +1,29 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # The server embeds the UI, so it must be built before Go compiles.
+      - run: npm ci && npx tsc --noEmit -p . && npm run build
+        working-directory: web
+      - run: test -z "$(gofmt -l cmd internal web)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: bash -n scripts/install-server.sh internal/server/agentbin/uninstall.sh

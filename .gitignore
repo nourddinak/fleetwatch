@@ -1,0 +1,15 @@
+node_modules/
+web/dist/
+/bin/
+data/
+*.db
+*.db-wal
+*.db-shm
+scripts/dev.env
+data-dev/
+internal/server/agentbin/bin/ops-agent-*
+
+# Local only: dev launch config (holds a dev password hash), planning notes, original prototype
+.claude/
+PLAN.md
+prototyp/

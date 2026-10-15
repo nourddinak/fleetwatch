@@ -1,0 +1,217 @@
+// Package api wires the central server's HTTP routes.
+package api
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"fleetwatch/internal/server/apps"
+	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/fleet"
+	"fleetwatch/internal/server/incidents"
+	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/logs"
+	"fleetwatch/internal/server/metrics"
+	"fleetwatch/internal/server/notify"
+	"fleetwatch/internal/server/valid"
+)
+
+type Deps struct {
+	UI         fs.FS
+	Version    string
+	DB         *sql.DB
+	Auth       *auth.Service
+	Fleet      *fleet.Hub
+	Metrics    *metrics.Store
+	Bus        *live.Bus
+	PublicURL  string // OPS_PUBLIC_URL; empty = derive from each request
+	Apps       *apps.Service
+	Logs       *logs.Store
+	Commands   *commands.Service
+	Incidents  *incidents.Store
+	Detector   *incidents.Detector
+	Notify     *notify.Service
+	AppMetrics *metrics.Store
+}
+
+type server struct{ Deps }
+
+// New returns the root handler: JSON API under /api, the built UI everywhere else.
+func New(d Deps) http.Handler {
+	s := &server{d}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": d.Version})
+	})
+	s.authRoutes(mux)
+	if d.Fleet != nil {
+		s.serverRoutes(mux)
+		s.agentRoutes(mux)
+	}
+	if d.Apps != nil {
+		s.appRoutes(mux)
+	}
+	if d.Logs != nil {
+		s.logRoutes(mux)
+	}
+	if d.Commands != nil {
+		s.commandRoutes(mux)
+	}
+	if d.Incidents != nil {
+		s.incidentRoutes(mux)
+	}
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "not found")
+	})
+	mux.Handle("/", static(d.UI))
+	return securityHeaders(sameOriginWrites(mux))
+}
+
+func static(ui fs.FS) http.Handler {
+	files := http.FileServerFS(ui)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Vite puts content-hashed files in assets/, so they never change.
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOriginWrites is the CSRF defence (with SameSite=Strict cookies): every
+// state-changing /api request must carry an Origin header matching the Host.
+func sameOriginWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) {
+				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sameOrigin(r *http.Request) bool {
+	o := r.Header.Get("Origin")
+	if o == "" {
+		return false
+	}
+	u, err := url.Parse(o)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && strings.EqualFold(u.Host, r.Host)
+}
+
+// clientIP is the peer address, or the proxy-reported one when the peer is a
+// loopback reverse proxy (Caddy on the same host appends the real client last).
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if last := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(last) != nil {
+				return last
+			}
+		}
+	}
+	return host
+}
+
+func client(r *http.Request) auth.Client {
+	return auth.Client{IP: clientIP(r), UserAgent: r.UserAgent()}
+}
+
+// decode reads a JSON body (max 1 MiB) into v, rejecting unknown fields.
+func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return false
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}
+
+// fail maps service errors to HTTP responses; unknown errors are logged and hidden.
+func fail(w http.ResponseWriter, err error) {
+	var locked auth.LockedError
+	var input valid.Error
+	switch {
+	case errors.As(err, &locked):
+		w.Header().Set("Retry-After", strconv.Itoa(int(locked.RetryAfter.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "locked", capitalize(locked.Error())+".")
+	case errors.As(err, &input):
+		writeError(w, http.StatusBadRequest, "invalid_input", capitalize(input.Error())+".")
+	case errors.Is(err, fleet.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Server not found.")
+	case errors.Is(err, apps.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Application not found.")
+	case errors.Is(err, apps.ErrDiscoveryNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Discovery not found.")
+	case errors.Is(err, incidents.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Incident not found.")
+	case errors.Is(err, commands.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Command not found.")
+	case errors.Is(err, fleet.ErrOffline), errors.Is(err, commands.ErrOffline):
+		writeError(w, http.StatusConflict, "offline", "The agent is not connected.")
+	case errors.Is(err, metrics.ErrBadRange):
+		writeError(w, http.StatusBadRequest, "invalid_input", "Unknown time range.")
+	case errors.Is(err, auth.ErrNoSession):
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "Not signed in.")
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid username or password.")
+	case errors.Is(err, auth.ErrInvalidCode):
+		writeError(w, http.StatusBadRequest, "invalid_code", "Invalid code.")
+	case errors.Is(err, auth.ErrWrongPassword):
+		writeError(w, http.StatusBadRequest, "wrong_password", "Password is incorrect.")
+	case errors.Is(err, auth.ErrTwoFAEnabled), errors.Is(err, auth.ErrTwoFADisabled), errors.Is(err, auth.ErrNoPendingSetup):
+		writeError(w, http.StatusConflict, "conflict", capitalize(err.Error())+".")
+	default:
+		slog.Error("request failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Internal server error.")
+	}
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
