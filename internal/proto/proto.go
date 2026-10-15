@@ -104,12 +104,13 @@ const (
 )
 
 type Inventory struct {
-	TS        int64     `json:"ts"`
-	Processes []Process `json:"processes"`
-	Ports     []Port    `json:"ports"`
-	Projects  []Project `json:"projects"`
-	Routes    []Route   `json:"routes"` // reverse-proxy routes found in Caddy
-	Errors    []string  `json:"errors"` // probes that failed (e.g. pm2 not runnable)
+	TS        int64      `json:"ts"`
+	Processes []Process  `json:"processes"`
+	Ports     []Port     `json:"ports"`
+	Projects  []Project  `json:"projects"`
+	Routes    []Route    `json:"routes"`          // reverse-proxy routes found in Caddy
+	Certs     []CertInfo `json:"certs,omitempty"` // certificates the local web server presents
+	Errors    []string   `json:"errors"`          // probes that failed (e.g. pm2 not runnable)
 }
 
 // Process is one PM2 app (all its instances) or one systemd service.
@@ -293,4 +294,14 @@ const (
 type Update struct {
 	Version string            `json:"version"`
 	SHA256  map[string]string `json:"sha256"`
+}
+
+// CertInfo is the certificate a web server presents for Host. The agent checks its own
+// server (127.0.0.1:443); behind a CDN this is the origin certificate, which the public
+// one hides.
+type CertInfo struct {
+	Host     string `json:"host"`
+	NotAfter int64  `json:"notAfter,omitempty"` // unix ms
+	Issuer   string `json:"issuer,omitempty"`
+	Error    string `json:"error,omitempty"`
 }

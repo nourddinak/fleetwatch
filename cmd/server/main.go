@@ -29,6 +29,7 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -299,6 +300,8 @@ func serve() error {
 			maint.Sweep()
 		}
 	}()
+	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
+	domainChecks.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
 	logStore.OnStored = func(lines []logs.Line) { detector.Logs(lines, time.Now()) }
 	hub.OnMetrics = func(serverID string, m proto.Metrics) {
@@ -390,7 +393,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -402,6 +405,7 @@ func serve() error {
 	go logStore.Run(ctx)
 	go notifier.Run(ctx)
 	go updates.Run(ctx)
+	go domainChecks.Run(ctx)
 	go runJobs(ctx, d, authSvc, appSvc, logStore, detector, notifier, store, appStore)
 
 	errc := make(chan error, 1)

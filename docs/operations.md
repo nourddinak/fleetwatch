@@ -144,6 +144,23 @@ The dashboard opens an "Agent Offline" incident once an agent has been away for 
 - **Log collection is per app:** check the app's Settings tab.
 - **Dropped lines:** lines longer than the maximum line size (16 KB by default) are cut. During long outages, the agent drops its oldest buffered lines and records a marker.
 
+### Domains and certificates
+
+The **Domains** page lists every site the dashboard knows: Caddy's sites on each server, domains set on apps, and the dashboard's own domain. For each it shows:
+
+| Column | Where it comes from | How often |
+|---|---|---|
+| **Certificate** | what visitors get: the dashboard connects like a browser. Behind Cloudflare, this is Cloudflare's certificate. | every 6 h |
+| **On the server** | what your server's own web server (Caddy) presents, checked by the agent on that server. Behind a CDN, this one can expire unnoticed and break "Full (strict)" mode. | every 6 h |
+| **Registration** | the registry's own RDAP service (the official successor to WHOIS), found through IANA's directory. | daily |
+
+- **Alerts:** an alert opens 14 days before a certificate or a domain expires, and becomes critical at 3 days, or immediately if the certificate is expired, invalid or for another name. It resolves itself once renewed. Change the lead times in Settings → Incident rules.
+- **What is skipped:**
+  - names under shared domains from free DNS providers (for example `*.dpdns.org`) have no registration of your own to check;
+  - some registries offer no RDAP, and the page says so;
+  - a site that cannot be reached is shown as such but does not open an incident.
+- **What leaves the dashboard:** registration lookups send the domain name to its registry. The certificate check connects to the site like any visitor.
+
 ### Maintenance mode
 
 Before a deploy or a reboot, open the server or app and choose **Maintenance…**. You can pause alerts for 30 minutes, 1, 4 or 24 hours, or until you end it.

@@ -23,6 +23,7 @@ type Collector struct {
 	tracker  procs.Tracker
 	git      *gitinfo.Cache
 	caddy    caddy.Cache
+	certs    caddy.CertCache
 
 	mu   sync.Mutex
 	last []proto.Process
@@ -99,6 +100,7 @@ func (c *Collector) Collect(ctx context.Context, roots []string) proto.Inventory
 		inv.Projects = []proto.Project{}
 	}
 	inv.Routes = c.caddy.Routes(ctx)
+	inv.Certs = c.certs.Certs(ctx, inv.Routes)
 	c.mu.Lock()
 	c.last = inv.Processes
 	c.mu.Unlock()

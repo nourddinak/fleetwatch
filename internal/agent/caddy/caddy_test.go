@@ -1,9 +1,14 @@
 package caddy
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"fleetwatch/internal/proto"
 )
 
 func TestCaddyStaticSites(t *testing.T) {
@@ -35,5 +40,30 @@ docs.example.com {
 	routes = ParseJSONConfig([]byte(cfg))
 	if len(routes) != 1 || routes[0].Root != "/var/www/openapps_admin/dist" || routes[0].Port != 0 {
 		t.Fatalf("json: %+v", routes)
+	}
+}
+
+func TestLocalCerts(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler()) // certificate for example.com
+	defer srv.Close()
+	c := &CertCache{Addr: srv.Listener.Addr().String()}
+	got := c.Certs(context.Background(), []proto.Route{
+		{Host: "example.com"}, {Host: "example.com"}, // duplicates are checked once
+		{Host: "shop.example.org"},                                           // not covered by the certificate
+		{Host: "app.localhost"}, {Host: "10.0.0.1"}, {Host: "*.example.com"}, // never checked
+	})
+	if len(got) != 2 {
+		t.Fatalf("checked %d names: %+v", len(got), got)
+	}
+	if got[0].Host != "example.com" || got[0].NotAfter == 0 || got[0].Error != "" {
+		t.Fatalf("valid name: %+v", got[0])
+	}
+	if got[1].Error == "" || got[1].NotAfter == 0 {
+		t.Fatalf("uncovered name: %+v", got[1])
+	}
+	// Cached: a second call does not dial again even if the server is gone.
+	srv.Close()
+	if again := c.Certs(context.Background(), []proto.Route{{Host: "example.com"}}); len(again) != 2 {
+		t.Fatal("results not cached")
 	}
 }

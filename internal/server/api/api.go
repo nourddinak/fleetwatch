@@ -16,6 +16,7 @@ import (
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -45,6 +46,7 @@ type Deps struct {
 	AppMetrics *metrics.Store
 	Release    *release.Checker
 	Maint      *maintenance.Service
+	Domains    *domains.Checker
 }
 
 type server struct{ Deps }
@@ -72,6 +74,15 @@ func New(d Deps) http.Handler {
 	}
 	if d.Incidents != nil {
 		s.incidentRoutes(mux)
+	}
+	if d.Domains != nil {
+		mux.HandleFunc("GET /api/domains", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+			writeJSON(w, http.StatusOK, s.Domains.List())
+		}))
+		mux.HandleFunc("POST /api/domains/check", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+			s.Domains.CheckSoon() // results arrive over the live socket ("domains")
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
+		}))
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))

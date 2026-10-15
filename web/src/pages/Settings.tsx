@@ -660,7 +660,7 @@ const NOTIFY_RULE_ROWS: [string, string, string][] = [
   ["healthRecovered", "Health check recovered", "Health check passes again"],
   ["resources", "CPU, RAM and disk", "Server resource thresholds exceeded"],
   ["repeatedErrors", "Repeated errors", "Same error repeated within the window"],
-  ["otherIncidents", "Other incidents", "Repeated restarts, port no longer listening"],
+  ["otherIncidents", "Other incidents", "Expiring certificates and domains, repeated restarts, port no longer listening"],
   ["otherResolved", "Other recoveries", "Resolution of resource, error and other incidents"],
 ];
 
@@ -713,6 +713,8 @@ const INCIDENT_RULE_ROWS: [string, string, string, string][] = [
   ["ramMinutes", "…for", "minutes", "…for this long opens “High RAM”"],
   ["diskThreshold", "Disk threshold", "%", "Any watched disk above this (critical at 95%)"],
   ["offlineGraceSec", "Agent offline grace", "seconds", "Disconnections shorter than this never open an incident"],
+  ["sslWarnDays", "Certificate warning", "days ahead", "Alert this long before an SSL certificate expires (critical at 3 days)"],
+  ["domainWarnDays", "Domain warning", "days ahead", "Alert this long before a domain registration expires (critical at 3 days)"],
 ];
 
 export function IncidentRulesSettings() {

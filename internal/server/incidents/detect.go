@@ -30,11 +30,14 @@ type Rules struct {
 	RAMMinutes         int `json:"ramMinutes"`
 	DiskThreshold      int `json:"diskThreshold"`
 	OfflineGraceSec    int `json:"offlineGraceSec"`
+	SSLWarnDays        int `json:"sslWarnDays"`    // certificate expiry warning
+	DomainWarnDays     int `json:"domainWarnDays"` // domain registration expiry warning
 }
 
 func DefaultRules() Rules {
 	return Rules{RestartThreshold: 5, RestartWindowMin: 10, RepeatedErrorCount: 25, ErrorWindowMin: 5, HealthFailures: 3,
-		CPUThreshold: 90, CPUMinutes: 5, RAMThreshold: 90, RAMMinutes: 5, DiskThreshold: 85, OfflineGraceSec: 60}
+		CPUThreshold: 90, CPUMinutes: 5, RAMThreshold: 90, RAMMinutes: 5, DiskThreshold: 85, OfflineGraceSec: 60,
+		SSLWarnDays: 14, DomainWarnDays: 14}
 }
 
 func (r Rules) Validate() error {
@@ -52,6 +55,8 @@ func (r Rules) Validate() error {
 		return valid.Error("disk threshold must be 10-100%")
 	case !in(r.OfflineGraceSec, 10, 3600):
 		return valid.Error("offline grace period must be 10-3600 seconds")
+	case !in(r.SSLWarnDays, 1, 90) || !in(r.DomainWarnDays, 1, 90):
+		return valid.Error("certificate and domain warnings: 1-90 days ahead")
 	}
 	return nil
 }
