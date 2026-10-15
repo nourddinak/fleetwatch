@@ -106,7 +106,7 @@ func candidates(inv *proto.Inventory, apps []App) []candidate {
 		if p.Project != "" {
 			claimed[p.Project] = true
 		}
-		if !p.Likely || monitored[p.Manager+"\x00"+p.Key] {
+		if !p.Likely || monitored[p.Manager+"\x00"+p.Key] || IsFleetwatchService(p.Key) {
 			continue
 		}
 		pc := *p
@@ -207,6 +207,12 @@ func (s *Service) reconcile(serverID string, inv *proto.Inventory, apps []App) (
 		}
 	}
 	return changed, nil
+}
+
+// IsFleetwatchService reports Fleetwatch's own units (dashboard, update helper, agent),
+// which are never offered as applications, whatever an older agent reports.
+func IsFleetwatchService(key string) bool {
+	return strings.HasPrefix(key, "ops-server") || strings.HasPrefix(key, "ops-agent")
 }
 
 var kindLabel = map[string]string{"pm2": "PM2", "systemd": "systemd", "folder": "project folder"}

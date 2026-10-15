@@ -301,3 +301,18 @@ func TestRootCwdIsNotAnAppFolder(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetwatchServicesAreNotOffered(t *testing.T) {
+	s := newService(t)
+	inv := inventory(false, false, "")
+	// An agent from before v0.9.11 still marks these as likely applications.
+	for _, key := range []string{"ops-server.service", "ops-server-update.service", "ops-agent.service"} {
+		inv.Processes = append(inv.Processes, proto.Process{Manager: "systemd", Key: key, Status: "online", Likely: true})
+	}
+	s.Ingest("srv1", inv)
+	for name := range pending(t, s) {
+		if strings.HasPrefix(name, "ops-") {
+			t.Errorf("Fleetwatch's own service offered: %s", name)
+		}
+	}
+}

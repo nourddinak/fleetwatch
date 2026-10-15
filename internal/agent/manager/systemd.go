@@ -122,7 +122,7 @@ func execArgv(v string) string {
 
 // denyPrefixes are OS, infrastructure and agent services that are never applications.
 var denyPrefixes = []string{
-	"ops-agent", "ops-server-update", "pm2-", "snap.", "systemd-", "getty@", "serial-getty@", "user@", "user-runtime-dir@",
+	"ops-agent", "ops-server", "pm2-", "snap.", "systemd-", "getty@", "serial-getty@", "user@", "user-runtime-dir@",
 	"cloud-", "dbus", "ssh", "cron", "rsyslog", "syslog", "docker", "containerd", "ufw", "apparmor",
 	"multipathd", "polkit", "networkd-dispatcher", "unattended-upgrades", "wsl", "caddy", "nginx",
 	"apache2", "httpd", "mysql", "mariadb", "postgresql", "redis", "memcached", "fail2ban", "chrony",

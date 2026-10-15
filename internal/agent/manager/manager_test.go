@@ -108,6 +108,7 @@ func TestClassify(t *testing.T) {
 		{app("rsyslog.service", "/usr/lib/systemd/system/rsyslog.service", "/usr/sbin/rsyslogd", ""), false},
 		{app("ops-agent.service", "/etc/systemd/system/ops-agent.service", "/usr/local/bin/ops-agent run", ""), false},
 		{app("ops-server-update.service", "/etc/systemd/system/ops-server-update.service", "/usr/local/bin/ops-server self-update", ""), false},
+		{app("ops-server.service", "/etc/systemd/system/ops-server.service", "/usr/local/bin/ops-server serve", ""), false},
 		{app("snap.docker.dockerd.service", "/etc/systemd/system/snap.docker.dockerd.service", "/usr/bin/snap run docker", ""), false},
 		{app("pm2-root.service", "/etc/systemd/system/pm2-root.service", "/usr/lib/node_modules/pm2/bin/pm2 resurrect", ""), false},
 		{app("custom-sshd.service", "/etc/systemd/system/custom-sshd.service", "/usr/sbin/sshd -D", ""), false},
