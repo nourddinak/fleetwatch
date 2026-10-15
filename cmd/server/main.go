@@ -308,6 +308,7 @@ func serve() error {
 	updates.OnChange = func(st release.Status) { bus.Publish("update", st) }
 	// "Update the agents too": for an hour after such an update, every agent that
 	// connects on an older version is asked once to install this version's agent.
+	// With the "always auto-update agents" setting, that applies at any time.
 	var agentsUntil time.Time
 	if updates.AgentsFollow() {
 		agentsUntil = time.Now().Add(time.Hour)
@@ -315,7 +316,7 @@ func serve() error {
 	}
 	var asked sync.Map
 	hub.OnConnect = func(serverID, agentVersion string) {
-		if agentVersion == version || time.Now().After(agentsUntil) {
+		if agentVersion == version || (time.Now().After(agentsUntil) && !fleet.LoadAgentSettings(d).AutoUpdate) {
 			return
 		}
 		if _, done := asked.LoadOrStore(serverID, true); done {
@@ -328,7 +329,7 @@ func serve() error {
 				return
 			}
 			if err := hub.Send(serverID, proto.TypeUpdate, u); err == nil {
-				hub.Reg.AddEvent(serverID, "agent", "Update to v"+version+" started automatically (platform update)")
+				hub.Reg.AddEvent(serverID, "agent", "Update to v"+version+" started automatically")
 				hub.Publish(serverID)
 			}
 		}()

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Activity, AlertOctagon, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, ScrollText, Search, Server, Settings, Sun, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
 import { AddAppDialog } from "./AddAppDialog";
-import { Spinner } from "./ui";
+import { LoadingState, Spinner } from "./ui";
 import { useApi } from "../api/client";
 import { UpdateBanner } from "./PlatformUpdate";
 
@@ -190,7 +190,9 @@ function Shell() {
         </header>
         <main className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-8 sm:py-8">
           <UpdateBanner />
-          <Outlet />
+          <Suspense fallback={<LoadingState />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 

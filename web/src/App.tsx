@@ -1,21 +1,83 @@
+import { lazy, type ComponentType } from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { StoreProvider } from "./store/store";
 import { RequireAuth } from "./components/Layout";
 import { Login, TwoFA } from "./pages/Login";
 import { Setup } from "./pages/Setup";
-import { Overview } from "./pages/Overview";
-import { Servers } from "./pages/Servers";
-import { AddServer } from "./pages/AddServer";
-import { ServerAgent, ServerApplications, ServerDetail, ServerIncidents, ServerMetrics, ServerOverview, ServerPorts, ServerSettings, ServerStorage } from "./pages/ServerDetail";
-import { Applications } from "./pages/Applications";
-import { AppDetail } from "./pages/AppDetail";
-import { AppCommands, AppGit, AppHealth, AppIncidents, AppLogs, AppMetrics, AppOverview, AppSettings, AppStorage } from "./pages/AppTabs";
-import { GlobalLogs } from "./pages/GlobalLogs";
-import { Incidents } from "./pages/Incidents";
-import { Discoveries } from "./pages/Discoveries";
-import { MetricsExplorer } from "./pages/MetricsExplorer";
-import { Notifications } from "./pages/Notifications";
-import { AccountSettings, AgentsSettings, IncidentRulesSettings, LogSettings, MetricsSettings, NotificationSettings, SecuritySettings, ServersSettings, SessionSettings, SettingsIndex, SettingsLayout, SystemSettings, TwoFASettings } from "./pages/Settings";
+
+
+// Pages load on first use, so a phone only downloads the screen it opens. Pages from
+// the same file share one chunk.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function page<M extends Record<string, any>>(load: () => Promise<M>, name: keyof M) {
+  return lazy(() =>
+    load().then(
+      (m) => {
+        try {
+          sessionStorage.removeItem("fw.chunk-reload"); // this build loads: a later update may reload again
+        } catch {
+          /* private mode */
+        }
+        return { default: m[name] as ComponentType };
+      },
+      (err) => {
+        // A tab left open across a platform update asks for chunks the new server no
+        // longer has: reload once to get the new build instead of showing a broken page.
+        try {
+          if (!sessionStorage.getItem("fw.chunk-reload")) {
+            sessionStorage.setItem("fw.chunk-reload", "1");
+            location.reload();
+            return new Promise<never>(() => {});
+          }
+        } catch {
+          /* private mode: fall through to the error */
+        }
+        throw err;
+      },
+    ),
+  );
+}
+const Overview = page(() => import("./pages/Overview"), "Overview");
+const Servers = page(() => import("./pages/Servers"), "Servers");
+const AddServer = page(() => import("./pages/AddServer"), "AddServer");
+const ServerAgent = page(() => import("./pages/ServerDetail"), "ServerAgent");
+const ServerApplications = page(() => import("./pages/ServerDetail"), "ServerApplications");
+const ServerDetail = page(() => import("./pages/ServerDetail"), "ServerDetail");
+const ServerIncidents = page(() => import("./pages/ServerDetail"), "ServerIncidents");
+const ServerMetrics = page(() => import("./pages/ServerDetail"), "ServerMetrics");
+const ServerOverview = page(() => import("./pages/ServerDetail"), "ServerOverview");
+const ServerPorts = page(() => import("./pages/ServerDetail"), "ServerPorts");
+const ServerSettings = page(() => import("./pages/ServerDetail"), "ServerSettings");
+const ServerStorage = page(() => import("./pages/ServerDetail"), "ServerStorage");
+const Applications = page(() => import("./pages/Applications"), "Applications");
+const AppDetail = page(() => import("./pages/AppDetail"), "AppDetail");
+const AppCommands = page(() => import("./pages/AppTabs"), "AppCommands");
+const AppGit = page(() => import("./pages/AppTabs"), "AppGit");
+const AppHealth = page(() => import("./pages/AppTabs"), "AppHealth");
+const AppIncidents = page(() => import("./pages/AppTabs"), "AppIncidents");
+const AppLogs = page(() => import("./pages/AppTabs"), "AppLogs");
+const AppMetrics = page(() => import("./pages/AppTabs"), "AppMetrics");
+const AppOverview = page(() => import("./pages/AppTabs"), "AppOverview");
+const AppSettings = page(() => import("./pages/AppTabs"), "AppSettings");
+const AppStorage = page(() => import("./pages/AppTabs"), "AppStorage");
+const GlobalLogs = page(() => import("./pages/GlobalLogs"), "GlobalLogs");
+const Incidents = page(() => import("./pages/Incidents"), "Incidents");
+const Discoveries = page(() => import("./pages/Discoveries"), "Discoveries");
+const MetricsExplorer = page(() => import("./pages/MetricsExplorer"), "MetricsExplorer");
+const Notifications = page(() => import("./pages/Notifications"), "Notifications");
+const AccountSettings = page(() => import("./pages/Settings"), "AccountSettings");
+const AgentsSettings = page(() => import("./pages/Settings"), "AgentsSettings");
+const IncidentRulesSettings = page(() => import("./pages/Settings"), "IncidentRulesSettings");
+const LogSettings = page(() => import("./pages/Settings"), "LogSettings");
+const MetricsSettings = page(() => import("./pages/Settings"), "MetricsSettings");
+const NotificationSettings = page(() => import("./pages/Settings"), "NotificationSettings");
+const SecuritySettings = page(() => import("./pages/Settings"), "SecuritySettings");
+const ServersSettings = page(() => import("./pages/Settings"), "ServersSettings");
+const SessionSettings = page(() => import("./pages/Settings"), "SessionSettings");
+const SettingsIndex = page(() => import("./pages/Settings"), "SettingsIndex");
+const SettingsLayout = page(() => import("./pages/Settings"), "SettingsLayout");
+const SystemSettings = page(() => import("./pages/Settings"), "SystemSettings");
+const TwoFASettings = page(() => import("./pages/Settings"), "TwoFASettings");
 
 export default function App() {
   return (

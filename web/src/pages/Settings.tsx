@@ -419,6 +419,7 @@ export function AgentsSettings() {
   const latest = servers[0]?.latestAgentVersion;
   const paired = servers.filter((s) => s.status !== "pending");
   const outdated = paired.filter((s) => s.status !== "disconnected" && s.agentVersion && s.agentVersion !== s.latestAgentVersion);
+  const auto = useApi<{ autoUpdate: boolean }>("/api/settings/agents");
   const updateAll = async () => {
     setBusy(true);
     const results = await Promise.allSettled(outdated.map((s) => api("POST", `/api/servers/${s.id}/update-agent`)));
@@ -431,6 +432,21 @@ export function AgentsSettings() {
       <Card>
         <SectionTitle title="Agent version" action={outdated.length > 0 && <Button size="sm" disabled={busy} onClick={updateAll}>{busy && <Spinner size={13} />} Update {outdated.length} agent{outdated.length === 1 ? "" : "s"}</Button>} />
         <p className="text-sm text-muted">This server ships agent <b className="text-fg">v{latest ?? "—"}</b>. Agents update in place: each downloads the new binary from this dashboard, checks its SHA-256 and restarts. Agents older than v0.8 need a new install command once.</p>
+      </Card>
+      <Card>
+        <ToggleRow
+          label="Always update agents automatically"
+          desc="Whenever an agent connects on an older version than this dashboard ships, it installs the new one (checksum-verified) and restarts. Turning this on also updates the outdated agents connected now."
+          checked={!!auto.data?.autoUpdate}
+          onChange={async (v) => {
+            try {
+              auto.setData(await api<{ autoUpdate: boolean }>("PUT", "/api/settings/agents", { autoUpdate: v }));
+              toast(v ? "Agents now update automatically" : "Automatic agent updates turned off");
+            } catch (e) {
+              toast((e as ApiError).message, "err");
+            }
+          }}
+        />
       </Card>
       <Card pad={false}>
         <div className="p-5 pb-0"><SectionTitle title="Agents" /></div>

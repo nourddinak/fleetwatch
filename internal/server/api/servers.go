@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -27,6 +29,8 @@ func (s *server) serverRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/servers/{id}/revoke", s.authed(s.revokeAgent))
 	mux.HandleFunc("POST /api/servers/{id}/restart-agent", s.authed(s.restartAgent))
 	mux.HandleFunc("POST /api/servers/{id}/update-agent", s.authed(s.updateAgent))
+	mux.HandleFunc("GET /api/settings/agents", s.authed(s.getAgentSettings))
+	mux.HandleFunc("PUT /api/settings/agents", s.authed(s.putAgentSettings))
 	mux.HandleFunc("GET /api/servers/{id}/events", s.authed(s.serverEvents))
 	mux.HandleFunc("GET /api/metrics", s.authed(s.queryMetrics))
 	mux.HandleFunc("GET /api/settings/metrics", s.authed(s.getMetricsSettings))
@@ -202,18 +206,58 @@ func (s *server) restartAgent(w http.ResponseWriter, r *http.Request, _ auth.Ses
 // updateAgent asks the agent to install the agent build embedded in this server.
 func (s *server) updateAgent(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 	id := r.PathValue("id")
-	u, ok := agentbin.UpdateMessage(s.Version)
-	if !ok {
-		writeError(w, http.StatusConflict, "no_agent_build", "This server build contains no agent binaries.")
-		return
-	}
-	if err := s.Fleet.Send(id, proto.TypeUpdate, u); err != nil {
+	if err := s.sendAgentUpdate(id, "requested"); err != nil {
+		if errors.Is(err, errNoAgentBuild) {
+			writeError(w, http.StatusConflict, "no_agent_build", "This server build contains no agent binaries.")
+			return
+		}
 		fail(w, err)
 		return
 	}
-	s.Fleet.Reg.AddEvent(id, "agent", "Update to v"+s.Version+" requested")
 	s.audit(r, "server.update_agent", id, s.Version)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+var errNoAgentBuild = errors.New("no agent binaries in this build")
+
+func (s *server) sendAgentUpdate(id, why string) error {
+	u, ok := agentbin.UpdateMessage(s.Version)
+	if !ok {
+		return errNoAgentBuild
+	}
+	if err := s.Fleet.Send(id, proto.TypeUpdate, u); err != nil {
+		return err
+	}
+	s.Fleet.Reg.AddEvent(id, "agent", "Update to v"+s.Version+" "+why)
+	return nil
+}
+
+func (s *server) getAgentSettings(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	writeJSON(w, http.StatusOK, fleet.LoadAgentSettings(s.DB))
+}
+
+// putAgentSettings saves the agent settings; turning auto-update on also updates the
+// outdated agents that are connected right now.
+func (s *server) putAgentSettings(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	var in fleet.AgentSettings
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := fleet.SaveAgentSettings(s.DB, in); err != nil {
+		fail(w, err)
+		return
+	}
+	s.audit(r, "settings.agents", "", fmt.Sprintf("autoUpdate=%v", in.AutoUpdate))
+	if in.AutoUpdate {
+		if views, err := s.Fleet.Views(); err == nil {
+			for _, v := range views {
+				if s.Fleet.Connected(v.ID) && v.AgentVersion != "" && v.AgentVersion != s.Version {
+					s.sendAgentUpdate(v.ID, "started automatically (auto-update turned on)")
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, in)
 }
 
 func (s *server) serverEvents(w http.ResponseWriter, r *http.Request, _ auth.Session) {
