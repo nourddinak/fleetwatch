@@ -1,5 +1,6 @@
-// Package update replaces the agent binary with the build the central server ships.
-package update
+// Package selfupdate replaces a running binary with a downloaded, checksum-verified build:
+// the agent with the build its central server ships, the server with a GitHub release.
+package selfupdate
 
 import (
 	"context"
@@ -20,15 +21,15 @@ const maxBinary = 200 << 20
 // Platform is this agent's download name, e.g. "linux-amd64".
 func Platform() string { return runtime.GOOS + "-" + runtime.GOARCH }
 
-// Apply downloads serverURL/agent/download/<platform>, checks it against wantSHA256
-// and atomically replaces the binary at target. The caller restarts afterwards.
-func Apply(ctx context.Context, serverURL, platform, wantSHA256, target string) error {
+// Apply downloads url, checks it against wantSHA256 and atomically replaces the binary
+// at target. The caller restarts afterwards.
+func Apply(ctx context.Context, url, wantSHA256, target string) error {
 	if len(wantSHA256) != 64 {
-		return errors.New("the server has no agent build for " + platform)
+		return errors.New("no checksum for this platform's build")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/agent/download/"+platform, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}

@@ -21,7 +21,7 @@ The installer:
 1. downloads the latest release from GitHub and checks it against `SHA256SUMS`;
 2. installs `/usr/local/bin/ops-server`;
 3. creates the `ops` system user, `/var/lib/ops-server` and `/etc/ops-server.env`;
-4. sets up the systemd unit shown below;
+4. sets up the systemd unit shown below, plus `ops-server-update.path` and `ops-server-update.service` for one-click updates from the dashboard;
 5. installs Caddy from its official apt repository if it is missing;
 6. writes the Fleetwatch site to its own file, `/etc/caddy/fleetwatch.caddy` (from [`deploy/fleetwatch.caddy`](../deploy/fleetwatch.caddy)), and adds a single `import /etc/caddy/fleetwatch.caddy` line to `/etc/caddy/Caddyfile`. Your other sites in the Caddyfile are left alone. If the Caddyfile only holds Caddy's placeholder site, the placeholder is replaced.
 
@@ -105,6 +105,7 @@ These two variables are read on first start only. To change the password later, 
 | `OPS_DATA_DIR` | `./data` | Holds `ops.db` (SQLite, WAL mode) and `secret.key`. |
 | `OPS_SECRET_KEY` | — | Optional 32-byte key, base64 (`openssl rand -base64 32`). It encrypts the TOTP secret and notification secrets. If it is not set, the server generates `OPS_DATA_DIR/secret.key` (mode 0600) on first start. |
 | `OPS_PUBLIC_URL` | taken from the request | The URL that agents and notification links use. Set it. |
+| `OPS_UPDATE_SOURCE` | `https://github.com/nourddinak/fleetwatch/releases` | Where one-click updates come from. Point it at your fork's releases, or set it to `off` to disable update checks. |
 | `ADMIN_USERNAME` | — | Optional. Admin username, read on first start only. Without it, the setup wizard creates the admin. |
 | `ADMIN_PASSWORD_HASH` | — | Optional. Output of `ops-server hash-password`, read on first start only. |
 

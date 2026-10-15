@@ -7,6 +7,7 @@ import { SearchPalette } from "./SearchPalette";
 import { AddAppDialog } from "./AddAppDialog";
 import { Spinner } from "./ui";
 import { useApi } from "../api/client";
+import { UpdateBanner } from "./PlatformUpdate";
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -188,6 +189,7 @@ function Shell() {
           )}
         </header>
         <main className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-8 sm:py-8">
+          <UpdateBanner />
           <Outlet />
         </main>
       </div>

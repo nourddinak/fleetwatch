@@ -6,6 +6,7 @@ import { api, deviceLabel, useApi, type ApiError, type AuditRow, type SecuritySe
 import { relTime, dateTime, fmtMB } from "../mock/util";
 import { Badge, Button, Card, ErrorState, Field, Gate, Input, KV, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, ServerStatus, Spinner, Table, Textarea, Td, Toggle, ToggleRow, Tr, CopyButton } from "../components/ui";
 import { cn } from "../utils/cn";
+import { UpdateCard } from "../components/PlatformUpdate";
 
 const NAV = [
   ["account", "Account"],
@@ -412,15 +413,24 @@ export function ServersSettings() {
 }
 
 export function AgentsSettings() {
-  const { servers } = useStore();
+  const { servers, toast } = useStore();
   const nav = useNavigate();
+  const [busy, setBusy] = useState(false);
   const latest = servers[0]?.latestAgentVersion;
   const paired = servers.filter((s) => s.status !== "pending");
+  const outdated = paired.filter((s) => s.status !== "disconnected" && s.agentVersion && s.agentVersion !== s.latestAgentVersion);
+  const updateAll = async () => {
+    setBusy(true);
+    const results = await Promise.allSettled(outdated.map((s) => api("POST", `/api/servers/${s.id}/update-agent`)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    toast(failed ? `${outdated.length - failed} updates sent, ${failed} failed` : `Update sent to ${outdated.length} agent${outdated.length === 1 ? "" : "s"}. They restart on v${latest} in a few seconds.`, failed ? "err" : "info");
+    setBusy(false);
+  };
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Agent version" />
-        <p className="text-sm text-muted">This server ships agent <b className="text-fg">v{latest ?? "—"}</b>. To update an agent, open its server and create a new install command, then run it on the VPS. It replaces the binary and re-pairs in one step.</p>
+        <SectionTitle title="Agent version" action={outdated.length > 0 && <Button size="sm" disabled={busy} onClick={updateAll}>{busy && <Spinner size={13} />} Update {outdated.length} agent{outdated.length === 1 ? "" : "s"}</Button>} />
+        <p className="text-sm text-muted">This server ships agent <b className="text-fg">v{latest ?? "—"}</b>. Agents update in place: each downloads the new binary from this dashboard, checks its SHA-256 and restarts. Agents older than v0.8 need a new install command once.</p>
       </Card>
       <Card pad={false}>
         <div className="p-5 pb-0"><SectionTitle title="Agents" /></div>
@@ -751,6 +761,10 @@ export function SystemSettings() {
           <Textarea rows={4} value={roots} onChange={(e) => setRoots(e.target.value)} className="font-mono" />
         </Field>
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setRoots(disc.data!.roots.join("\n"))} />
+      </Card>
+      <Card>
+        <SectionTitle title="Updates" sub="New Fleetwatch releases from GitHub, installed with one click" />
+        <UpdateCard />
       </Card>
       <Card>
         <SectionTitle title="About" />

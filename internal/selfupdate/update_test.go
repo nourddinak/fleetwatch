@@ -1,4 +1,4 @@
-package update
+package selfupdate
 
 import (
 	"context"
@@ -28,19 +28,19 @@ func TestApply(t *testing.T) {
 	os.WriteFile(target, []byte("old"), 0o755)
 	ctx := context.Background()
 
-	if err := Apply(ctx, srv.URL, "linux-amd64", strings.Repeat("0", 64), target); err == nil || !strings.Contains(err.Error(), "checksum") {
+	if err := Apply(ctx, srv.URL+"/agent/download/linux-amd64", strings.Repeat("0", 64), target); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("mismatch accepted: %v", err)
 	}
 	if b, _ := os.ReadFile(target); string(b) != "old" {
 		t.Fatal("binary replaced despite a bad checksum")
 	}
-	if err := Apply(ctx, srv.URL, "linux-arm64", good, target); err == nil {
+	if err := Apply(ctx, srv.URL+"/agent/download/linux-arm64", good, target); err == nil {
 		t.Fatal("404 accepted")
 	}
-	if err := Apply(ctx, srv.URL, "linux-amd64", "", target); err == nil {
+	if err := Apply(ctx, srv.URL+"/agent/download/linux-amd64", "", target); err == nil {
 		t.Fatal("missing checksum accepted")
 	}
-	if err := Apply(ctx, srv.URL, "linux-amd64", good, target); err != nil {
+	if err := Apply(ctx, srv.URL+"/agent/download/linux-amd64", good, target); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(target); string(b) != string(bin) {

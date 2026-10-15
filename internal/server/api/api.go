@@ -22,6 +22,7 @@ import (
 	"fleetwatch/internal/server/logs"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
+	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/valid"
 )
 
@@ -41,6 +42,7 @@ type Deps struct {
 	Detector   *incidents.Detector
 	Notify     *notify.Service
 	AppMetrics *metrics.Store
+	Release    *release.Checker
 }
 
 type server struct{ Deps }
@@ -68,6 +70,11 @@ func New(d Deps) http.Handler {
 	}
 	if d.Incidents != nil {
 		s.incidentRoutes(mux)
+	}
+	if d.Release != nil {
+		mux.HandleFunc("GET /api/system/update", s.authed(s.updateStatus))
+		mux.HandleFunc("POST /api/system/update/check", s.authed(s.updateCheck))
+		mux.HandleFunc("POST /api/system/update/apply", s.authed(s.updateApply))
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "not found")

@@ -36,11 +36,24 @@ Agents keep their credentials, so they reconnect on their own. Logs are buffered
 
 ## Upgrades
 
-**Central server:** take a backup first. Then re-run the [install command](install.md#quick-install), or replace `/usr/local/bin/ops-server` yourself and run `sudo systemctl restart ops-server`. Database migrations run automatically on start.
+**Central server, one click:** the server checks GitHub for a newer release every 6 hours (Settings → System → Check for updates checks now). When one exists, every page shows a banner. **Update now** then:
+
+1. writes the wanted version to `update-request` in the data directory;
+2. `ops-server-update.path` sees the file and starts `ops-server-update.service` as root;
+3. that service downloads the release, checks it against the release's `SHA256SUMS`, swaps `/usr/local/bin/ops-server` and restarts the server;
+4. the page reloads once the new version answers.
+
+If anything fails, nothing is replaced and the error shows under Settings → System. The helper's log is in `journalctl -u ops-server-update`.
+
+- **Why the root helper:** the dashboard runs as the unprivileged `ops` user and cannot replace its own binary. Through the helper it can only ask for an official release that is newer than the running one and passes the checksum.
+- **Older installs:** installs from before v0.9.3 lack the two helper units; re-run the install command once.
+- **Turning it off:** set `OPS_UPDATE_SOURCE=off` to stop the checks.
+
+**Central server, by hand:** take a backup first. Then re-run the [install command](install.md#quick-install), or replace `/usr/local/bin/ops-server` yourself and run `sudo systemctl restart ops-server`. Database migrations run automatically on start.
 
 **Agents:** each `ops-server` build carries the matching agent binaries.
 
-- After you upgrade the server, every server whose agent is older shows **Update agent** on its Agent tab.
+- After you upgrade the server, every server whose agent is older shows **Update agent** on its Agent tab. Settings → Agents → **Update agents** updates them all at once.
 - Clicking it sends the expected SHA-256 over the authenticated agent connection. The agent then:
   1. downloads the new binary from your central server;
   2. checks the SHA-256;

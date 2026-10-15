@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"fleetwatch/internal/server/logs"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
+	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
 	"fleetwatch/web"
 )
@@ -47,12 +49,16 @@ commands:
   reset-admin     set a new admin password, disable 2FA, sign out all sessions
   backup FILE     write a consistent copy of the database to FILE (safe while serving)
   caddy-config DOMAIN  print the Caddy site block (deploy/fleetwatch.caddy) for DOMAIN
+  self-update     install the release requested from the dashboard (run by
+                  ops-server-update.service as root; not meant to be run by hand)
   version         print the version
 
 environment:
   OPS_LISTEN           listen address (default 127.0.0.1:8090)
   OPS_DATA_DIR         database and key directory (default ./data)
   OPS_SECRET_KEY       optional base64 32-byte key; default is DATA_DIR/secret.key
+  OPS_UPDATE_SOURCE    where releases come from (default the GitHub releases of
+                       nourddinak/fleetwatch); "off" disables update checks
   OPS_PUBLIC_URL       URL agents use to reach this server, e.g. https://ops.example.com
                        (default: derived from each request's Host header)
   ADMIN_USERNAME       optional: create the admin from env on first start
@@ -77,6 +83,8 @@ func main() {
 		err = backup(os.Args[2:])
 	case "caddy-config":
 		err = caddyConfig(os.Args[2:])
+	case "self-update":
+		err = selfUpdate()
 	case "version":
 		fmt.Println(version)
 	default:
@@ -125,6 +133,24 @@ func caddyConfig(args []string) error {
 		fmt.Print(site)
 	}
 	return err
+}
+
+func selfUpdate() error {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	tag, err := release.Install(ctx, env("OPS_UPDATE_SOURCE", release.DefaultSource), env("OPS_DATA_DIR", "data"), exe)
+	if err != nil {
+		return fmt.Errorf("update to %s: %w", tag, err)
+	}
+	slog.Info("installed; restarting ops-server", "version", tag)
+	return exec.Command("systemctl", "restart", "ops-server").Run()
 }
 
 func backup(args []string) error {
@@ -276,13 +302,14 @@ func serve() error {
 	}
 
 	addr := env("OPS_LISTEN", "127.0.0.1:8090")
+	updates := release.New(os.Getenv("OPS_UPDATE_SOURCE"), version, env("OPS_DATA_DIR", "data"))
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -293,6 +320,7 @@ func serve() error {
 	defer stop()
 	go logStore.Run(ctx)
 	go notifier.Run(ctx)
+	go updates.Run(ctx)
 	go runJobs(ctx, d, authSvc, appSvc, logStore, detector, notifier, store, appStore)
 
 	errc := make(chan error, 1)

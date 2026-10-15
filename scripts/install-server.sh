@@ -17,6 +17,7 @@ set -euo pipefail
 REPO="nourddinak/fleetwatch"
 DOMAIN="" VERSION="latest" CADDY=1 UNINSTALL=0 PURGE=0
 DATA=/var/lib/ops-server ENVFILE=/etc/ops-server.env UNIT=/etc/systemd/system/ops-server.service
+UPDATE_UNIT=/etc/systemd/system/ops-server-update
 BIN=/usr/local/bin/ops-server CADDYFILE=/etc/caddy/Caddyfile SITE=/etc/caddy/fleetwatch.caddy
 IMPORT="import $SITE"
 
@@ -47,7 +48,8 @@ unhook_caddyfile() {
 if [ "$UNINSTALL" -eq 1 ]; then
   say "Stopping ops-server"
   systemctl disable --now ops-server >/dev/null 2>&1 || true
-  rm -f "$UNIT" "$BIN"
+  systemctl disable --now ops-server-update.path >/dev/null 2>&1 || true
+  rm -f "$UNIT" "$BIN" "$UPDATE_UNIT.path" "$UPDATE_UNIT.service"
   systemctl daemon-reload
   if [ -f "$SITE" ] || grep -qs 'fleetwatch' "$CADDYFILE"; then
     unhook_caddyfile
@@ -131,8 +133,30 @@ ReadWritePaths=/var/lib/ops-server
 [Install]
 WantedBy=multi-user.target
 EOF
+# One-click updates: the dashboard (running as "ops") drops DATA/update-request and
+# this root unit installs that release after checking its SHA256SUMS, then restarts.
+cat > "$UPDATE_UNIT.service" <<'EOF'
+[Unit]
+Description=Fleetwatch self-update (requested from the dashboard)
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/ops-server.env
+ExecStart=/usr/local/bin/ops-server self-update
+EOF
+cat > "$UPDATE_UNIT.path" <<'EOF'
+[Unit]
+Description=Watch for update requests from the Fleetwatch dashboard
+
+[Path]
+PathExists=/var/lib/ops-server/update-request
+
+[Install]
+WantedBy=multi-user.target
+EOF
 systemctl daemon-reload
 systemctl enable ops-server >/dev/null 2>&1
+systemctl enable --now ops-server-update.path >/dev/null 2>&1
 STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl restart ops-server
 

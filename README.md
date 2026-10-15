@@ -39,8 +39,8 @@ Your apps show up under Discoveries a few seconds later.
 
 ### Upgrade
 
-- **Server:** re-run the install command. Data and settings are kept.
-- **Agents:** each server's Agent tab then offers **Update agent**.
+- **Server:** when a new release is out, the dashboard shows a banner. Click **Update now**: the server installs the checksum-verified release, restarts, and the page reloads by itself. Installs from before v0.9.3 need the install command re-run once to enable this. Re-running it also upgrades by hand, and data and settings are kept.
+- **Agents:** Settings → Agents → **Update agents**, or **Update agent** on one server's Agent tab.
 
 ### Uninstall
 

@@ -26,8 +26,8 @@ import (
 	"fleetwatch/internal/agent/inventory"
 	"fleetwatch/internal/agent/logs"
 	"fleetwatch/internal/agent/storage"
-	"fleetwatch/internal/agent/update"
 	"fleetwatch/internal/proto"
+	"fleetwatch/internal/selfupdate"
 )
 
 var (
@@ -192,7 +192,8 @@ func (r *Runner) session(ctx context.Context) error {
 						exe, err = filepath.EvalSymlinks(exe)
 					}
 					if err == nil {
-						err = update.Apply(ctx, r.Cfg.ServerURL, update.Platform(), u.SHA256[update.Platform()], exe)
+						p := selfupdate.Platform()
+						err = selfupdate.Apply(ctx, r.Cfg.ServerURL+"/agent/download/"+p, u.SHA256[p], exe)
 					}
 					if err != nil {
 						slog.Error("update failed", "err", err)
