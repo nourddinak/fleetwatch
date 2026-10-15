@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"fleetwatch/internal/selfupdate"
 )
@@ -122,5 +125,62 @@ func TestDisabled(t *testing.T) {
 	c := New("off", "0.9.2", t.TempDir())
 	if err := c.Check(context.Background()); err != ErrUnavailable || !c.Status().Disabled || c.Request("v9.9.9") != ErrUnavailable {
 		t.Fatal("off must disable checks and requests")
+	}
+}
+
+func TestLivePushAndRefresh(t *testing.T) {
+	var hits atomic.Int32
+	tag := "v0.9.3"
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		mu.Lock()
+		defer mu.Unlock()
+		http.Redirect(w, r, "/tag/"+tag, http.StatusFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "0.9.2", t.TempDir())
+	pushed := make(chan Status, 4)
+	c.OnChange = func(st Status) { pushed <- st }
+	ctx := context.Background()
+
+	c.Check(ctx)
+	if st := <-pushed; st.Latest != "v0.9.3" || !st.Available {
+		t.Fatalf("first push: %+v", st)
+	}
+	c.Check(ctx) // same release: nothing to push
+	select {
+	case st := <-pushed:
+		t.Fatalf("pushed without a change: %+v", st)
+	default:
+	}
+
+	// Refresh is a no-op while the last check is fresh...
+	before := hits.Load()
+	c.Refresh()
+	time.Sleep(100 * time.Millisecond)
+	if hits.Load() != before {
+		t.Fatal("refresh re-checked a fresh result")
+	}
+	// ...and re-checks once it is stale, pushing the new release.
+	mu.Lock()
+	tag = "v0.9.4"
+	mu.Unlock()
+	c.mu.Lock()
+	c.checkedAt = time.Now().Add(-3 * time.Minute)
+	c.mu.Unlock()
+	c.Refresh()
+	c.Refresh() // concurrent refreshes collapse into one check
+	select {
+	case st := <-pushed:
+		if st.Latest != "v0.9.4" {
+			t.Fatalf("refresh push: %+v", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stale refresh did not check")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := hits.Load() - before; n != 1 {
+		t.Fatalf("refresh made %d requests, want 1", n)
 	}
 }

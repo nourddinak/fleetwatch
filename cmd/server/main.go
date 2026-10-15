@@ -303,6 +303,7 @@ func serve() error {
 
 	addr := env("OPS_LISTEN", "127.0.0.1:8090")
 	updates := release.New(os.Getenv("OPS_UPDATE_SOURCE"), version, env("OPS_DATA_DIR", "data"))
+	updates.OnChange = func(st release.Status) { bus.Publish("update", st) }
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{

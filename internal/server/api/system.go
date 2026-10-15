@@ -8,7 +8,10 @@ import (
 	"fleetwatch/internal/server/release"
 )
 
+// updateStatus answers from the last check and, if that is a few minutes old, starts
+// a new one in the background; a newer release then arrives over the live socket.
 func (s *server) updateStatus(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	s.Release.Refresh()
 	writeJSON(w, http.StatusOK, s.Release.Status())
 }
 

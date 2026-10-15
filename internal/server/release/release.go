@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fleetwatch/internal/selfupdate"
@@ -41,7 +42,8 @@ const HelperUnit = "/etc/systemd/system/ops-server-update.path"
 const (
 	requestFile = "update-request"
 	statusFile  = "update-status.json"
-	checkEvery  = 6 * time.Hour
+	checkEvery  = 15 * time.Minute // one redirect lookup; GitHub does not rate-limit it like its API
+	freshFor    = 2 * time.Minute  // opening the dashboard re-checks when the last check is older
 )
 
 var (
@@ -77,7 +79,11 @@ type Checker struct {
 	Current    string
 	DataDir    string
 	HelperPath string
-	client     *http.Client
+	// OnChange is called when a check finds a different latest release (live push to
+	// open dashboards). Optional.
+	OnChange func(Status)
+	client   *http.Client
+	inFlight atomic.Bool
 
 	mu        sync.Mutex
 	latest    string
@@ -103,14 +109,36 @@ func (c *Checker) Check(ctx context.Context) error {
 	}
 	tag, err := c.fetchLatest(ctx)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.checkedAt = time.Now()
+	changed := false
 	if err != nil {
 		c.checkErr = err.Error()
-		return err
+	} else {
+		changed = tag != c.latest
+		c.latest, c.checkErr = tag, ""
 	}
-	c.latest, c.checkErr = tag, ""
-	return nil
+	c.mu.Unlock()
+	if changed && c.OnChange != nil {
+		c.OnChange(c.Status())
+	}
+	return err
+}
+
+// Refresh starts a background check unless one ran recently or is running. The
+// dashboard calls it when opened, so a new release shows up within minutes.
+func (c *Checker) Refresh() {
+	c.mu.Lock()
+	stale := time.Since(c.checkedAt) > freshFor
+	c.mu.Unlock()
+	if c.disabled() || !stale || !c.inFlight.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.inFlight.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		c.Check(ctx)
+	}()
 }
 
 func (c *Checker) fetchLatest(ctx context.Context) (string, error) {
@@ -131,20 +159,26 @@ func (c *Checker) fetchLatest(ctx context.Context) (string, error) {
 	return tag, nil
 }
 
-// Run checks shortly after start and then every few hours.
+// Run checks shortly after start and then every checkEvery.
 func (c *Checker) Run(ctx context.Context) {
 	if c.disabled() {
 		return
 	}
-	t := time.NewTimer(time.Minute)
+	t := time.NewTimer(10 * time.Second)
 	defer t.Stop()
+	lastErr := ""
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := c.Check(ctx); err != nil {
-				slog.Warn("update check", "err", err)
+			err := c.Check(ctx)
+			if err != nil && err.Error() != lastErr {
+				slog.Warn("update check", "err", err) // once per distinct error, not every 15 min
+			}
+			lastErr = ""
+			if err != nil {
+				lastErr = err.Error()
 			}
 			t.Reset(checkEvery)
 		}

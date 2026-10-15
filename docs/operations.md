@@ -36,7 +36,11 @@ Agents keep their credentials, so they reconnect on their own. Logs are buffered
 
 ## Upgrades
 
-**Central server, one click:** the server checks GitHub for a newer release every 6 hours (Settings → System → Check for updates checks now). When one exists, every page shows a banner. **Update now** then:
+**Central server, one click:** the server checks GitHub for a newer release every 15 minutes, and again whenever someone opens the dashboard if the last check is more than 2 minutes old. Settings → System → **Check for updates** checks immediately.
+
+A check is a single request to the release page's `latest` link, not to GitHub's rate-limited API. When it finds a new release, every open dashboard shows the banner right away over its live connection, with no reload needed. Only finished releases (pushed `v*` tags that GitHub Actions has built) are offered, never plain commits to `main`.
+
+**Update now** then:
 
 1. writes the wanted version to `update-request` in the data directory;
 2. `ops-server-update.path` sees the file and starts `ops-server-update.service` as root;

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowUpCircle, ExternalLink, X } from "lucide-react";
 import { api, type ApiError } from "../api/client";
 import { Button, CopyButton, Modal, Spinner } from "./ui";
+import { useStore } from "../store/store";
 
 export interface UpdateStatus {
   current: string;
@@ -120,6 +121,7 @@ export function UpdateDialog({ st, open, onClose }: { st: UpdateStatus; open: bo
 
 /** Banner shown on every page while a newer release exists (dismissible per version). */
 export function UpdateBanner() {
+  const { subscribeLive } = useStore();
   const [st, setSt] = useState<UpdateStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(() => {
@@ -129,12 +131,18 @@ export function UpdateBanner() {
       return "";
     }
   });
+  // Loading asks the server to re-check if its last check is a few minutes old; a
+  // newer release then arrives over the live socket, as do the server's own checks.
   useEffect(() => {
     const load = () => api<UpdateStatus>("GET", "/api/system/update").then(setSt).catch(() => {});
     load();
-    const t = setInterval(load, 30 * 60_000);
-    return () => clearInterval(t);
-  }, []);
+    const t = setInterval(load, 15 * 60_000);
+    const off = subscribeLive((m) => m.type === "update" && setSt(m.data as UpdateStatus));
+    return () => {
+      clearInterval(t);
+      off();
+    };
+  }, [subscribeLive]);
   if (!st?.available || dismissed === st.latest) return null;
   const dismiss = () => {
     setDismissed(st.latest);
@@ -197,7 +205,7 @@ export function UpdateCard() {
         )}
       </div>
       {st.checkError && <p className="text-crit">{st.checkError}</p>}
-      {st.checkedAt > 0 && <p className="text-xs text-muted">Last checked {new Date(st.checkedAt).toLocaleString()}. Checks run every 6 hours.</p>}
+      {st.checkedAt > 0 && <p className="text-xs text-muted">Last checked {new Date(st.checkedAt).toLocaleString()}. Checks run every 15 minutes and whenever the dashboard is opened.</p>}
       {st.lastResult && !st.lastResult.ok && <p className="text-crit">Last update to {st.lastResult.version} failed: {st.lastResult.error}</p>}
       {st.available && <UpdateDialog st={st} open={open} onClose={() => setOpen(false)} />}
       <p className="text-xs text-muted">Agents: see <Link to="/settings/agents" className="underline underline-offset-2">Settings → Agents</Link>.</p>
