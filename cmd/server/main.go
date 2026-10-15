@@ -33,6 +33,7 @@ import (
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
+	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/release"
@@ -237,7 +238,14 @@ func serve() error {
 		}
 		return id
 	}
+	maint, err := maintenance.New(d, bus)
+	if err != nil {
+		return err
+	}
 	notifier.Overrides = func(serverID, appID string) (string, bool) {
+		if maint.Active(serverID, appID) {
+			return "muted", true // maintenance: incidents are recorded, alerts are not sent
+		}
 		override := "default"
 		if rec, err := hub.Reg.Get(serverID); err == nil {
 			override = rec.NotifyOverride
@@ -249,6 +257,48 @@ func serve() error {
 		return override, err != nil || v.Flags.Notifications
 	}
 	incStore.Notify = notifier.Incident
+	// When a window ends, report what is still broken in one message.
+	maint.OnEnd = func(kind, id string) {
+		f := incidents.Filter{Status: "open"}
+		det := notify.Details{Event: "maintenance.ended"}
+		name := ""
+		if kind == "server" {
+			f.ServerID, det.ServerID, det.ServerName = id, id, serverName(id)
+			name = det.ServerName
+		} else {
+			f.AppID, det.AppID = id, id
+			if a, err := appSvc.Get(id); err == nil {
+				det.AppName, det.ServerID, det.ServerName = a.Name, a.ServerID, serverName(a.ServerID)
+				name = a.Name
+			}
+		}
+		open, err := incStore.List(f)
+		if err != nil || len(open) == 0 {
+			return
+		}
+		sev, lines := "warning", make([]string, 0, len(open))
+		for i, x := range open {
+			if x.Severity == "critical" {
+				sev = "critical"
+			}
+			if i < 5 {
+				lines = append(lines, "• "+x.Title)
+			}
+		}
+		if len(open) > 5 {
+			lines = append(lines, fmt.Sprintf("… and %d more", len(open)-5))
+		}
+		notifier.Notice("Maintenance ended", notify.Message{
+			Title:    fmt.Sprintf("Maintenance on %s ended: %d problem(s) still open", name, len(open)),
+			Body:     strings.Join(lines, "\n"),
+			Severity: sev, Details: det,
+		}, det.ServerID, det.AppID)
+	}
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			maint.Sweep()
+		}
+	}()
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
 	logStore.OnStored = func(lines []logs.Line) { detector.Logs(lines, time.Now()) }
 	hub.OnMetrics = func(serverID string, m proto.Metrics) {
@@ -340,7 +390,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

@@ -11,6 +11,7 @@ import { IncidentCard, IncidentDrawer, PortTable, type PortRow } from "../compon
 import { MetricPanel } from "../components/MetricChart";
 import { InstallCommand } from "../components/InstallCommand";
 import { cn } from "../utils/cn";
+import { MaintenanceControl } from "../components/Maintenance";
 
 function useServer() {
   const { id } = useParams();
@@ -48,7 +49,12 @@ export function ServerDetail() {
             {s.status !== "pending" && <span>Uptime {s.status === "disconnected" ? "unknown" : fmtDur(s.uptimeSec)}</span>}
           </span>
         }
-        actions={<Button size="sm" onClick={() => openAddApp(s.id)}><Plus size={14} /> Add application</Button>}
+        actions={
+          <>
+            {s.status !== "pending" && <MaintenanceControl kind="server" id={s.id} />}
+            <Button size="sm" onClick={() => openAddApp(s.id)}><Plus size={14} /> Add application</Button>
+          </>
+        }
       />
       <LinkTabs
         tabs={[

@@ -1,4 +1,5 @@
 import { Link, Outlet, useParams } from "react-router-dom";
+import { MaintenanceControl } from "../components/Maintenance";
 import { FileText, RotateCw } from "lucide-react";
 import { useStore } from "../store/store";
 import { AppStatus, Badge, Button, EmptyState, Gate, HealthBadge, LinkTabs, LoadingState, PageHeader } from "../components/ui";
@@ -38,6 +39,7 @@ export function AppDetail() {
         }
         actions={
           <>
+            <MaintenanceControl kind="app" id={a.id} serverId={a.serverId} />
             <Link to={`${base}/logs`}><Button size="sm" variant="secondary"><FileText size={14} /> Logs</Button></Link>
             {a.manager !== "standalone" && <Link to={`${base}/commands?run=builtin:restart`}><Button size="sm"><RotateCw size={14} /> Restart</Button></Link>}
           </>

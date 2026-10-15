@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { MaintenanceBadge } from "../components/Maintenance";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Server as ServerIcon } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
@@ -10,7 +11,7 @@ import type { Server } from "../mock/types";
 const ORDER = { critical: 0, disconnected: 1, warning: 2, pending: 3, online: 4 };
 
 export function Servers() {
-  const { servers, serversLoaded, apps, incidents } = useStore();
+  const { servers, serversLoaded, apps, incidents, maintenance } = useStore();
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -78,6 +79,7 @@ export function Servers() {
                       <div className="flex items-start justify-between gap-3">
                         <h3 className="truncate text-lg font-semibold tracking-tight">{s.name}</h3>
                         <ServerStatus status={s.status} />
+                      <MaintenanceBadge until={s.status === "pending" ? 0 : maintenance.servers[s.id] > Date.now() ? maintenance.servers[s.id] : 0} />
                       </div>
                       <p className="mt-3 text-sm text-muted">The agent has not connected yet. Open the server to get a new install command.</p>
                     </Card>

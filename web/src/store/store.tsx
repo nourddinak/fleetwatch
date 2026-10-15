@@ -33,6 +33,8 @@ interface Store {
   discoveries: Discovery[]; // pending
   reloadDiscoveries: () => void;
   incidents: Incident[];
+  /** Active maintenance windows: id → end time (unix ms). */
+  maintenance: { servers: Record<string, number>; apps: Record<string, number> };
   notifications: NotificationRec[];
   getServer: (id: string) => Server | undefined;
   getApp: (id: string) => App | undefined;
@@ -80,6 +82,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [notifications, setNotifications] = useState<NotificationRec[]>([]);
+  const [maintenance, setMaintenance] = useState<Store["maintenance"]>({ servers: {}, apps: {} });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [addAppOpen, setAddAppOpen] = useState<{ open: boolean; serverId?: string }>({ open: false });
   const [tickCount, setTick] = useState(0);
@@ -170,6 +173,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       reloadDiscoveries();
       api<Incident[]>("GET", "/api/incidents?limit=1000").then((l) => !stopped && setIncidents(l)).catch(() => {});
       api<NotificationRec[]>("GET", "/api/notifications?limit=200").then((l) => !stopped && setNotifications(l)).catch(() => {});
+      api<Store["maintenance"]>("GET", "/api/maintenance").then((m) => !stopped && setMaintenance(m)).catch(() => {});
     };
     const connect = () => {
       ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
@@ -197,6 +201,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             setApps((l) => [...l.filter((a) => a.serverId !== serverId), ...list]);
             break;
           }
+          case "maintenance":
+            setMaintenance(m.data);
+            break;
           case "discoveries":
             reloadDiscoveries();
             break;
@@ -281,6 +288,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reloadDiscoveries,
     incidents,
     notifications,
+    maintenance,
     getServer: (id) => servers.find((s) => s.id === id),
     getApp: (id) => apps.find((a) => a.id === id),
     actIncident: async (id, action, note) => {

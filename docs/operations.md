@@ -144,6 +144,14 @@ The dashboard opens an "Agent Offline" incident once an agent has been away for 
 - **Log collection is per app:** check the app's Settings tab.
 - **Dropped lines:** lines longer than the maximum line size (16 KB by default) are cut. During long outages, the agent drops its oldest buffered lines and records a marker.
 
+### Maintenance mode
+
+Before a deploy or a reboot, open the server or app and choose **Maintenance…**. You can pause alerts for 30 minutes, 1, 4 or 24 hours, or until you end it.
+
+- **During maintenance:** incidents are still recorded, so the history stays complete, but no alerts are sent. Maintenance on a server covers all of its apps. A **Maintenance** badge shows in the lists.
+- **When it ends**, on time or with **End now**, one summary alert is sent if anything is still broken, for example "Maintenance on api ended: 2 problem(s) still open". With a webhook, its `event` is `maintenance.ended`.
+- **After that**, alerts work normally again.
+
 ### Custom webhooks
 
 Settings → Notifications → **Custom webhook** sends every alert as a JSON `POST` to your URL, for n8n, Zapier, Slack workflows, Home Assistant or your own code. The URL and the signing secret are stored encrypted and never shown again.

@@ -3,6 +3,7 @@ import type { App } from "../mock/types";
 import { useStore } from "../store/store";
 import { fmtDur, fmtMB } from "../mock/util";
 import { AppStatus, Badge, Table, Td, Tr } from "./ui";
+import { MaintenanceBadge, useMaintenance } from "./Maintenance";
 import { RowLink } from "./domain";
 import { cn } from "../utils/cn";
 
@@ -26,7 +27,7 @@ export function AppsTable({ apps, showServer = true }: { apps: App[]; showServer
                 <div className="font-mono text-[11px] text-muted">{a.path}</div>
               </Td>
               {showServer && <Td><RowLink to={`/servers/${a.serverId}`} className="whitespace-nowrap">{srv(a.serverId)?.name}</RowLink></Td>}
-              <Td><AppStatus status={a.status} /></Td>
+              <Td><span className="flex flex-wrap items-center gap-1"><AppStatus status={a.status} /><MaintenanceFor a={a} /></span></Td>
               <Td><Badge>{mgr(a)}</Badge></Td>
               <Td className="whitespace-nowrap text-muted">{a.runtime || "—"}</Td>
               <Td className="tabular-nums">{a.pid ? `${a.cpu.toFixed(1)}%` : "—"}</Td>
@@ -64,4 +65,8 @@ export function AppsTable({ apps, showServer = true }: { apps: App[]; showServer
       </div>
     </>
   );
+}
+
+function MaintenanceFor({ a }: { a: App }) {
+  return <MaintenanceBadge until={useMaintenance("app", a.id, a.serverId)} />;
 }

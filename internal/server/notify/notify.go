@@ -318,6 +318,20 @@ func (s *Service) Incident(ev incidents.Event) {
 	s.enqueue(job{event: event, msg: msg, serverID: x.ServerID, appID: appID, incident: x.ID})
 }
 
+// Notice sends a message that is not tied to one incident (e.g. "maintenance ended,
+// still broken: …") to every enabled channel. Only a muted server override stops it.
+func (s *Service) Notice(event string, msg Message, serverID, appID string) {
+	if s.Overrides != nil {
+		if override, _ := s.Overrides(serverID, ""); override == "muted" {
+			return
+		}
+	}
+	if s.PublicURL != "" && msg.Link == "" {
+		msg.Link = strings.TrimRight(s.PublicURL, "/") + "/#/incidents"
+	}
+	s.enqueue(job{event: event, msg: msg, serverID: serverID, appID: appID})
+}
+
 func (s *Service) enqueue(j job) {
 	select {
 	case s.queue <- j:

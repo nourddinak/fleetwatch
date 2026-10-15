@@ -20,6 +20,7 @@ import (
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
+	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/release"
@@ -43,6 +44,7 @@ type Deps struct {
 	Notify     *notify.Service
 	AppMetrics *metrics.Store
 	Release    *release.Checker
+	Maint      *maintenance.Service
 }
 
 type server struct{ Deps }
@@ -70,6 +72,10 @@ func New(d Deps) http.Handler {
 	}
 	if d.Incidents != nil {
 		s.incidentRoutes(mux)
+	}
+	if d.Maint != nil {
+		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
+		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))
 	}
 	if d.Release != nil {
 		mux.HandleFunc("GET /api/system/update", s.authed(s.updateStatus))
