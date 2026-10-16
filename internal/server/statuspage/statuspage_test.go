@@ -56,10 +56,12 @@ func TestValidate(t *testing.T) {
 		"big logo": func(c *Config) { c.Logo = "data:image/png;base64," + strings.Repeat("A", 400_000) },
 		"domain":   func(c *Config) { c.Domain = "status.example.com/evil" },
 		"days":     func(c *Config) { c.HistoryDays = 365 },
-		"kind":     func(c *Config) { c.Groups = []Group{{Name: "x", Components: []Component{{Kind: "db", ID: "1", Name: "x"}}}} },
-		"name":     func(c *Config) { c.Groups = []Group{{Name: "x", Components: []Component{{Kind: "app", ID: "1"}}}} },
-		"notice":   func(c *Config) { c.Notices = []Notice{{Title: "x", Status: "panic", Start: 1}} },
-		"range":    func(c *Config) { c.Notices = []Notice{{Title: "x", Status: "info", Start: 10, End: 5}} },
+		"kind": func(c *Config) {
+			c.Groups = []Group{{Name: "x", Components: []Component{{Kind: "db", ID: "1", Name: "x"}}}}
+		},
+		"name":   func(c *Config) { c.Groups = []Group{{Name: "x", Components: []Component{{Kind: "app", ID: "1"}}}} },
+		"notice": func(c *Config) { c.Notices = []Notice{{Title: "x", Status: "panic", Start: 1}} },
+		"range":  func(c *Config) { c.Notices = []Notice{{Title: "x", Status: "info", Start: 10, End: 5}} },
 	}
 	for name, f := range bad {
 		c := Defaults()
