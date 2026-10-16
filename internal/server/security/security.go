@@ -57,6 +57,17 @@ type Login struct {
 	Country    string `json:"country"` // ISO code, "" unknown, "LAN" private network
 	NewCountry bool   `json:"newCountry"`
 	NewKey     bool   `json:"newKey"`
+	// Automated logins: Source "github" (a GitHub Actions runner) or a key the admin
+	// named (Label).
+	Source    string `json:"source,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Automated bool   `json:"automated"`
+}
+
+// LoginList is a page of logins and how many automated ones were left out.
+type LoginList struct {
+	Items  []Login `json:"items"`
+	Hidden int     `json:"hidden"`
 }
 
 type Service struct {
@@ -76,7 +87,9 @@ type Service struct {
 	Country func(ctx context.Context, ip string) string
 	// Fetch reads a public URL for the web checks; replaced in tests.
 	Fetch func(ctx context.Context, url string) (int, []byte)
-	Now   func() time.Time
+	// IsGitHub tells GitHub Actions runner addresses; replaced in tests.
+	IsGitHub func(ctx context.Context, ip string) bool
+	Now      func() time.Time
 
 	mu       sync.Mutex
 	scanning map[string]time.Time
@@ -88,6 +101,8 @@ func New(d *sql.DB) *Service {
 	s := &Service{db: d, Now: time.Now, scanning: map[string]time.Time{}, web: map[string][]proto.Finding{}}
 	rd := &rdap{client: &http.Client{Timeout: 15 * time.Second}}
 	s.Country = rd.country
+	gh := &githubRanges{}
+	s.IsGitHub = gh.contains
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	s.Fetch = func(ctx context.Context, url string) (int, []byte) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -312,6 +327,7 @@ func (s *Service) Run(ctx context.Context) {
 				s.Scan(id)
 			}
 		}
+		s.markGitHub(ctx)
 		s.mu.Lock()
 		stale := s.Now().Sub(s.webAt) > scanEvery
 		s.mu.Unlock()
@@ -341,20 +357,27 @@ func (s *Service) storeLogins(serverID string, list []proto.SSHLogin) {
 	var n int
 	s.db.QueryRow(`SELECT COUNT(*) FROM ssh_logins WHERE server_id = ?`, serverID).Scan(&n)
 	baseline := n == 0
+	labels := s.KeyLabels()
 	for _, l := range list {
 		var exists int
 		if s.db.QueryRow(`SELECT 1 FROM ssh_logins WHERE server_id = ? AND ts = ? AND user = ? AND ip = ?`, serverID, l.TS, l.User, l.IP).Scan(&exists) == nil {
 			continue
 		}
 		country := s.countryOf(ctx, l.IP)
+		source := ""
+		if s.IsGitHub != nil && s.IsGitHub(ctx, l.IP) {
+			source = "github"
+		}
+		automated := source != "" || (l.Key != "" && labels[l.Key] != "")
+		// Countries count people only: CI runners move around the world.
 		var seenCountry, seenKey int
-		s.db.QueryRow(`SELECT COUNT(*) FROM ssh_logins WHERE server_id = ? AND country = ?`, serverID, country).Scan(&seenCountry)
+		s.db.QueryRow(`SELECT COUNT(*) FROM ssh_logins WHERE server_id = ? AND country = ? AND source = ''`, serverID, country).Scan(&seenCountry)
 		s.db.QueryRow(`SELECT COUNT(*) FROM ssh_logins WHERE server_id = ? AND user = ? AND key_fp = ?`, serverID, l.User, l.Key).Scan(&seenKey)
-		newCountry := !baseline && seenCountry == 0 && country != "" && country != "LAN"
-		newKey := !baseline && seenKey == 0 && l.Key != ""
-		s.db.Exec(`INSERT OR IGNORE INTO ssh_logins (server_id, ts, user, ip, method, key_fp, country, new_country, new_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			serverID, l.TS, l.User, l.IP, l.Method, l.Key, country, newCountry, newKey)
-		if (newCountry || newKey || l.Method == "password" && !baseline) && s.Notify != nil {
+		newCountry := !baseline && !automated && seenCountry == 0 && country != "" && country != "LAN"
+		newKey := !baseline && !automated && seenKey == 0 && l.Key != ""
+		s.db.Exec(`INSERT OR IGNORE INTO ssh_logins (server_id, ts, user, ip, method, key_fp, country, new_country, new_key, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			serverID, l.TS, l.User, l.IP, l.Method, l.Key, country, newCountry, newKey, source)
+		if !automated && (newCountry || newKey || l.Method == "password" && !baseline) && s.Notify != nil {
 			var why []string
 			if newCountry {
 				why = append(why, "first login from "+country)
@@ -399,24 +422,34 @@ func (s *Service) countryOf(ctx context.Context, ip string) string {
 	return c
 }
 
-// Logins lists stored logins, newest first.
-func (s *Service) Logins(serverID string, onlyNew bool, limit int) ([]Login, error) {
-	q := `SELECT server_id, ts, user, ip, method, key_fp, country, new_country, new_key FROM ssh_logins WHERE (? = '' OR server_id = ?)`
+// Logins lists stored logins, newest first. With people set, automated logins
+// (GitHub Actions, named keys) are left out and only counted.
+func (s *Service) Logins(serverID string, onlyNew, people bool, limit int) (LoginList, error) {
+	labels := s.KeyLabels()
+	out := LoginList{Items: []Login{}}
+	q := `SELECT server_id, ts, user, ip, method, key_fp, country, new_country, new_key, source FROM ssh_logins WHERE (? = '' OR server_id = ?)`
 	if onlyNew {
 		q += ` AND (new_country = 1 OR new_key = 1)`
 	}
-	rows, err := s.db.Query(q+` ORDER BY ts DESC LIMIT ?`, serverID, serverID, limit)
+	rows, err := s.db.Query(q+` ORDER BY ts DESC LIMIT ?`, serverID, serverID, limit*20)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer rows.Close()
-	out := []Login{}
 	for rows.Next() {
 		var l Login
-		if err := rows.Scan(&l.ServerID, &l.TS, &l.User, &l.IP, &l.Method, &l.Key, &l.Country, &l.NewCountry, &l.NewKey); err != nil {
-			return nil, err
+		if err := rows.Scan(&l.ServerID, &l.TS, &l.User, &l.IP, &l.Method, &l.Key, &l.Country, &l.NewCountry, &l.NewKey, &l.Source); err != nil {
+			return out, err
 		}
-		out = append(out, l)
+		l.Label = labels[l.Key]
+		l.Automated = l.Source != "" || l.Label != ""
+		if people && l.Automated {
+			out.Hidden++
+			continue
+		}
+		if len(out.Items) < limit {
+			out.Items = append(out.Items, l)
+		}
 	}
 	return out, rows.Err()
 }

@@ -112,13 +112,25 @@ func (s *server) securityRoutes(mux *http.ServeMux) {
 		s.audit(r, "security.expected_port", in.ServerID, strconv.Itoa(in.Port))
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	mux.HandleFunc("PUT /api/security/key-label", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Key, Label string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.Security.SetKeyLabel(in.Key, in.Label); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "security.key_label", in.Key, in.Label)
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	mux.HandleFunc("GET /api/security/logins", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		if limit <= 0 || limit > 1000 {
 			limit = 300
 		}
-		list, err := s.Security.Logins(q.Get("server"), q.Get("new") == "1", limit)
+		list, err := s.Security.Logins(q.Get("server"), q.Get("new") == "1", q.Get("people") == "1", limit)
 		if err != nil {
 			fail(w, err)
 			return

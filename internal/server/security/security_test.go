@@ -56,6 +56,7 @@ func newTest(t *testing.T) (*Service, *sent) {
 		return []apps.DomainRef{{Host: "leaky.example.com", ServerID: "s1"}, {Host: "fine.example.com", ServerID: "s1"}}
 	}
 	s.AppPaths = func(string) []string { return nil }
+	s.IsGitHub = func(_ context.Context, ip string) bool { return strings.HasPrefix(ip, "20.") }
 	s.Fetch = func(_ context.Context, url string) (int, []byte) {
 		switch url {
 		case "https://leaky.example.com/.git/HEAD":
@@ -119,14 +120,53 @@ func TestLogins(t *testing.T) {
 	if len(a) != 1 || !strings.Contains(a[0], "first login from NL") || !strings.Contains(a[0], "a key never used by root") {
 		t.Fatalf("alerts: %v", a)
 	}
-	list, _ := s.Logins("", false, 10)
+	all, _ := s.Logins("", false, false, 10)
+	list := all.Items
 	if len(list) != 4 || list[0].IP != "203.0.113.5" || !list[0].NewCountry || !list[0].NewKey || list[3].Country != "DE" {
 		t.Fatalf("logins: %+v", list)
 	}
-	if lan, _ := s.Logins("s1", false, 10); lan[2].Country != "LAN" {
-		t.Fatalf("private address: %+v", lan[2])
+	if lan, _ := s.Logins("s1", false, false, 10); lan.Items[2].Country != "LAN" {
+		t.Fatalf("private address: %+v", lan.Items[2])
 	}
-	if only, _ := s.Logins("", true, 10); len(only) != 1 {
+	if only, _ := s.Logins("", true, false, 10); len(only.Items) != 1 {
 		t.Fatalf("only new: %+v", only)
+	}
+}
+
+func TestAutomatedLogins(t *testing.T) {
+	s, alerts := newTest(t)
+	base := time.Now().Add(-time.Hour).UnixMilli()
+	s.storeLogins("s1", []proto.SSHLogin{{TS: base, User: "root", IP: "198.51.100.1", Method: "publickey", Key: "ED25519 SHA256:me"}}) // baseline
+	s.storeLogins("s1", []proto.SSHLogin{
+		// GitHub Actions runners: new countries and a new key, all expected.
+		{TS: base + 1, User: "deploy", IP: "20.1.2.3", Method: "publickey", Key: "ED25519 SHA256:ci"},
+		{TS: base + 2, User: "deploy", IP: "20.9.9.9", Method: "publickey", Key: "ED25519 SHA256:ci"},
+	})
+	if len(alerts.all()) != 0 {
+		t.Fatalf("GitHub Actions logins raised alerts: %v", alerts.all())
+	}
+	// A person from the Netherlands is still news, even after runners were there.
+	s.storeLogins("s1", []proto.SSHLogin{{TS: base + 3, User: "root", IP: "203.0.113.7", Method: "publickey", Key: "ED25519 SHA256:me"}})
+	if a := alerts.all(); len(a) != 1 || !strings.Contains(a[0], "first login from NL") {
+		t.Fatalf("person alert: %v", a)
+	}
+	// Another CI system, recognized by naming its key.
+	if err := s.SetKeyLabel("ED25519 SHA256:gitlab", "GitLab deploy"); err != nil {
+		t.Fatal(err)
+	}
+	s.storeLogins("s1", []proto.SSHLogin{{TS: base + 4, User: "deploy", IP: "203.0.113.99", Method: "publickey", Key: "ED25519 SHA256:gitlab"}})
+	if len(alerts.all()) != 1 {
+		t.Fatalf("a named key raised an alert: %v", alerts.all())
+	}
+	people, _ := s.Logins("", false, true, 10)
+	if len(people.Items) != 2 || people.Hidden != 3 {
+		t.Fatalf("people only: %+v", people)
+	}
+	all, _ := s.Logins("", false, false, 10)
+	if all.Items[1].Automated {
+		t.Fatalf("a person counted as automated: %+v", all.Items[1])
+	}
+	if all.Items[0].Label != "GitLab deploy" || all.Items[2].Source != "github" {
+		t.Fatalf("labels: %+v", all.Items)
 	}
 }

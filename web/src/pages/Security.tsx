@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { Pencil, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Gate, LoadingState, PageHeader, Segmented, Select, Spinner, Table, Td, Toggle, Tr, type Tone } from "../components/ui";
+import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, Segmented, Select, Spinner, Table, Td, Toggle, Tr, type Tone } from "../components/ui";
+import { cn } from "../utils/cn";
 import { relTime } from "../mock/util";
 
 interface Finding {
@@ -30,6 +31,9 @@ interface Login {
   country: string;
   newCountry: boolean;
   newKey: boolean;
+  source?: string; // "github" = a GitHub Actions runner
+  label?: string; // the name given to this key
+  automated: boolean;
 }
 
 const SEV: Record<Finding["severity"], Tone> = { critical: "crit", warning: "warn", info: "info" };
@@ -129,37 +133,66 @@ function Findings() {
 }
 
 function Logins() {
-  const { servers, getServer } = useStore();
+  const { servers, getServer, toast } = useStore();
   const [server, setServer] = useState("");
   const [onlyNew, setOnlyNew] = useState(false);
-  const list = useApi<Login[]>(`/api/security/logins?server=${server}&new=${onlyNew ? 1 : 0}`);
+  const [people, setPeople] = useState(true);
+  const [naming, setNaming] = useState<{ key: string; label: string } | null>(null);
+  const list = useApi<{ items: Login[]; hidden: number }>(`/api/security/logins?server=${server}&new=${onlyNew ? 1 : 0}&people=${people ? 1 : 0}`);
+  const saveName = async () => {
+    if (!naming) return;
+    try {
+      await api("PUT", "/api/security/key-label", naming);
+      toast(naming.label ? `Key named “${naming.label}”` : "Name removed");
+      setNaming(null);
+      list.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  const items = list.data?.items ?? [];
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <Select className="max-w-[220px]" value={server} onChange={(e) => setServer(e.target.value)}>
           <option value="">All servers</option>
           {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
         <label className="flex items-center gap-2 text-sm">
+          <Toggle checked={people} onChange={setPeople} /> People only
+        </label>
+        <label className="flex items-center gap-2 text-sm">
           <Toggle checked={onlyNew} onChange={setOnlyNew} /> Only first-time countries and keys
         </label>
       </div>
+      {people && (list.data?.hidden ?? 0) > 0 && (
+        <p className="flex flex-wrap items-center gap-2 rounded-2xl bg-surface2 px-4 py-3 text-sm">
+          <Workflow size={15} className="text-muted" />
+          {list.data!.hidden} automated login{list.data!.hidden === 1 ? "" : "s"} hidden: GitHub Actions deploys and keys you named. They never raise alerts.
+          <button className="font-medium underline underline-offset-2" onClick={() => setPeople(false)}>Show them</button>
+        </p>
+      )}
       {list.error ? (
         <ErrorState message={list.error} onRetry={list.reload} />
       ) : !list.data ? (
         <LoadingState />
-      ) : list.data.length === 0 ? (
-        <EmptyState icon={<ShieldCheck size={20} />} title="No SSH logins recorded" desc="Agents report successful SSH logins every few minutes (agent 0.9.32 or newer). The first week is read when an agent starts." />
+      ) : items.length === 0 ? (
+        <EmptyState icon={<ShieldCheck size={20} />} title={people ? "No logins by people" : "No SSH logins recorded"} desc="Agents report successful SSH logins every few minutes (agent 0.9.32 or newer). The first week is read when an agent starts." />
       ) : (
         <Card pad={false}>
           <Table head={["When", "Server", "User", "From", "How"]}>
-            {list.data.map((l, i) => (
-              <Tr key={i}>
+            {items.map((l, i) => (
+              <Tr key={i} className={cn(l.automated && "opacity-60")}>
                 <Td className="whitespace-nowrap text-xs" title={new Date(l.ts).toLocaleString()}>{relTime(l.ts)}</Td>
                 <Td><Link to={`/servers/${l.serverId}`} className="hover:underline">{getServer(l.serverId)?.name ?? l.serverId}</Link></Td>
                 <Td className="font-mono text-xs">{l.user}</Td>
                 <Td>
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {l.source === "github" ? (
+                      <Badge tone="info"><Workflow size={11} className="mr-1 inline" />GitHub Actions</Badge>
+                    ) : l.label ? (
+                      <Badge tone="info"><Workflow size={11} className="mr-1 inline" />{l.label}</Badge>
+                    ) : null}
                     <span className="font-mono text-xs">{l.ip}</span>
                     <span className="text-xs text-muted">{l.country === "LAN" ? "private network" : l.country ? `${flag(l.country)} ${l.country}` : ""}</span>
                     {l.newCountry && <Badge tone="warn">new country</Badge>}
@@ -168,8 +201,13 @@ function Logins() {
                 <Td>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
                     {l.method === "publickey" ? "key" : <Badge tone="warn">{l.method}</Badge>}
-                    {l.key && <span className="max-w-[200px] truncate font-mono text-muted" title={l.key}>{l.key}</span>}
+                    {l.key && <span className="max-w-[200px] truncate font-mono text-muted" title={l.key}>{l.label ? `“${l.label}”` : l.key}</span>}
                     {l.newKey && <Badge tone="warn">new key</Badge>}
+                    {l.key && (
+                      <button className="text-muted hover:text-fg" title="Name this key" aria-label="Name this key" onClick={() => setNaming({ key: l.key, label: l.label ?? "" })}>
+                        <Pencil size={12} />
+                      </button>
+                    )}
                   </div>
                 </Td>
               </Tr>
@@ -177,6 +215,24 @@ function Logins() {
           </Table>
         </Card>
       )}
+      <Modal
+        open={!!naming}
+        onClose={() => setNaming(null)}
+        title="Name this SSH key"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setNaming(null)}>Cancel</Button>
+            <Button onClick={saveName}>Save</Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="font-mono text-xs text-muted break-all">{naming?.key}</p>
+          <Field label="Name" hint="For deploy keys of CI systems (GitLab, Jenkins, your own scripts): named keys count as automated, so their logins are hidden from “People only” and never raise alerts. Leave empty to remove the name.">
+            <Input autoFocus value={naming?.label ?? ""} maxLength={60} placeholder="GitLab deploy" onChange={(e) => naming && setNaming({ ...naming, label: e.target.value })} />
+          </Field>
+        </div>
+      </Modal>
     </div>
   );
 }
