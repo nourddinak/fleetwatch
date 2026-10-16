@@ -300,8 +300,9 @@ type Update struct {
 // server (127.0.0.1:443); behind a CDN this is the origin certificate, which the public
 // one hides.
 type CertInfo struct {
-	Host     string `json:"host"`
-	NotAfter int64  `json:"notAfter,omitempty"` // unix ms
-	Issuer   string `json:"issuer,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Host      string `json:"host"`
+	NotAfter  int64  `json:"notAfter,omitempty"`  // unix ms
+	NotBefore int64  `json:"notBefore,omitempty"` // unix ms; with NotAfter, tells short-lived certificates apart
+	Issuer    string `json:"issuer,omitempty"`
+	Error     string `json:"error,omitempty"`
 }

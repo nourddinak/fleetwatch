@@ -30,7 +30,7 @@ func selfSigned(t *testing.T, notAfter time.Time, names ...string) tls.Certifica
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: names[0], Organization: []string{"Test CA"}},
 		Issuer: pkix.Name{Organization: []string{"Test CA"}}, DNSNames: names,
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: notAfter, IsCA: true, BasicConstraintsValid: true,
+		NotBefore: notAfter.Add(-90 * 24 * time.Hour), NotAfter: notAfter, IsCA: true, BasicConstraintsValid: true, // a public certificate's 90 days
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	if err != nil {
@@ -107,11 +107,13 @@ func TestDomainChecks(t *testing.T) {
 	days := func(n int) time.Time { return now.Add(time.Duration(n)*24*time.Hour + time.Hour) }
 
 	certs := map[string]tls.Certificate{
-		"good.example.com":   selfSigned(t, days(60), "good.example.com"),
-		"soon.example.com":   selfSigned(t, days(5), "soon.example.com"),
-		"urgent.example.com": selfSigned(t, days(2), "urgent.example.com"),
-		"wrong.example.com":  selfSigned(t, days(60), "other.example.net"),
-		"cdn.example.com":    selfSigned(t, days(60), "cdn.example.com"),
+		"good.example.com":     selfSigned(t, days(60), "good.example.com"),
+		"soon.example.com":     selfSigned(t, days(5), "soon.example.com"),
+		"urgent.example.com":   selfSigned(t, days(2), "urgent.example.com"),
+		"wrong.example.com":    selfSigned(t, days(60), "other.example.net"),
+		"internal.example.com": selfSigned(t, days(60), "internal.example.com"),
+		"stuck.example.com":    selfSigned(t, days(60), "stuck.example.com"),
+		"cdn.example.com":      selfSigned(t, days(60), "cdn.example.com"),
 	}
 	addr := tlsServer(t, certs)
 	roots := x509.NewCertPool()
@@ -129,6 +131,12 @@ func TestDomainChecks(t *testing.T) {
 		// Public certificate fine, origin certificate on the server about to expire.
 		{Host: "cdn.example.com", ServerID: "s1", Origin: &proto.CertInfo{Host: "cdn.example.com", NotAfter: days(4).UnixMilli(), Issuer: "Cloudflare Origin CA"}},
 		{Host: "down.example.com", ServerID: "s1"}, // nothing answers: reported, no incident
+		// Caddy's internal CA: 12-hour certificates renewed all day. Expiring today is normal.
+		{Host: "internal.example.com", ServerID: "s1", Origin: &proto.CertInfo{Host: "internal.example.com",
+			NotBefore: now.Add(-6 * time.Hour).UnixMilli(), NotAfter: now.Add(6 * time.Hour).UnixMilli(), Issuer: "Caddy Local Authority - ECC Intermediate"}},
+		// A short-lived certificate that did expire means renewal stopped: that is a problem.
+		{Host: "stuck.example.com", ServerID: "s1", Origin: &proto.CertInfo{Host: "stuck.example.com",
+			NotBefore: now.Add(-30 * time.Hour).UnixMilli(), NotAfter: now.Add(-18 * time.Hour).UnixMilli(), Issuer: "Caddy Local Authority - ECC Intermediate"}},
 	}
 	c := New(d, nil, store, incidents.DefaultRules, nil)
 	c.Source = func() []apps.DomainRef { return refs }
@@ -153,6 +161,7 @@ func TestDomainChecks(t *testing.T) {
 		"Certificate problem on wrong.example.com":                 "critical",
 		"SSL certificate for cdn.example.com expires in 4 days":    "warning",
 		"Domain example.com expires in 10 days":                    "warning",
+		"SSL certificate for stuck.example.com has expired":        "critical",
 	}
 	for title, sev := range want {
 		if x, ok := open[title]; !ok || x.Severity != sev {
@@ -207,4 +216,23 @@ func keys(m map[string]incidents.Incident) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestShortLived(t *testing.T) {
+	h := int64(time.Hour / time.Millisecond)
+	cases := []struct {
+		c    Cert
+		want bool
+	}{
+		{Cert{Issuer: "Caddy Local Authority - ECC Intermediate", NotAfter: 1}, true},
+		{Cert{NotBefore: 0, NotAfter: 24 * h}, false}, // no start date: cannot tell
+		{Cert{NotBefore: 0, NotAfter: 24 * h, Issuer: "Let's Encrypt"}, false},
+		{Cert{NotBefore: 1, NotAfter: 1 + 24*h}, true},     // step-ca style, 24 hours
+		{Cert{NotBefore: 1, NotAfter: 1 + 90*24*h}, false}, // Let's Encrypt style, 90 days
+	}
+	for i, c := range cases {
+		if got := shortLived(c.c); got != c.want {
+			t.Errorf("case %d: %v", i, got)
+		}
+	}
 }

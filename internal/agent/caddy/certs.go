@@ -72,7 +72,7 @@ func checkLocal(ctx context.Context, addr, host string) proto.CertInfo {
 		return info
 	}
 	leaf := certs[0]
-	info.NotAfter = leaf.NotAfter.UnixMilli()
+	info.NotAfter, info.NotBefore = leaf.NotAfter.UnixMilli(), leaf.NotBefore.UnixMilli()
 	info.Issuer = IssuerName(leaf)
 	if err := leaf.VerifyHostname(host); err != nil {
 		info.Error = "certificate does not cover " + host

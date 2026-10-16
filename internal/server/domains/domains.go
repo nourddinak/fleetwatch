@@ -42,10 +42,22 @@ const (
 
 // Cert is one certificate check.
 type Cert struct {
-	NotAfter int64  `json:"notAfter,omitempty"` // unix ms
-	Issuer   string `json:"issuer,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Problem  bool   `json:"problem,omitempty"` // the certificate itself is wrong (not just unreachable)
+	NotAfter  int64  `json:"notAfter,omitempty"` // unix ms
+	NotBefore int64  `json:"notBefore,omitempty"`
+	Issuer    string `json:"issuer,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Problem   bool   `json:"problem,omitempty"`   // the certificate itself is wrong (not just unreachable)
+	AutoRenew bool   `json:"autoRenew,omitempty"` // short-lived and renewed automatically: expiry soon is normal
+}
+
+// shortLived marks certificates that a local CA renews on its own, many times before
+// they could be noticed expiring: Caddy's internal CA issues ~12-hour certificates,
+// step-ca ~24-hour ones. Expiring "today" is their normal state.
+func shortLived(c Cert) bool {
+	if strings.Contains(c.Issuer, "Caddy Local Authority") {
+		return true
+	}
+	return c.NotBefore > 0 && c.NotAfter > 0 && c.NotAfter-c.NotBefore <= (10*day).Milliseconds()
 }
 
 // Domain is the latest check of one site domain.
@@ -159,8 +171,10 @@ func (c *Checker) Check(ctx context.Context) {
 			defer func() { <-sem }()
 			d := Domain{Host: r.Host, ServerID: r.ServerID, AppID: r.AppID, CheckedAt: c.Now().UnixMilli()}
 			d.Public = c.publicCert(ctx, r.Host)
+			d.Public.AutoRenew = shortLived(d.Public)
 			if r.Origin != nil {
-				d.Origin = &Cert{NotAfter: r.Origin.NotAfter, Issuer: r.Origin.Issuer, Error: r.Origin.Error}
+				d.Origin = &Cert{NotAfter: r.Origin.NotAfter, NotBefore: r.Origin.NotBefore, Issuer: r.Origin.Issuer, Error: r.Origin.Error}
+				d.Origin.AutoRenew = shortLived(*d.Origin)
 			}
 			results[i] = d
 		}(i, r)
@@ -263,12 +277,12 @@ func (c *Checker) publicCert(ctx context.Context, host string) Cert {
 	case err == nil:
 		defer conn.Close()
 		leaf := conn.ConnectionState().PeerCertificates[0]
-		return Cert{NotAfter: leaf.NotAfter.UnixMilli(), Issuer: caddy.IssuerName(leaf)}
+		return Cert{NotAfter: leaf.NotAfter.UnixMilli(), NotBefore: leaf.NotBefore.UnixMilli(), Issuer: caddy.IssuerName(leaf)}
 	case errors.As(err, &verr):
 		out := Cert{Problem: true, Error: certProblem(verr.Err)}
 		if len(verr.UnverifiedCertificates) > 0 {
 			leaf := verr.UnverifiedCertificates[0]
-			out.NotAfter, out.Issuer = leaf.NotAfter.UnixMilli(), caddy.IssuerName(leaf)
+			out.NotAfter, out.NotBefore, out.Issuer = leaf.NotAfter.UnixMilli(), leaf.NotBefore.UnixMilli(), caddy.IssuerName(leaf)
 		}
 		return out
 	default:
@@ -327,16 +341,22 @@ func (c *Checker) evaluateCert(d Domain) {
 		c.Incidents.Ensure(sig)
 		return
 	}
-	// The soonest of the public and the origin certificate decides.
+	// The soonest of the public and the origin certificate decides. Auto-renewed
+	// short-lived certificates only count once they have actually expired.
+	now := c.Now().UnixMilli()
+	counts := func(x Cert) bool { return x.NotAfter > 0 && (!x.AutoRenew || x.NotAfter < now) }
 	which, until, issuer := "", int64(0), ""
-	if d.Public.NotAfter > 0 {
+	if counts(d.Public) {
 		which, until, issuer = "public", d.Public.NotAfter, d.Public.Issuer
 	}
-	if o := d.Origin; o != nil && o.NotAfter > 0 && (until == 0 || o.NotAfter < until) {
+	if o := d.Origin; o != nil && counts(*o) && (until == 0 || o.NotAfter < until) {
 		which, until, issuer = "origin (on the server)", o.NotAfter, o.Issuer
 	}
 	if until == 0 {
-		return // nothing readable; keep any open incident until we know more
+		if d.Public.NotAfter > 0 || (d.Origin != nil && d.Origin.NotAfter > 0) {
+			c.Incidents.Clear(key, "Certificate is renewed automatically")
+		}
+		return // otherwise nothing readable; keep any open incident until we know more
 	}
 	left := c.daysLeft(until)
 	if left > rules.SSLWarnDays {

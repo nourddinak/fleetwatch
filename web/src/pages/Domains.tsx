@@ -8,6 +8,7 @@ import { relTime } from "../mock/util";
 
 interface Cert {
   notAfter?: number;
+  autoRenew?: boolean;
   issuer?: string;
   error?: string;
   problem?: boolean;
@@ -32,9 +33,16 @@ function daysLeft(t?: number) {
 }
 
 /** "in 42 days" with a colour from the warning threshold. */
-function Expiry({ at, warn, problem, error }: { at?: number; warn: number; problem?: boolean; error?: string }) {
+function Expiry({ at, warn, problem, error, autoRenew }: { at?: number; warn: number; problem?: boolean; error?: string; autoRenew?: boolean }) {
   const left = daysLeft(at);
   if (problem) return <span className="text-crit">{error}</span>;
+  if (autoRenew && at && at > Date.now()) {
+    return (
+      <span className="whitespace-nowrap" title={`Short-lived certificate, renewed automatically. Current one valid until ${new Date(at).toLocaleString()}`}>
+        <Badge tone="ok">auto-renewed</Badge>
+      </span>
+    );
+  }
   if (left === null) return <span className="text-muted">{error ?? "—"}</span>;
   const tone: Tone = left <= 3 ? "crit" : left <= warn ? "warn" : "ok";
   const label = left < 0 ? "expired" : left === 0 ? "today" : left === 1 ? "tomorrow" : `in ${left} days`;
@@ -105,13 +113,13 @@ export function Domains() {
                       </div>
                     </Td>
                     <Td>
-                      <Expiry at={d.public.notAfter} warn={sslWarn} problem={d.public.problem} error={d.public.error} />
+                      <Expiry at={d.public.notAfter} warn={sslWarn} problem={d.public.problem} error={d.public.error} autoRenew={d.public.autoRenew} />
                       {d.public.issuer && !d.public.problem && <div className="text-xs text-muted">{d.public.issuer}</div>}
                     </Td>
                     <Td>
                       {d.origin ? (
                         <>
-                          <Expiry at={d.origin.notAfter} warn={sslWarn} error={d.origin.error} />
+                          <Expiry at={d.origin.notAfter} warn={sslWarn} error={d.origin.error} autoRenew={d.origin.autoRenew} />
                           {d.origin.issuer && <div className="text-xs text-muted">{d.origin.issuer}</div>}
                         </>
                       ) : (
