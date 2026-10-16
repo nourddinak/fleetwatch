@@ -271,7 +271,12 @@ function EditCheck({ check, onClose, onSaved }: { check: Partial<Check>; onClose
 function CheckDrawer({ view, onClose }: { view: View | null; onClose: () => void }) {
   const { getServer } = useStore();
   const [range, setRange] = useState<Range>("24h");
-  const h = useApi<History>(view ? `/api/uptime/${view.id}/history?range=${range}&u=${view.states.map((s) => s.ts).join()}` : "/api/health");
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 60_000); // fresh charts every minute, not on every result
+    return () => clearInterval(t);
+  }, []);
+  const h = useApi<History>(view ? `/api/uptime/${view.id}/history?range=${range}&t=${tick}` : "/api/health");
   const data = view && h.data && "points" in h.data ? h.data : null;
   return (
     <Drawer open={!!view} onClose={onClose} title={view?.name ?? ""}>

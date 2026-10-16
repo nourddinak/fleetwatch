@@ -39,10 +39,11 @@ type Service struct {
 	mu      sync.Mutex
 	state   map[string]*State
 	waiting map[string]chan proto.DockerResult // by run ID
+	started map[string]time.Time               // run ID → when it was sent
 }
 
 func New(bus *live.Bus) *Service {
-	return &Service{Bus: bus, Now: time.Now, state: map[string]*State{}, waiting: map[string]chan proto.DockerResult{}}
+	return &Service{Bus: bus, Now: time.Now, state: map[string]*State{}, waiting: map[string]chan proto.DockerResult{}, started: map[string]time.Time{}}
 }
 
 func (s *Service) get(id string) *State {
@@ -52,6 +53,17 @@ func (s *Service) get(id string) *State {
 	st := s.state[id]
 	if st.Loading && s.Now().Sub(st.since) > 2*time.Minute {
 		st.Loading = false // the agent never answered
+	}
+	if len(st.Running) > 0 { // nor for an action (it went away): updates take 15 minutes at most
+		kept := []proto.DockerAction{}
+		for _, a := range st.Running {
+			if s.Now().Sub(s.started[a.RunID]) < 20*time.Minute {
+				kept = append(kept, a)
+			} else {
+				delete(s.started, a.RunID)
+			}
+		}
+		st.Running = kept
 	}
 	return st
 }
@@ -130,6 +142,7 @@ func (s *Service) Act(serverID string, a proto.DockerAction) (string, error) {
 		s.mu.Lock()
 		st := s.get(serverID)
 		st.Running = append(st.Running, a)
+		s.started[a.RunID] = s.Now()
 		cp := *st
 		s.mu.Unlock()
 		s.publish(serverID, cp)
@@ -141,14 +154,14 @@ func (s *Service) Act(serverID string, a proto.DockerAction) (string, error) {
 func (s *Service) Logs(ctx context.Context, serverID, container string) (proto.DockerResult, error) {
 	ch := make(chan proto.DockerResult, 1)
 	runID, err := s.actWaiting(serverID, proto.DockerAction{Kind: "container", Target: container, Action: "logs"}, ch)
-	if err != nil {
-		return proto.DockerResult{}, err
-	}
 	defer func() {
 		s.mu.Lock()
 		delete(s.waiting, runID)
 		s.mu.Unlock()
 	}()
+	if err != nil {
+		return proto.DockerResult{}, err
+	}
 	select {
 	case res := <-ch:
 		return res, nil
@@ -205,6 +218,7 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 		}
 	}
 	st.Running = running
+	delete(s.started, res.RunID)
 	cp := *st
 	s.mu.Unlock()
 	s.publish(serverID, cp)

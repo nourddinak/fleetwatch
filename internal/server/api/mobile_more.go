@@ -130,6 +130,10 @@ func (s *server) mobileMoreRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusForbidden, "forbidden", "Your account can only look, not change things.")
 			return
 		}
+		if s.Auth.Security().ReauthForCommands {
+			writeError(w, http.StatusForbidden, "password_required", "This dashboard asks for your password before commands: run them from the dashboard.")
+			return
+		}
 		run, err := s.Commands.Start(v.ID, r.PathValue("cmd"), me.Name+" (phone)")
 		if err != nil {
 			fail(w, err)

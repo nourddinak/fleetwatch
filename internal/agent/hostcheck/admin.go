@@ -25,25 +25,27 @@ import (
 func Failures(ctx context.Context, since time.Time) (list []proto.SSHFailure, newest time.Time) {
 	byIP := map[string]*proto.SSHFailure{}
 	newest = since
-	for _, l := range sshLines(ctx, since) {
+	lines := sshLines(ctx, since)
+	for _, l := range lines {
 		if l.ts.After(newest) {
 			newest = l.ts
 		}
-		m := failedRe.FindStringSubmatch(l.msg)
-		if m == nil || net.ParseIP(m[3]) == nil {
-			continue
+	}
+	failedAttempts(lines, func(l sshLine, user, ip string) {
+		if net.ParseIP(ip) == nil {
+			return
 		}
-		f := byIP[m[3]]
+		f := byIP[ip]
 		if f == nil {
-			f = &proto.SSHFailure{IP: m[3]}
-			byIP[m[3]] = f
+			f = &proto.SSHFailure{IP: ip}
+			byIP[ip] = f
 		}
 		f.Count++
 		f.Last = l.ts.UnixMilli()
-		if user := m[1] + m[2]; user != "" && len(f.Users) < 3 && !contains(f.Users, user) {
+		if user != "" && len(f.Users) < 3 && !contains(f.Users, user) {
 			f.Users = append(f.Users, user)
 		}
-	}
+	})
 	for _, f := range byIP {
 		list = append(list, *f)
 	}

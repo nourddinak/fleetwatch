@@ -124,18 +124,35 @@ func updateFindings(ctx context.Context) []proto.Finding {
 	return fs
 }
 
-var failedRe = regexp.MustCompile(`(?:Failed (?:password|publickey|none) for (?:invalid user )?(\S*)|Invalid user (\S*)) from (\S+)`)
+var failedRe = regexp.MustCompile(`(?:Failed (?:password|publickey|none) for (?:invalid user )?(\S*)|Invalid user (\S*)) from (\S+)(?: port (\d+))?`)
+
+// failedAttempts calls fn once per failed login. sshd logs "Invalid user x from IP port P"
+// and then "Failed password for invalid user x from IP port P" for the same try, so an
+// "Invalid user" line only counts when no "Failed" line names that connection.
+func failedAttempts(lines []sshLine, fn func(l sshLine, user, ip string)) {
+	failed := map[string]bool{}
+	for _, l := range lines {
+		if m := failedRe.FindStringSubmatch(l.msg); m != nil && m[2] == "" && m[4] != "" {
+			failed[m[3]+" "+m[4]] = true
+		}
+	}
+	for _, l := range lines {
+		m := failedRe.FindStringSubmatch(l.msg)
+		if m == nil || (m[2] != "" && m[4] != "" && failed[m[3]+" "+m[4]]) {
+			continue
+		}
+		fn(l, m[1]+m[2], m[3])
+	}
+}
 
 func failedLoginFindings(ctx context.Context, password bool) []proto.Finding {
 	lines := sshLines(ctx, time.Now().Add(-24*time.Hour))
 	perIP := map[string]int{}
 	total := 0
-	for _, l := range lines {
-		if m := failedRe.FindStringSubmatch(l.msg); m != nil {
-			perIP[m[3]]++
-			total++
-		}
-	}
+	failedAttempts(lines, func(_ sshLine, _, ip string) {
+		perIP[ip]++
+		total++
+	})
 	if total < 30 {
 		return nil
 	}

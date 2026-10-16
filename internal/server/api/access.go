@@ -91,7 +91,7 @@ func (sc *scope) keep(o map[string]any, idIsServer bool) bool {
 }
 
 // filter drops what the session may not see from a decoded JSON value: list items,
-// lists inside objects ("items", "lines"…), and maps keyed by server or app ID.
+// lists and objects nested at any depth, and maps keyed by server or app ID.
 func (sc *scope) filter(v any, idIsServer bool) any {
 	switch x := v.(type) {
 	case []any:
@@ -100,7 +100,7 @@ func (sc *scope) filter(v any, idIsServer bool) any {
 			if o, ok := e.(map[string]any); ok && !sc.keep(o, idIsServer) {
 				continue
 			}
-			out = append(out, e)
+			out = append(out, sc.filter(e, false))
 		}
 		return out
 	case map[string]any:
@@ -117,9 +117,7 @@ func (sc *scope) filter(v any, idIsServer bool) any {
 				}
 				x[k] = sc.filter(e, k == "servers")
 			default:
-				if l, ok := e.([]any); ok {
-					x[k] = sc.filter(l, false)
-				}
+				x[k] = sc.filter(e, false)
 			}
 		}
 		return x

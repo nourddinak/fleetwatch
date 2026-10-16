@@ -58,3 +58,23 @@ func TestAptInst(t *testing.T) {
 		t.Fatalf("%q", m)
 	}
 }
+
+func TestFailedAttemptsCountedOnce(t *testing.T) {
+	lines := []sshLine{
+		{msg: "Invalid user admin from 192.0.2.9 port 4001"},
+		{msg: "Failed password for invalid user admin from 192.0.2.9 port 4001 ssh2"},
+		{msg: "Failed password for root from 192.0.2.9 port 4002 ssh2"},
+		{msg: "Failed password for root from 192.0.2.9 port 4002 ssh2"}, // a second try, same connection
+		{msg: "Invalid user test from 192.0.2.9 port 4003"},             // disconnected before a password
+	}
+	n := 0
+	failedAttempts(lines, func(_ sshLine, _, ip string) {
+		if ip != "192.0.2.9" {
+			t.Fatal(ip)
+		}
+		n++
+	})
+	if n != 4 {
+		t.Fatalf("counted %d attempts, want 4", n)
+	}
+}

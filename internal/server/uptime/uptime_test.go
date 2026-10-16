@@ -131,3 +131,16 @@ func TestPercentile(t *testing.T) {
 		t.Fatal(percentile(l, 50), percentile(l, 95))
 	}
 }
+
+func TestRemovedServerLocation(t *testing.T) {
+	s, _ := setup(t)
+	v, err := s.Create(Check{URL: "https://x.example.com", Locations: []string{Dashboard, "s1"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ServerExists = func(id string) bool { return id == "s2" } // s1 was removed
+	u, err := s.Update(v.ID, Check{URL: v.URL, Locations: v.Locations, Enabled: false})
+	if err != nil || len(u.Locations) != 1 || u.Locations[0] != Dashboard {
+		t.Fatalf("%+v %v", u.Locations, err)
+	}
+}

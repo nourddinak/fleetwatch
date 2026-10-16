@@ -44,7 +44,19 @@ func TestActAndResults(t *testing.T) {
 	if err != nil || res.Output != "hello" {
 		t.Fatal(res, err)
 	}
+	// An action whose agent never answers stops showing as running.
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	s.Act("s1", proto.DockerAction{Kind: "container", Action: "stop", Target: "web"})
+	now = now.Add(21 * time.Minute)
+	if len(s.State("s1").Running) != 0 {
+		t.Fatal("a lost action stays running")
+	}
+	s.Now = time.Now
 	s.AgentVersion = func(string) string { return "v0.9.30" }
+	if _, err := s.Logs(ctx, "s1", "web"); err == nil || len(s.waiting) != 0 {
+		t.Fatal("logs waiter left behind", err, len(s.waiting))
+	}
 	if _, err := s.Act("s1", proto.DockerAction{Kind: "container", Action: "start", Target: "web"}); err != ErrOldAgent {
 		t.Fatal("old agent accepted")
 	}

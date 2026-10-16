@@ -160,6 +160,14 @@ func (s *Service) OnReport(serverID string, data json.RawMessage) {
 			}
 			s.save(r)
 		}
+		// Apps that no longer have a lock file have nothing to check any more.
+		if s.AppFolders != nil {
+			for appID := range s.AppFolders(serverID) {
+				if _, ok := rep.Apps[appID]; !ok {
+					s.db.Exec(`DELETE FROM app_vulns WHERE app_id = ?`, appID)
+				}
+			}
+		}
 		s.mu.Lock()
 		delete(s.scanning, serverID)
 		s.mu.Unlock()

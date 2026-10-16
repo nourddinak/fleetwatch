@@ -16,6 +16,7 @@ import (
 type Comment struct {
 	ID         int64  `json:"id"`
 	IncidentID string `json:"incidentId"`
+	ServerID   string `json:"serverId,omitempty"` // so the live feed reaches only those who may see it
 	TS         int64  `json:"ts"`
 	Author     string `json:"author"`
 	Text       string `json:"text"`
@@ -31,7 +32,7 @@ func (s *Store) AddComment(id, author, text string) (Comment, error) {
 	if err != nil {
 		return Comment{}, err
 	}
-	c := Comment{IncidentID: x.ID, TS: s.Now().UnixMilli(), Author: author, Text: text}
+	c := Comment{IncidentID: x.ID, ServerID: x.ServerID, TS: s.Now().UnixMilli(), Author: author, Text: text}
 	res, err := s.db.Exec(`INSERT INTO incident_comments (incident_id, ts, author, text) VALUES (?, ?, ?, ?)`, c.IncidentID, c.TS, c.Author, c.Text)
 	if err != nil {
 		return Comment{}, err

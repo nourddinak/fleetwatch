@@ -423,9 +423,10 @@ func (r *Runner) applyBlocks(ctx context.Context, enabled bool, list []string) {
 	r.blockMu.Lock()
 	defer r.blockMu.Unlock()
 	key := fmt.Sprint(enabled, list)
-	if prev := r.blocks.Load(); (prev == nil && !enabled) || (prev != nil && *prev == key) {
-		return // never turned on, or nothing changed
+	if prev := r.blocks.Load(); prev != nil && *prev == key {
+		return // nothing changed
 	}
+	// Also when off at start: a chain left by an earlier agent process must go.
 	st := hostcheck.ApplyBlocks(ctx, enabled, list)
 	r.blocks.Store(&key)
 	if enabled {

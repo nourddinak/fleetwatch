@@ -168,6 +168,7 @@ type PersonStats struct {
 type PageRow struct {
 	TS       int64  `json:"ts"`
 	Incident string `json:"incidentId"`
+	ServerID string `json:"serverId,omitempty"` // for members limited to some servers
 	Title    string `json:"title"`
 	Person   string `json:"person"`
 	Level    int    `json:"level"`
@@ -242,7 +243,7 @@ func (s *Service) Report(days int) ([]PersonStats, []PageRow) {
 		if err != nil {
 			continue
 		}
-		p.Title = x.Title
+		p.Title, p.ServerID = x.Title, x.ServerID
 		k := p.Incident + "|" + p.Person
 		if counted[k] {
 			continue

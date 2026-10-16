@@ -107,10 +107,19 @@ type Service struct {
 	mu      sync.Mutex
 	lastRun map[string]time.Time // dashboard location
 	running map[string]bool
+	stats   map[string]stats // per check, recomputed at most once a minute
+}
+
+// stats are the slow parts of a View: uptime percentages, response times, daily bars.
+type stats struct {
+	at                             time.Time
+	uptime24h, uptime7d, uptime30d float64
+	p50, p95                       int64
+	days                           []Day
 }
 
 func New(d *sql.DB, inc *incidents.Store, bus *live.Bus) *Service {
-	return &Service{db: d, Incidents: inc, Bus: bus, Now: time.Now, probe: health.Probe, lastRun: map[string]time.Time{}, running: map[string]bool{},
+	return &Service{db: d, Incidents: inc, Bus: bus, Now: time.Now, probe: health.Probe, lastRun: map[string]time.Time{}, running: map[string]bool{}, stats: map[string]stats{},
 		ServerExists: func(string) bool { return true }}
 }
 
@@ -189,11 +198,13 @@ func (s *Service) validate(c Check) (Check, error) {
 		if seen[l] {
 			continue
 		}
-		if l != Dashboard && !s.ServerExists(l) {
-			return c, valid.Error("unknown server in the places to check from")
-		}
 		seen[l] = true
-		locs = append(locs, l)
+		if l == Dashboard || s.ServerExists(l) { // a removed server just drops out
+			locs = append(locs, l)
+		}
+	}
+	if len(locs) == 0 {
+		return c, valid.Error("pick at least one place to check from")
 	}
 	c.Locations = locs
 	return c, nil
@@ -264,6 +275,10 @@ func (s *Service) Delete(id string) error {
 	}
 	s.clearIncidents(c, "check deleted")
 	s.changed(c.Locations, nil)
+	s.mu.Lock()
+	delete(s.stats, id)
+	delete(s.lastRun, id)
+	s.mu.Unlock()
 	s.Bus.Publish("uptime.removed", map[string]string{"id": id})
 	return nil
 }
@@ -534,8 +549,31 @@ func (s *Service) uptimeSince(id string, since time.Time) float64 {
 
 func (s *Service) View(c Check) View {
 	now := s.Now()
-	v := View{Check: c, States: s.states(c), Uptime24h: s.uptimeSince(c.ID, now.Add(-24*time.Hour)),
-		Uptime7d: s.uptimeSince(c.ID, now.Add(-7*24*time.Hour)), Uptime30d: s.uptimeSince(c.ID, now.Add(-30*24*time.Hour))}
+	s.mu.Lock()
+	st, fresh := s.stats[c.ID]
+	s.mu.Unlock()
+	if !fresh || now.Sub(st.at) > time.Minute {
+		st = s.computeStats(c, now)
+		s.mu.Lock()
+		s.stats[c.ID] = st
+		s.mu.Unlock()
+	}
+	v := View{Check: c, States: s.states(c), Uptime24h: st.uptime24h, Uptime7d: st.uptime7d, Uptime30d: st.uptime30d, P50: st.p50, P95: st.p95, Days: st.days}
+	var down, up int
+	for _, st := range v.States {
+		switch st.Status {
+		case "down":
+			down++
+		case "up":
+			up++
+		}
+	}
+	return finish(v, c, down, up, s.Incidents.IsOpen("uptime_slow|"+c.ID))
+}
+
+func (s *Service) computeStats(c Check, now time.Time) stats {
+	v := stats{at: now, uptime24h: s.uptimeSince(c.ID, now.Add(-24*time.Hour)),
+		uptime7d: s.uptimeSince(c.ID, now.Add(-7*24*time.Hour)), uptime30d: s.uptimeSince(c.ID, now.Add(-30*24*time.Hour))}
 	if rows, err := s.db.Query(`SELECT latency_ms FROM uptime_results WHERE check_id = ? AND ok = 1 AND ts >= ?`, c.ID, now.Add(-24*time.Hour).UnixMilli()); err == nil {
 		var l []int64
 		for rows.Next() {
@@ -544,7 +582,7 @@ func (s *Service) View(c Check) View {
 			l = append(l, x)
 		}
 		rows.Close()
-		v.P50, v.P95 = percentile(l, 50), percentile(l, 95)
+		v.p50, v.p95 = percentile(l, 50), percentile(l, 95)
 	}
 	const day = 24 * time.Hour
 	today := now.UTC().Truncate(day)
@@ -565,17 +603,12 @@ func (s *Service) View(c Check) View {
 		if c := days[d.UnixMilli()/86400000]; c[1] > 0 {
 			x.Uptime = float64(int(float64(c[0])/float64(c[1])*10000)) / 100
 		}
-		v.Days = append(v.Days, x)
+		v.days = append(v.days, x)
 	}
-	var down, up int
-	for _, st := range v.States {
-		switch st.Status {
-		case "down":
-			down++
-		case "up":
-			up++
-		}
-	}
+	return v
+}
+
+func finish(v View, c Check, down, up int, slow bool) View {
 	switch {
 	case !c.Enabled:
 		v.Status = "paused"
@@ -585,7 +618,7 @@ func (s *Service) View(c Check) View {
 		v.Status = "partial"
 	case up == 0:
 		v.Status = "unknown"
-	case s.Incidents.IsOpen("uptime_slow|" + c.ID):
+	case slow:
 		v.Status = "slow"
 	default:
 		v.Status = "up"
