@@ -5,15 +5,17 @@
 package statuspage
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"fleetwatch/internal/server/incidents"
@@ -22,7 +24,9 @@ import (
 )
 
 const (
-	settingsKey = "statusPage"
+	settingsKey = "statusPages"
+	legacyKey   = "statusPage" // v0.9.22-23: a single page
+	maxPages    = 50
 	maxLogo     = 256 << 10 // bytes of image data
 	cacheFor    = 30 * time.Second
 	day         = 24 * time.Hour
@@ -54,6 +58,8 @@ type Notice struct {
 
 // Config is everything the admin can customize.
 type Config struct {
+	ID          string   `json:"id"`
+	Slug        string   `json:"slug"` // address /status/<slug>; "" = the main page at /status
 	Enabled     bool     `json:"enabled"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
@@ -79,6 +85,7 @@ func Defaults() Config {
 
 var (
 	accentRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	slugRe   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 	hostRe   = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	logoRe   = regexp.MustCompile(`^data:image/(png|jpeg|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)$`)
 	notices  = map[string]bool{"info": true, "maintenance": true, "degraded": true, "outage": true, "resolved": true}
@@ -94,6 +101,10 @@ func text(name, v string, max int) error {
 // Validate normalizes c and rejects anything unsafe to publish.
 func (c *Config) Validate() error {
 	c.Title, c.Domain = strings.TrimSpace(c.Title), strings.ToLower(strings.TrimSpace(c.Domain))
+	c.Slug = strings.ToLower(strings.TrimSpace(c.Slug))
+	if c.Slug != "" && !slugRe.MatchString(c.Slug) {
+		return valid.Error("page address may use a-z, 0-9 and dashes (up to 40)")
+	}
 	for _, e := range []error{text("title", c.Title, 80), text("description", c.Description, 1000), text("footer", c.Footer, 500),
 		text("link label", c.HomeLabel, 40)} {
 		if e != nil {
@@ -185,7 +196,11 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Service serves the configuration and the public view.
+// ErrNotFound means there is no status page with that ID.
+var ErrNotFound = errors.New("status page not found")
+
+// Service keeps the status pages (in memory, saved in settings) and builds their
+// public views.
 type Service struct {
 	db        *sql.DB
 	Incidents *incidents.Store
@@ -195,40 +210,156 @@ type Service struct {
 	ServerState func(id string) (state string, created int64, ok bool)
 	Now         func() time.Time
 
-	mu     sync.Mutex
-	cached *Public
-	at     time.Time
-	host   atomic.Value // custom domain, read on every request
+	mu    sync.Mutex
+	pages []Config
+	cache map[string]cached
+}
+
+type cached struct {
+	p  *Public
+	at time.Time
 }
 
 func New(d *sql.DB, inc *incidents.Store) *Service {
-	s := &Service{db: d, Incidents: inc, Now: time.Now}
-	s.host.Store(s.Config().Domain)
+	s := &Service{db: d, Incidents: inc, Now: time.Now, cache: map[string]cached{}}
+	var pages *[]Config
+	settings.Load(d, settingsKey, &pages)
+	if pages == nil {
+		pages = &[]Config{}
+		var old *Config
+		settings.Load(d, legacyKey, &old)
+		if old != nil { // the single page of earlier versions becomes the main page
+			c := Defaults()
+			settings.Load(d, legacyKey, &c)
+			c.ID, c.Slug = "sp_main", ""
+			*pages = append(*pages, c)
+			settings.Save(d, settingsKey, *pages)
+		}
+	}
+	s.pages = *pages
 	return s
 }
 
-// Domain is the custom host that serves only the status page ("" = none).
-func (s *Service) Domain() string { return s.host.Load().(string) }
-
-func (s *Service) Config() Config {
-	c := Defaults()
-	settings.Load(s.db, settingsKey, &c)
-	return c
+func newID() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return "sp_" + hex.EncodeToString(b)
 }
 
+// Pages returns every page, in creation order.
+func (s *Service) Pages() []Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Config(nil), s.pages...)
+}
+
+func (s *Service) Page(id string) (Config, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.pages {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return Config{}, false
+}
+
+// Save creates (empty ID) or replaces a page. Addresses and domains must be unique.
 func (s *Service) Save(c Config) (Config, error) {
 	if err := c.Validate(); err != nil {
 		return c, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at := -1
+	for i, x := range s.pages {
+		switch {
+		case x.ID == c.ID:
+			at = i
+		case x.Slug == c.Slug && c.Slug == "":
+			return c, valid.Error(fmt.Sprintf("%q is already the main page (at /status); give this one its own address", x.Title))
+		case x.Slug == c.Slug:
+			return c, valid.Error(fmt.Sprintf("the address /status/%s is used by %q", c.Slug, x.Title))
+		case c.Domain != "" && x.Domain == c.Domain:
+			return c, valid.Error(fmt.Sprintf("%s is already the domain of %q", c.Domain, x.Title))
+		}
+	}
+	if c.ID == "" {
+		if len(s.pages) >= maxPages {
+			return c, valid.Error(fmt.Sprintf("at most %d status pages", maxPages))
+		}
+		c.ID = newID()
+	} else if at < 0 {
+		return c, ErrNotFound
+	}
 	c.UpdatedAt = s.Now().UnixMilli()
-	if err := settings.Save(s.db, settingsKey, c); err != nil {
+	next := append([]Config(nil), s.pages...)
+	if at < 0 {
+		next = append(next, c)
+	} else {
+		next[at] = c
+	}
+	if err := settings.Save(s.db, settingsKey, next); err != nil {
 		return c, err
 	}
-	s.host.Store(c.Domain)
-	s.mu.Lock()
-	s.cached = nil // show changes right away
-	s.mu.Unlock()
+	s.pages = next
+	delete(s.cache, c.ID) // show changes right away
 	return c, nil
+}
+
+func (s *Service) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make([]Config, 0, len(s.pages))
+	for _, c := range s.pages {
+		if c.ID != id {
+			next = append(next, c)
+		}
+	}
+	if len(next) == len(s.pages) {
+		return ErrNotFound
+	}
+	if err := settings.Save(s.db, settingsKey, next); err != nil {
+		return err
+	}
+	s.pages = next
+	delete(s.cache, id)
+	return nil
+}
+
+// ForHost is the page that owns host as its own domain.
+func (s *Service) ForHost(host string) (Config, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.pages {
+		if host != "" && c.Domain == host {
+			return c, true
+		}
+	}
+	return Config{}, false
+}
+
+// Find is the enabled page a visitor asked for: the one owning host if any, else the
+// one at /status/<slug> ("" = the main page).
+func (s *Service) Find(host, slug string) (Config, bool) {
+	c, ok := s.ForHost(host)
+	if ok {
+		if slug != "" && slug != c.Slug {
+			return Config{}, false // a page's own domain shows only that page
+		}
+	} else {
+		s.mu.Lock()
+		for _, x := range s.pages {
+			if x.Slug == slug {
+				c, ok = x, true
+				break
+			}
+		}
+		s.mu.Unlock()
+	}
+	return c, ok && c.Enabled
 }
 
 // ---------- public view ----------
@@ -278,21 +409,16 @@ type Public struct {
 	UpdatedAt   int64          `json:"updatedAt"`
 }
 
-// Public returns the page data, rebuilt at most every 30 seconds. ok is false when
-// the status page is turned off.
-func (s *Service) Public() (*Public, bool) {
-	c := s.Config()
-	if !c.Enabled {
-		return nil, false
-	}
+// Public returns a page's public data, rebuilt at most every 30 seconds.
+func (s *Service) Public(c Config) *Public {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cached != nil && s.Now().Sub(s.at) < cacheFor {
-		return s.cached, true
+	if x, ok := s.cache[c.ID]; ok && s.Now().Sub(x.at) < cacheFor {
+		return x.p
 	}
 	p := s.build(c)
-	s.cached, s.at = p, s.Now()
-	return p, true
+	s.cache[c.ID] = cached{p, s.Now()}
+	return p
 }
 
 // downTypes take a component down; slowTypes only degrade it.

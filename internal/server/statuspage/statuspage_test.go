@@ -1,6 +1,10 @@
 package statuspage
 
 import (
+	"path/filepath"
+
+	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/settings"
 	"strings"
 	"testing"
 	"time"
@@ -69,5 +73,26 @@ func TestValidate(t *testing.T) {
 		if c.Validate() == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+func TestMigrateSinglePage(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	old := Defaults()
+	old.Enabled, old.Title = true, "Old page"
+	settings.Save(d, legacyKey, old)
+	s := New(d, nil)
+	if p := s.Pages(); len(p) != 1 || p[0].Title != "Old page" || p[0].Slug != "" || p[0].ID == "" {
+		t.Fatalf("migrated: %+v", p)
+	}
+	if err := s.Delete(s.Pages()[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := New(d, nil).Pages(); len(p) != 0 {
+		t.Fatalf("a deleted page came back: %+v", p)
 	}
 }

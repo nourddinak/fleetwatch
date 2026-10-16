@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, ExternalLink, Eye, Plus, Trash2, Upload, X } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowDown, ArrowUp, ExternalLink, Eye, Plus, Radio, Trash2, Upload, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { Badge, Button, Card, CodeBlock, CopyButton, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
+import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
 import { StatusView, type PublicStatus } from "./StatusPage";
 
 interface Component {
@@ -25,6 +26,8 @@ interface Notice {
   createdAt: number;
 }
 interface Config {
+  id: string;
+  slug: string;
   enabled: boolean;
   title: string;
   description: string;
@@ -48,9 +51,149 @@ const NOTICE_TONE = { info: "info", maintenance: "info", degraded: "warn", outag
 const toLocal = (ms: number) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "");
 const fromLocal = (s: string) => (s ? new Date(s).getTime() : 0);
 
+const pageUrl = (slug: string, domain?: string) => (domain ? `https://${domain}` : `${location.origin}/status${slug ? "/" + slug : ""}`);
+
+interface Summary {
+  id: string;
+  slug: string;
+  title: string;
+  enabled: boolean;
+  domain: string;
+  components: number;
+  notices: number;
+  updatedAt: number;
+}
+
+/** Every status page: a main one at /status, and any number at /status/<address>. */
+export function StatusPages() {
+  const { servers, apps, toast } = useStore();
+  const nav = useNavigate();
+  const list = useApi<Summary[]>("/api/status-pages");
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [slug, setSlug] = useState("");
+  const [from, setFrom] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [del, setDel] = useState<Summary | null>(null);
+  const hasMain = list.data?.some((p) => p.slug === "") ?? false;
+
+  const open = () => {
+    setTitle(hasMain ? "" : "Service status");
+    setSlug("");
+    setFrom("");
+    setCreating(true);
+  };
+  const pickFrom = (v: string) => {
+    setFrom(v);
+    const [kind, id] = v.split(/:(.*)/s);
+    const name = kind === "app" ? apps.find((a) => a.id === id)?.name : servers.find((s) => s.id === id)?.name;
+    if (name) {
+      setTitle(`${name} status`);
+      setSlug(name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40));
+    }
+  };
+  const create = async () => {
+    setBusy(true);
+    const [kind, id] = from.split(/:(.*)/s);
+    const name = kind === "app" ? apps.find((a) => a.id === id)?.name : servers.find((s) => s.id === id)?.name;
+    try {
+      const out = await api<Config>("POST", "/api/status-pages", {
+        title, slug, enabled: false, accent: "#16a34a", theme: "auto", poweredBy: true, historyDays: 90, showUptime: true,
+        groups: from && name ? [{ name: "", components: [{ kind, id, name, description: "" }] }] : [],
+        notices: [],
+      });
+      nav(`/status-page/${out.id}`);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  const remove = async (p: Summary) => {
+    setDel(null);
+    try {
+      await api("DELETE", `/api/status-pages/${p.id}`);
+      toast(`Deleted "${p.title}"`);
+      list.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Status pages"
+        sub="Public pages your users can check when something is down. Make one for everything, one per app or customer, or both; each has its own address, look and contents."
+        actions={<Button size="sm" onClick={open}><Plus size={14} /> New page</Button>}
+      />
+      <Gate>
+        {list.error ? (
+          <ErrorState message={list.error} onRetry={list.reload} />
+        ) : !list.data ? (
+          <LoadingState />
+        ) : list.data.length === 0 ? (
+          <EmptyState icon={<Radio size={20} />} title="No status pages yet" desc="Create one, choose what it shows, then turn it on." action={<Button onClick={open}><Plus size={14} /> New page</Button>} />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {list.data.map((p) => (
+              <Card key={p.id} className="flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <Link to={`/status-page/${p.id}`} className="min-w-0 truncate font-semibold hover:underline">{p.title}</Link>
+                  {p.enabled ? <Badge tone="ok" dot>Public</Badge> : <Badge>Off</Badge>}
+                </div>
+                <div className="truncate text-xs text-muted">{pageUrl(p.slug, p.domain)}{p.slug === "" && !p.domain ? " · main page" : ""}</div>
+                <div className="text-xs text-muted">{p.components} component{p.components === 1 ? "" : "s"} · {p.notices} notice{p.notices === 1 ? "" : "s"}</div>
+                <div className="mt-auto flex flex-wrap gap-2 pt-1">
+                  <Link to={`/status-page/${p.id}`}><Button size="sm" variant="secondary">Edit</Button></Link>
+                  {p.enabled && <a href={`/status${p.slug ? "/" + p.slug : ""}`} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink size={14} /> Open</Button></a>}
+                  <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setDel(p)}><Trash2 size={14} /></Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </Gate>
+
+      <Modal
+        open={creating}
+        onClose={() => setCreating(false)}
+        title="New status page"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+            <Button disabled={busy || !title.trim() || (hasMain && !slug)} onClick={create}>{busy && <Spinner size={14} />} Create</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Start with" hint="Optional: a page for one app or server. You can add more later.">
+            <Select value={from} onChange={(e) => pickFrom(e.target.value)}>
+              <option value="">Empty page</option>
+              <optgroup label="Applications">{apps.map((a) => <option key={a.id} value={`app:${a.id}`}>{a.name}</option>)}</optgroup>
+              <optgroup label="Whole servers">{servers.map((s) => <option key={s.id} value={`server:${s.id}`}>{s.name}</option>)}</optgroup>
+            </Select>
+          </Field>
+          <Field label="Title">
+            <Input value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Field label="Address" hint={hasMain ? "Letters, numbers and dashes." : "Leave empty to make this the main page at /status."}>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="whitespace-nowrap text-muted">/status/</span>
+              <Input value={slug} maxLength={40} placeholder={hasMain ? "my-app" : ""} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+            </div>
+          </Field>
+          <p className="text-xs text-muted">New pages start turned off, so you can set them up first.</p>
+        </div>
+      </Modal>
+      <ConfirmDialog open={!!del} title="Delete status page?" message={`"${del?.title}" and its notices are deleted, and its address stops working.`} confirmLabel="Delete" danger onConfirm={() => del && remove(del)} onCancel={() => setDel(null)} />
+    </>
+  );
+}
+
 export function StatusEditor() {
   const { servers, apps, getServer, toast } = useStore();
-  const saved = useApi<Config>("/api/status-page");
+  const { id } = useParams();
+  const saved = useApi<Config>(`/api/status-pages/${id}`);
   const [c, setC] = useState<Config | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -81,7 +224,7 @@ export function StatusEditor() {
   const save = async (next = c) => {
     setBusy(true);
     try {
-      const out = await api<Config>("PUT", "/api/status-page", next);
+      const out = await api<Config>("PUT", `/api/status-pages/${c.id}`, next);
       saved.setData(out);
       setC(out);
       toast("Status page saved");
@@ -102,7 +245,8 @@ export function StatusEditor() {
     set({ notices: exists ? c.notices.map((x) => (x.id === n.id ? n : x)) : [n, ...c.notices] });
     setNotice(null);
   };
-  const publicUrl = `${location.origin}/status`;
+  const publicUrl = pageUrl(saved.data.slug, saved.data.domain);
+  const path = `/status${saved.data.slug ? "/" + saved.data.slug : ""}`;
 
   const sample: PublicStatus = {
     ...c,
@@ -124,13 +268,14 @@ export function StatusEditor() {
   return (
     <>
       <PageHeader
-        title="Status page"
-        sub="A public page your users can check when something is down. Only the names and texts you set here are shown, never hostnames, IPs or incident details."
+        title={saved.data.title}
+        back={{ to: "/status-page", label: "All status pages" }}
+        sub="Only the names and texts you set here are shown, never hostnames, IPs or incident details."
         actions={
           <>
             <Button size="sm" variant="secondary" onClick={() => setPreview(true)}><Eye size={14} /> Preview</Button>
             {saved.data.enabled && (
-              <a href="/status" target="_blank" rel="noreferrer">
+              <a href={path} target="_blank" rel="noreferrer">
                 <Button size="sm" variant="secondary"><ExternalLink size={14} /> Open</Button>
               </a>
             )}
@@ -143,7 +288,13 @@ export function StatusEditor() {
           <Card>
             <SectionTitle title="Publish" />
             <ToggleRow label="Status page is public" desc="Anyone with the address can see it, without signing in." checked={c.enabled} onChange={(v) => set({ enabled: v })} />
-            <Field label="Address" className="mt-2">
+            <Field label="Address" className="mt-2" hint={c.slug ? undefined : "Empty: the main page, at /status."}>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="whitespace-nowrap text-muted">/status/</span>
+                <Input value={c.slug} maxLength={40} onChange={(e) => set({ slug: e.target.value.toLowerCase() })} />
+              </div>
+            </Field>
+            <Field label="Public link" className="mt-4">
               <div className="flex items-center gap-2">
                 <Input readOnly value={publicUrl} />
                 <CopyButton text={publicUrl} />

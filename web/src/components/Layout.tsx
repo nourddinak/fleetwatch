@@ -87,7 +87,7 @@ function Shell() {
     { to: "/logs", label: "Logs", icon: ScrollText },
     { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
     { to: "/domains", label: "Domains", icon: Globe },
-    { to: "/status-page", label: "Status page", icon: Radio },
+    { to: "/status-page", label: "Status pages", icon: Radio },
     { to: "/discoveries", label: "Discoveries", icon: Radar, badge: discoveries.length },
     { to: "/metrics", label: "Metrics", icon: Activity },
     { to: "/notifications", label: "Notifications", icon: Bell, badge: unread },

@@ -64,6 +64,7 @@ const GlobalLogs = page(() => import("./pages/GlobalLogs"), "GlobalLogs");
 const Incidents = page(() => import("./pages/Incidents"), "Incidents");
 const Domains = page(() => import("./pages/Domains"), "Domains");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
+const StatusPages = page(() => import("./pages/StatusEditor"), "StatusPages");
 const Discoveries = page(() => import("./pages/Discoveries"), "Discoveries");
 const MetricsExplorer = page(() => import("./pages/MetricsExplorer"), "MetricsExplorer");
 const Notifications = page(() => import("./pages/Notifications"), "Notifications");
@@ -119,7 +120,8 @@ export default function App() {
             <Route path="logs" element={<GlobalLogs />} />
             <Route path="incidents" element={<Incidents />} />
             <Route path="domains" element={<Domains />} />
-            <Route path="status-page" element={<StatusEditor />} />
+            <Route path="status-page" element={<StatusPages />} />
+            <Route path="status-page/:id" element={<StatusEditor />} />
             <Route path="discoveries" element={<Discoveries />} />
             <Route path="metrics" element={<MetricsExplorer />} />
             <Route path="notifications" element={<Notifications />} />

@@ -184,12 +184,13 @@ function History({ days, uptime }: { days: Day[]; uptime?: number }) {
 }
 
 export default function StatusPage() {
+  const slug = document.getElementById("root")?.dataset.slug;
   const [data, setData] = useState<PublicStatus | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     let stop = false;
     const load = () =>
-      fetch("/api/public/status")
+      fetch("/api/public/status" + (slug ? "/" + encodeURIComponent(slug) : ""))
         .then((r) => (r.ok ? r.json() : Promise.reject(r.status === 404 ? "This status page is not available." : "Could not load the status.")))
         .then((d: PublicStatus) => !stop && (setData(d), setError("")))
         .catch((e) => !stop && setError(typeof e === "string" ? e : "Could not load the status."));
@@ -199,7 +200,7 @@ export default function StatusPage() {
       stop = true;
       clearInterval(t);
     };
-  }, []);
+  }, [slug]);
   useEffect(() => {
     if (!data) return;
     document.title = data.title;
