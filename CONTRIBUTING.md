@@ -1,7 +1,7 @@
 # Contributing to Fleetwatch
 
-Thanks for helping! Fleetwatch is source-available: anyone can read, use and suggest
-changes to the code. Changes reach this repository only through pull requests that the
+Thanks for helping! Fleetwatch is source-available: anyone can read the code, use it
+and suggest changes, but copies may not be published or shared (see [LICENSE](LICENSE)). Changes reach this repository only through pull requests that the
 maintainer reviews and merges; nobody else can push to it.
 
 ## How to send a change
@@ -33,5 +33,6 @@ to report it privately.
 
 ## License
 
-By sending a pull request you agree that your contribution is released under the
-the project license (see LICENSE).
+Forking on GitHub is allowed for sending pull requests, not for publishing your own
+version. By sending a pull request you agree that the maintainer may use, change and
+license your contribution under any terms, including the project's [license](LICENSE).

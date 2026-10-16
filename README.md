@@ -110,4 +110,4 @@ Issues and pull requests are welcome: fork the repository, make your change on a
 
 ## License
 
-[PolyForm Internal Use License 1.0.0](LICENSE)
+Source-available under the [PolyForm Internal Use License 1.0.0](LICENSE) with a few additions: you may use Fleetwatch and change it for yourself, at home or at work, for free. You may not publish, share or sell copies of it, changed or not. Contributions are welcome through pull requests (see [CONTRIBUTING.md](CONTRIBUTING.md)).
