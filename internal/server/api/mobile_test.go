@@ -140,6 +140,28 @@ func TestPhoneApp(t *testing.T) {
 		t.Fatalf("on-call only phone: %+v", p)
 	}
 
+	// The fleet at a glance (widget), limited to what each person can see.
+	if st, out := appCall(t, srv, "GET", "/api/mobile/status", token, ""); st != 200 || len(out["servers"].([]any)) != 1 {
+		t.Fatalf("status: %d %v", st, out)
+	}
+	if st, _ := appCall(t, srv, "GET", "/api/mobile/servers/"+serverB+"/metrics?range=1h", opsToken, ""); st != 404 {
+		t.Fatalf("member phone read another server's charts: %d", st)
+	}
+	if st, _ := appCall(t, srv, "GET", "/api/mobile/servers/"+serverA+"/metrics?range=1h", opsToken, ""); st != 200 {
+		t.Fatalf("charts: %d", st)
+	}
+	// Personal rules: only critical alerts on this phone; on-call pages still come.
+	if st, r := appCall(t, srv, "PUT", "/api/mobile/me/rules", token, `{"minSeverity":"critical","servers":[],"quietFrom":"","quietTo":"","timeZone":"UTC"}`); st != 200 || r["minSeverity"] != "critical" {
+		t.Fatalf("rules: %d %v", st, r)
+	}
+	ownerDevice := paired["device"].(map[string]any)["id"].(string)
+	n := len(testMobile.Pending(ownerDevice, 0))
+	testMobile.Alert(mobile.Message{Kind: "incident", Title: "cpu", Severity: "warning", ServerID: serverA})
+	testMobile.Alert(mobile.Message{Kind: "incident", Title: "down", Severity: "critical", ServerID: serverA})
+	if p := testMobile.Pending(ownerDevice, 0); len(p) != n+1 || p[len(p)-1].Title != "down" {
+		t.Fatalf("rules not applied: %+v", p[n:])
+	}
+
 	// Phones list in the dashboard, then unpairing locks the app out.
 	if list := owner.list("/api/phones"); len(list) != 1 || list[0]["name"] != "Pixel" {
 		t.Fatalf("owner phones: %v", list)

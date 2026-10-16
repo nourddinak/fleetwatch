@@ -5,6 +5,7 @@ import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, Segmented, Select, Spinner, Table, Td, Toggle, Tr, type Tone } from "../components/ui";
 import { cn } from "../utils/cn";
+import { BlockedIPs, Updates, Vulnerabilities } from "./SecurityAdmin";
 import { relTime } from "../mock/util";
 
 interface Finding {
@@ -40,14 +41,14 @@ const SEV: Record<Finding["severity"], Tone> = { critical: "crit", warning: "war
 const flag = (cc: string) => (/^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map((c) => 127397 + c.charCodeAt(0))) : "");
 
 export function Security() {
-  const [tab, setTab] = useState<"findings" | "logins">("findings");
+  const [tab, setTab] = useState<"findings" | "logins" | "blocked" | "updates" | "vulns">("findings");
   return (
     <>
       <PageHeader title="Security" sub="Checks every server twice a day: SSH settings, waiting security updates, failed logins, open ports, the firewall, readable .env files and sites that leak .git or .env. You get a notification for anything new." />
       <div className="mb-5">
-        <Segmented value={tab} onChange={setTab} options={[{ value: "findings", label: "Findings" }, { value: "logins", label: "SSH logins" }]} />
+        <Segmented value={tab} onChange={setTab} options={[{ value: "findings", label: "Findings" }, { value: "logins", label: "SSH logins" }, { value: "blocked", label: "Blocked IPs" }, { value: "updates", label: "Updates" }, { value: "vulns", label: "Vulnerable packages" }]} />
       </div>
-      <Gate>{tab === "findings" ? <Findings /> : <Logins />}</Gate>
+      <Gate>{tab === "findings" ? <Findings /> : tab === "logins" ? <Logins /> : tab === "blocked" ? <BlockedIPs /> : tab === "updates" ? <Updates /> : <Vulnerabilities />}</Gate>
     </>
   );
 }

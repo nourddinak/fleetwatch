@@ -9,6 +9,7 @@ import { cn } from "../utils/cn";
 import { UpdateCard } from "../components/PlatformUpdate";
 import { PushCard } from "../components/PushCard";
 import { MobileCard } from "../components/MobileCard";
+import { AlertRulesCard } from "../components/AlertRulesCard";
 
 const NAV = [
   ["account", "Account"],
@@ -30,7 +31,7 @@ const NAV = [
 export function SettingsLayout() {
   const { me } = useStore();
   // Team members only manage their own account; everything else is the owner's.
-  const nav = me && me.role !== "owner" ? NAV.filter(([to]) => to === "account") : NAV;
+  const nav = me && me.role !== "owner" ? NAV.filter(([to]) => to === "account" || to === "2fa") : NAV;
   return (
     <>
       <PageHeader title="Settings" sub="Account, security, collection, notifications and rules" />
@@ -104,6 +105,7 @@ export function AccountSettings() {
       {me.role !== "owner" && (
         <>
           <MobileCard />
+          <AlertRulesCard />
           <PushCard personal enabled onChange={() => {}} />
         </>
       )}
@@ -169,6 +171,7 @@ export function SecuritySettings() {
         </div>
         <div className="mt-3 divide-y divide-line">
           <ToggleRow label="Re-authenticate before running commands" desc="Ask for your password on Stop / Restart / custom commands" checked={f.reauthForCommands} onChange={(v) => setF({ ...f, reauthForCommands: v })} />
+          <ToggleRow label="Require 2FA for everyone" desc="Team members without two-factor authentication must turn it on before they can use the dashboard. Turn on your own first." checked={!!f.require2FA} onChange={(v) => setF({ ...f, require2FA: v })} />
         </div>
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setF(sec.data)} />
       </Card>
@@ -705,6 +708,7 @@ export function NotificationSettings() {
         ch.provider === "push" ? (
           <div key="push" className="space-y-6">
             <MobileCard />
+            <AlertRulesCard />
             <PushCard enabled={ch.enabled} onChange={chans.reload} />
           </div>
         ) : (
@@ -723,7 +727,7 @@ export function NotificationSettings() {
 }
 
 /* ---------------- Incident rules ---------------- */
-type IncidentRules = Record<string, number>;
+type IncidentRules = Record<string, number | boolean>;
 const INCIDENT_RULE_ROWS: [string, string, string, string][] = [
   ["restartThreshold", "Restart count threshold", "restarts", "Open “Repeated Restarts” after this many restarts…"],
   ["restartWindowMin", "…within window", "minutes", "Window for the restart count"],
@@ -761,17 +765,67 @@ export function IncidentRulesSettings() {
     setBusy(false);
   };
   return (
+    <div className="space-y-6">
     <Card>
       <SectionTitle title="Incident detection rules" sub="Thresholds the central server uses to open incidents. Incidents resolve automatically when the condition clears." />
       <div className="divide-y divide-line">
         {INCIDENT_RULE_ROWS.map(([k, label, unit, desc]) => (
           <div key={k} className="flex flex-wrap items-center justify-between gap-3 py-3">
             <div><div className="text-sm font-medium">{label}</div><div className="text-xs text-muted">{desc}</div></div>
-            <div className="flex items-center gap-2"><Input type="number" min={1} className="!w-24" value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} /><span className="w-20 text-xs text-muted">{unit}</span></div>
+            <div className="flex items-center gap-2"><Input type="number" min={1} className="!w-24" value={f[k] as number} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} /><span className="w-20 text-xs text-muted">{unit}</span></div>
           </div>
         ))}
+        <ToggleRow label="Unusual activity" desc="Learns what each server normally does at each hour over two weeks, and opens “Unusual Activity” when CPU, memory or network traffic is far above that (e.g. 80% CPU at 3am on a server that idles at 10%)."
+          checked={!!f.anomalies} onChange={(v) => setF({ ...f, anomalies: v })} />
       </div>
       <SaveBar dirty={JSON.stringify(f) !== JSON.stringify(rules.data)} busy={busy} onSave={save} onReset={() => setF(rules.data)} />
+    </Card>
+    <Runbooks />
+    </div>
+  );
+}
+
+/** "How to fix" steps per incident type: shown in the incident, its alerts and the phone app. */
+function Runbooks() {
+  const { toast } = useStore();
+  const data = useApi<{ runbooks: Record<string, string>; types: Record<string, string> }>("/api/runbooks");
+  const [edit, setEdit] = useState<{ type: string; text: string } | null>(null);
+  if (!data.data) return null;
+  const save = async () => {
+    if (!edit) return;
+    try {
+      await api("PUT", `/api/runbooks/${edit.type}`, { text: edit.text });
+      data.setData({ ...data.data!, runbooks: { ...data.data!.runbooks, [edit.type]: edit.text.trim() } });
+      toast(edit.text.trim() ? "Runbook saved" : "Runbook removed");
+      setEdit(null);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  return (
+    <Card>
+      <SectionTitle title="Runbooks" sub="Steps to fix each kind of incident. They appear in the incident, in its notifications and on the phone, so whoever is woken up knows what to do." />
+      <div className="divide-y divide-line">
+        {Object.entries(data.data.types).sort((a, b) => a[1].localeCompare(b[1])).map(([type, label]) => {
+          const text = data.data!.runbooks[type];
+          return (
+            <div key={type} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{label}</div>
+                <div className="truncate text-xs text-muted">{text ? text.split("\n")[0] : "No runbook yet"}</div>
+              </div>
+              <Button size="sm" variant={text ? "ghost" : "secondary"} onClick={() => setEdit({ type, text: text ?? "" })}>{text ? "Edit" : "Write"}</Button>
+            </div>
+          );
+        })}
+      </div>
+      {edit && (
+        <Modal open wide onClose={() => setEdit(null)} title={`Runbook: ${data.data.types[edit.type]}`}
+          footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
+          <Textarea rows={12} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })}
+            placeholder={"1. Open the app's logs and look for the first error.\n2. Restart it from the Commands tab.\n3. Still failing? Roll back: git checkout the previous commit and restart.\n4. Call Sam: +33 …"} />
+        </Modal>
+      )}
     </Card>
   );
 }

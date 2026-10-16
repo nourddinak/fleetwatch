@@ -20,4 +20,4 @@ prototyp/
 *.keystore
 
 # The phone app lives only on this machine (not in the public repo)
-mobile/
+/mobile/

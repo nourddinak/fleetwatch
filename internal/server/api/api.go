@@ -17,9 +17,11 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/disk"
+	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
@@ -33,7 +35,9 @@ import (
 	"fleetwatch/internal/server/security"
 	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
+	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
+	"fleetwatch/internal/server/vulns"
 )
 
 type Deps struct {
@@ -63,6 +67,10 @@ type Deps struct {
 	Security   *security.Service
 	OnCall     *oncall.Service
 	Mobile     *mobile.Service
+	Uptime     *uptime.Service
+	Docker     *docker.Service
+	Admin      *hostadmin.Service
+	Vulns      *vulns.Service
 }
 
 type server struct{ Deps }
@@ -76,6 +84,7 @@ func New(d Deps) http.Handler {
 	})
 	s.authRoutes(mux)
 	s.memberRoutes(mux)
+	s.activityRoutes(mux)
 	if d.Fleet != nil {
 		s.serverRoutes(mux)
 		s.agentRoutes(mux)
@@ -121,6 +130,18 @@ func New(d Deps) http.Handler {
 	}
 	if d.Mobile != nil {
 		s.phoneRoutes(mux)
+		if d.Fleet != nil && d.Apps != nil {
+			s.mobileMoreRoutes(mux)
+		}
+	}
+	if d.Uptime != nil {
+		s.uptimeRoutes(mux)
+	}
+	if d.Docker != nil {
+		s.dockerRoutes(mux)
+	}
+	if d.Admin != nil {
+		s.adminRoutes(mux)
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))

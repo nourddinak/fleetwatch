@@ -48,6 +48,13 @@ func (s *server) memberRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, m)
 	}))
+	mux.HandleFunc("POST /api/members/{id}/reset-2fa", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Auth.ResetMember2FA(client(r), r.PathValue("id")); err != nil {
+			failMember(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
 	mux.HandleFunc("DELETE /api/members/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.Auth.DeleteMember(client(r), r.PathValue("id")); err != nil {
 			failMember(w, err)

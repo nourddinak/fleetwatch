@@ -49,6 +49,8 @@ const ServerOverview = page(() => import("./pages/ServerDetail"), "ServerOvervie
 const ServerPorts = page(() => import("./pages/ServerDetail"), "ServerPorts");
 const ServerSettings = page(() => import("./pages/ServerDetail"), "ServerSettings");
 const ServerStorage = page(() => import("./pages/ServerDetail"), "ServerStorage");
+const ServerDocker = page(() => import("./pages/ServerDocker"), "ServerDocker");
+const ServerFirewall = page(() => import("./pages/SecurityAdmin"), "ServerFirewall");
 const Applications = page(() => import("./pages/Applications"), "Applications");
 const AppDetail = page(() => import("./pages/AppDetail"), "AppDetail");
 const AppCommands = page(() => import("./pages/AppTabs"), "AppCommands");
@@ -62,7 +64,10 @@ const AppSettings = page(() => import("./pages/AppTabs"), "AppSettings");
 const AppStorage = page(() => import("./pages/AppTabs"), "AppStorage");
 const GlobalLogs = page(() => import("./pages/GlobalLogs"), "GlobalLogs");
 const Incidents = page(() => import("./pages/Incidents"), "Incidents");
+const Postmortem = page(() => import("./pages/Postmortem"), "Postmortem");
+const TeamPage = page(() => import("./pages/TeamPage"), "TeamPage");
 const Domains = page(() => import("./pages/Domains"), "Domains");
+const Uptime = page(() => import("./pages/Uptime"), "Uptime");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
 const StatusPages = page(() => import("./pages/StatusEditor"), "StatusPages");
 const Security = page(() => import("./pages/Security"), "Security");
@@ -104,6 +109,8 @@ export default function App() {
               <Route path="metrics" element={<ServerMetrics />} />
               <Route path="ports" element={<ServerPorts />} />
               <Route path="storage" element={<ServerStorage />} />
+              <Route path="docker" element={<ServerDocker />} />
+              <Route path="firewall" element={<ServerFirewall />} />
               <Route path="incidents" element={<ServerIncidents />} />
               <Route path="agent" element={<ServerAgent />} />
               <Route path="settings" element={<ServerSettings />} />
@@ -122,7 +129,10 @@ export default function App() {
             </Route>
             <Route path="logs" element={<GlobalLogs />} />
             <Route path="incidents" element={<Incidents />} />
+            <Route path="incidents/:id/postmortem" element={<Postmortem />} />
+            <Route path="team" element={<TeamPage />} />
             <Route path="domains" element={<Domains />} />
+            <Route path="uptime" element={<Uptime />} />
             <Route path="status-page" element={<StatusPages />} />
             <Route path="status-page/:id" element={<StatusEditor />} />
             <Route path="security" element={<Security />} />

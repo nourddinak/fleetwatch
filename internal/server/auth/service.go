@@ -52,6 +52,7 @@ type Security struct {
 	SessionTimeoutMin int  `json:"sessionTimeoutMin"`
 	LockoutAfter      int  `json:"lockoutAfter"`
 	ReauthForCommands bool `json:"reauthForCommands"`
+	Require2FA        bool `json:"require2FA"` // team members must turn on 2FA before anything else
 }
 
 func DefaultSecurity() Security { return Security{SessionTimeoutMin: 60, LockoutAfter: 5} }
@@ -100,6 +101,7 @@ type Profile struct {
 	PasswordChangedAt int64    `json:"passwordChangedAt"`
 	TwoFAEnabled      bool     `json:"twofaEnabled"`
 	RecoveryCodesLeft int      `json:"recoveryCodesLeft"`
+	TwoFARequired     bool     `json:"twofaRequired,omitempty"` // must turn on 2FA before using the dashboard
 }
 
 type Service struct {
@@ -156,7 +158,7 @@ func (s *Service) ResetAdmin(hash string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New("no admin exists yet; finish the setup wizard in the browser first")
 	}
-	for _, q := range []string{`DELETE FROM recovery_codes`, `DELETE FROM sessions`} {
+	for _, q := range []string{`DELETE FROM recovery_codes WHERE member_id = ''`, `DELETE FROM sessions`} {
 		if _, err := tx.Exec(q); err != nil {
 			return err
 		}
@@ -226,6 +228,10 @@ func (s *Service) Login(c Client, username, password string) (token string, pend
 	}
 	if !userOK || !pwOK {
 		if memberID, ok := s.memberLogin(username, password); ok {
+			if f, err := s.factor(memberID); err == nil && f.totpEnc != nil {
+				token, _, err = s.createSession(c, true, memberID)
+				return token, true, err
+			}
 			s.lim.reset(c.IP)
 			token, _, err = s.createSession(c, false, memberID)
 			if err == nil {
@@ -261,7 +267,7 @@ func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) 
 	if recovery {
 		method = "recovery code"
 	}
-	if !s.checkSecondFactor(code, recovery) {
+	if !s.checkSecondFactor(sess.MemberID, code, recovery) {
 		s.failed(c, "login", "bad "+method)
 		return "", ErrInvalidCode
 	}
@@ -269,42 +275,119 @@ func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) 
 		return "", err
 	}
 	s.lim.reset(c.IP)
-	token, _, err := s.createSession(c, false, "")
+	if sess.MemberID != "" {
+		method += " (team member)"
+	}
+	token, _, err := s.createSession(c, false, sess.MemberID)
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password + " + method})
 	}
 	return token, err
 }
 
-// checkSecondFactor consumes a recovery code or validates (and burns) a TOTP code.
-func (s *Service) checkSecondFactor(code string, recovery bool) bool {
+// checkSecondFactor consumes a recovery code or validates (and burns) a TOTP code of the
+// owner (member "") or a team member.
+func (s *Service) checkSecondFactor(member, code string, recovery bool) bool {
 	if recovery {
-		res, err := s.db.Exec(`UPDATE recovery_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL`, s.Now().UnixMilli(), hashRecovery(code))
+		res, err := s.db.Exec(`UPDATE recovery_codes SET used_at = ? WHERE code_hash = ? AND member_id = ? AND used_at IS NULL`, s.Now().UnixMilli(), hashRecovery(code), member)
 		if err != nil {
 			return false
 		}
 		n, _ := res.RowsAffected()
 		return n == 1
 	}
-	a, err := s.admin()
-	if err != nil || a.totpEnc == nil {
+	f, err := s.factor(member)
+	if err != nil || f.totpEnc == nil {
 		return false
 	}
-	sec, err := s.box.Open(a.totpEnc, totpAD)
+	sec, err := s.box.Open(f.totpEnc, totpADFor(member))
 	if err != nil {
 		return false
 	}
-	step, ok := CheckTOTP(string(sec), code, s.Now(), a.lastStep)
+	step, ok := CheckTOTP(string(sec), code, s.Now(), f.lastStep)
 	if !ok {
 		return false
 	}
 	// Conditional update: two concurrent requests with the same code cannot both win.
-	res, err := s.db.Exec(`UPDATE admin SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?`, step, step)
+	var res sql.Result
+	if member == "" {
+		res, err = s.db.Exec(`UPDATE admin SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?`, step, step)
+	} else {
+		res, err = s.db.Exec(`UPDATE members SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?`, step, member, step)
+	}
 	if err != nil {
 		return false
 	}
 	n, _ := res.RowsAffected()
 	return n == 1
+}
+
+// factorRow is one account's 2FA state: the owner's (admin table) or a member's.
+type factorRow struct {
+	username            string
+	totpEnc, pendingEnc []byte
+	lastStep            int64
+}
+
+func (s *Service) factor(member string) (factorRow, error) {
+	var f factorRow
+	q, args := `SELECT username, totp_secret_enc, totp_pending_enc, totp_last_step FROM admin WHERE id = 1`, []any{}
+	if member != "" {
+		q, args = `SELECT username, totp_secret_enc, totp_pending_enc, totp_last_step FROM members WHERE id = ?`, []any{member}
+	}
+	err := s.db.QueryRow(q, args...).Scan(&f.username, &f.totpEnc, &f.pendingEnc, &f.lastStep)
+	if errors.Is(err, sql.ErrNoRows) {
+		return f, ErrNoSession
+	}
+	return f, err
+}
+
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// setFactor updates the 2FA columns of one account.
+func setFactor(ex execer, member, set string, args ...any) error {
+	var err error
+	if member == "" {
+		_, err = ex.Exec(`UPDATE admin SET `+set+` WHERE id = 1`, args...)
+	} else {
+		_, err = ex.Exec(`UPDATE members SET `+set+` WHERE id = ?`, append(args, member)...)
+	}
+	return err
+}
+
+// totpADFor binds an encrypted TOTP secret to its account.
+func totpADFor(member string) string {
+	if member == "" {
+		return totpAD
+	}
+	return "member.totp." + member
+}
+
+// HasTwoFA reports whether the owner (member "") or a member has 2FA turned on.
+func (s *Service) HasTwoFA(member string) bool {
+	f, err := s.factor(member)
+	return err == nil && f.totpEnc != nil
+}
+
+// confirmAccountPassword re-checks the password of the owner or a member.
+func (s *Service) confirmAccountPassword(c Client, member, pw, action string) error {
+	if member == "" {
+		return s.checkPassword(c, pw, action)
+	}
+	if err := s.guard(c); err != nil {
+		return err
+	}
+	var hash string
+	if err := s.db.QueryRow(`SELECT password_hash FROM members WHERE id = ?`, member).Scan(&hash); err != nil {
+		return ErrNoSession
+	}
+	if ok, _ := VerifyPassword(hash, pw); !ok {
+		s.failed(c, action, "wrong password")
+		return ErrWrongPassword
+	}
+	return nil
 }
 
 func (s *Service) createSession(c Client, pending bool, memberID string) (string, Session, error) {
@@ -435,7 +518,7 @@ func (s *Service) Profile() (Profile, error) {
 	var p Profile
 	var totp []byte
 	err := s.db.QueryRow(`SELECT username, display_name, email, password_changed_at, totp_secret_enc,
-		(SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL) FROM admin WHERE id = 1`).
+		(SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL AND member_id = '') FROM admin WHERE id = 1`).
 		Scan(&p.Username, &p.DisplayName, &p.Email, &p.PasswordChangedAt, &totp, &p.RecoveryCodesLeft)
 	p.TwoFAEnabled, p.Role = totp != nil, RoleOwner
 	return p, err
@@ -496,41 +579,49 @@ func (s *Service) ChangePassword(c Client, current, next, keepSessionID string) 
 	return nil
 }
 
-// Begin2FA creates a new pending TOTP secret. The secret is returned only here, once.
+// Begin2FA creates a new pending TOTP secret for the owner. The secret is returned only here, once.
 func (s *Service) Begin2FA(c Client, password string) (secretB32, uri string, err error) {
-	if err := s.checkPassword(c, password, "2fa.setup"); err != nil {
-		return "", "", err
-	}
-	a, err := s.admin()
-	if err != nil {
-		return "", "", err
-	}
-	if a.totpEnc != nil {
-		return "", "", ErrTwoFAEnabled
-	}
-	secretB32, err = NewTOTPSecret()
-	if err != nil {
-		return "", "", err
-	}
-	if _, err := s.db.Exec(`UPDATE admin SET totp_pending_enc = ? WHERE id = 1`, s.box.Seal([]byte(secretB32), totpAD)); err != nil {
-		return "", "", err
-	}
-	return secretB32, TOTPURI("Fleetwatch", a.username, secretB32), nil
+	return s.Begin2FAFor(c, "", password)
 }
 
-// Enable2FA activates the pending secret once the user proves their app produces valid codes.
+// Begin2FAFor starts 2FA setup for the owner (member "") or a member.
+func (s *Service) Begin2FAFor(c Client, member, password string) (secretB32, uri string, err error) {
+	if err := s.confirmAccountPassword(c, member, password, "2fa.setup"); err != nil {
+		return "", "", err
+	}
+	f, err := s.factor(member)
+	if err != nil {
+		return "", "", err
+	}
+	if f.totpEnc != nil {
+		return "", "", ErrTwoFAEnabled
+	}
+	if secretB32, err = NewTOTPSecret(); err != nil {
+		return "", "", err
+	}
+	if err := setFactor(s.db, member, `totp_pending_enc = ?`, s.box.Seal([]byte(secretB32), totpADFor(member))); err != nil {
+		return "", "", err
+	}
+	return secretB32, TOTPURI("Fleetwatch", f.username, secretB32), nil
+}
+
+// Enable2FA activates the owner's pending secret once their app produces valid codes.
 func (s *Service) Enable2FA(c Client, code string) ([]string, error) {
-	a, err := s.admin()
+	return s.Enable2FAFor(c, "", code)
+}
+
+func (s *Service) Enable2FAFor(c Client, member, code string) ([]string, error) {
+	f, err := s.factor(member)
 	if err != nil {
 		return nil, err
 	}
-	if a.totpEnc != nil {
+	if f.totpEnc != nil {
 		return nil, ErrTwoFAEnabled
 	}
-	if a.pendingEnc == nil {
+	if f.pendingEnc == nil {
 		return nil, ErrNoPendingSetup
 	}
-	sec, err := s.box.Open(a.pendingEnc, totpAD)
+	sec, err := s.box.Open(f.pendingEnc, totpADFor(member))
 	if err != nil {
 		return nil, err
 	}
@@ -544,54 +635,77 @@ func (s *Service) Enable2FA(c Client, code string) ([]string, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE admin SET totp_secret_enc = totp_pending_enc, totp_pending_enc = NULL, totp_last_step = ? WHERE id = 1`, step); err != nil {
+	if err := setFactor(tx, member, `totp_secret_enc = totp_pending_enc, totp_pending_enc = NULL, totp_last_step = ?`, step); err != nil {
 		return nil, err
 	}
-	codes, err := replaceRecoveryCodes(tx)
+	codes, err := replaceRecoveryCodes(tx, member)
 	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	audit.Record(s.db, audit.Event{Action: "2fa.enable", OK: true, IP: c.IP, UserAgent: c.UserAgent})
+	audit.Record(s.db, audit.Event{Action: "2fa.enable", OK: true, IP: c.IP, UserAgent: c.UserAgent, Target: f.username})
 	return codes, nil
 }
 
 // Disable2FA requires the password plus a TOTP or recovery code.
 func (s *Service) Disable2FA(c Client, password, code string, recovery bool) error {
-	if err := s.checkPassword(c, password, "2fa.disable"); err != nil {
+	return s.Disable2FAFor(c, "", password, code, recovery)
+}
+
+func (s *Service) Disable2FAFor(c Client, member, password, code string, recovery bool) error {
+	if err := s.confirmAccountPassword(c, member, password, "2fa.disable"); err != nil {
 		return err
 	}
-	a, err := s.admin()
+	f, err := s.factor(member)
 	if err != nil {
 		return err
 	}
-	if a.totpEnc == nil {
+	if f.totpEnc == nil {
 		return ErrTwoFADisabled
 	}
-	if !s.checkSecondFactor(code, recovery) {
+	if !s.checkSecondFactor(member, code, recovery) {
 		s.failed(c, "2fa.disable", "bad code")
 		return ErrInvalidCode
 	}
-	if _, err := s.db.Exec(`UPDATE admin SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_last_step = 0 WHERE id = 1`); err != nil {
+	if err := setFactor(s.db, member, `totp_secret_enc = NULL, totp_pending_enc = NULL, totp_last_step = 0`); err != nil {
 		return err
 	}
-	s.db.Exec(`DELETE FROM recovery_codes`)
-	audit.Record(s.db, audit.Event{Action: "2fa.disable", OK: true, IP: c.IP, UserAgent: c.UserAgent})
+	s.db.Exec(`DELETE FROM recovery_codes WHERE member_id = ?`, member)
+	audit.Record(s.db, audit.Event{Action: "2fa.disable", OK: true, IP: c.IP, UserAgent: c.UserAgent, Target: f.username})
+	return nil
+}
+
+// ResetMember2FA turns a member's 2FA off (they lost their phone); the owner does this.
+func (s *Service) ResetMember2FA(c Client, member string) error {
+	m, err := s.GetMember(member)
+	if err != nil {
+		return err
+	}
+	if err := setFactor(s.db, member, `totp_secret_enc = NULL, totp_pending_enc = NULL, totp_last_step = 0`); err != nil {
+		return err
+	}
+	s.db.Exec(`DELETE FROM recovery_codes WHERE member_id = ?`, member)
+	s.db.Exec(`DELETE FROM sessions WHERE member_id = ?`, member)
+	audit.Record(s.db, audit.Event{Action: "member.2fa_reset", OK: true, IP: c.IP, UserAgent: c.UserAgent, Target: m.Username})
 	return nil
 }
 
 // RegenerateRecoveryCodes replaces all recovery codes; old ones stop working.
 func (s *Service) RegenerateRecoveryCodes(c Client, password string) ([]string, error) {
-	if err := s.checkPassword(c, password, "2fa.recovery_codes"); err != nil {
+	return s.RegenerateRecoveryCodesFor(c, "", password)
+}
+
+func (s *Service) RegenerateRecoveryCodesFor(c Client, member, password string) ([]string, error) {
+	if err := s.confirmAccountPassword(c, member, password, "2fa.recovery_codes"); err != nil {
 		return nil, err
 	}
-	a, err := s.admin()
+	f, err := s.factor(member)
 	if err != nil {
 		return nil, err
 	}
-	if a.totpEnc == nil {
+	if f.totpEnc == nil {
 		return nil, ErrTwoFADisabled
 	}
 	tx, err := s.db.Begin()
@@ -599,19 +713,19 @@ func (s *Service) RegenerateRecoveryCodes(c Client, password string) ([]string, 
 		return nil, err
 	}
 	defer tx.Rollback()
-	codes, err := replaceRecoveryCodes(tx)
+	codes, err := replaceRecoveryCodes(tx, member)
 	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	audit.Record(s.db, audit.Event{Action: "2fa.recovery_codes", OK: true, IP: c.IP, UserAgent: c.UserAgent})
+	audit.Record(s.db, audit.Event{Action: "2fa.recovery_codes", OK: true, IP: c.IP, UserAgent: c.UserAgent, Target: f.username})
 	return codes, nil
 }
 
-func replaceRecoveryCodes(tx *sql.Tx) ([]string, error) {
-	if _, err := tx.Exec(`DELETE FROM recovery_codes`); err != nil {
+func replaceRecoveryCodes(tx *sql.Tx, member string) ([]string, error) {
+	if _, err := tx.Exec(`DELETE FROM recovery_codes WHERE member_id = ?`, member); err != nil {
 		return nil, err
 	}
 	enc := base32.NewEncoding("abcdefghijkmnpqrstuvwxyz23456789").WithPadding(base32.NoPadding) // no l/o/0/1
@@ -623,7 +737,7 @@ func replaceRecoveryCodes(tx *sql.Tx) ([]string, error) {
 		}
 		s := enc.EncodeToString(b)[:10]
 		codes[i] = s[:5] + "-" + s[5:]
-		if _, err := tx.Exec(`INSERT INTO recovery_codes (code_hash) VALUES (?)`, hashRecovery(codes[i])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO recovery_codes (code_hash, member_id) VALUES (?, ?)`, hashRecovery(codes[i]), member); err != nil {
 			return nil, err
 		}
 	}

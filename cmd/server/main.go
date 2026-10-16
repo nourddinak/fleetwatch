@@ -25,15 +25,18 @@ import (
 	"fleetwatch/deploy"
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/agentbin"
+	"fleetwatch/internal/server/anomaly"
 	"fleetwatch/internal/server/api"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/disk"
+	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
@@ -48,6 +51,8 @@ import (
 	"fleetwatch/internal/server/security"
 	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
+	"fleetwatch/internal/server/uptime"
+	"fleetwatch/internal/server/vulns"
 	"fleetwatch/web"
 )
 
@@ -216,15 +221,20 @@ func serve() error {
 	appStore := metrics.NewStore(d, metrics.AppKind)
 	logStore := logs.NewStore(d)
 	var appSvc *apps.Service
+	var upSvc *uptime.Service
+	admin := hostadmin.New(d, bus)
 	hub := fleet.NewHub(fleet.NewRegistry(d), store, bus, version, func(serverID string) proto.Config {
+		blocking, blocked := admin.BlockedIPs()
 		return proto.Config{
 			MetricsIntervalSec:   metrics.LoadSettings(d).IntervalSec,
 			InventoryIntervalSec: 30,
 			DiscoveryRoots:       appSvc.DiscoverySettings().Roots,
 			LogTargets:           appSvc.LogTargets(serverID),
-			HealthChecks:         appSvc.HealthChecks(serverID),
+			HealthChecks:         append(appSvc.HealthChecks(serverID), upSvc.AgentChecks(serverID)...),
 			StorageTargets:       appSvc.StorageTargets(serverID),
 			MaxLogLineBytes:      logStore.Settings().MaxLineKB << 10,
+			Blocking:             blocking,
+			BlockedIPs:           blocked,
 		}
 	})
 	appSvc = apps.New(d, bus, appStore, hub.Connected)
@@ -242,6 +252,12 @@ func serve() error {
 		return id
 	}
 	incStore := incidents.NewStore(d, bus)
+	upSvc = uptime.New(d, incStore, bus)
+	upSvc.Send, upSvc.OnChange = hub.Send, hub.SendConfig
+	upSvc.ServerExists = func(id string) bool {
+		_, err := hub.Reg.Get(id)
+		return err == nil
+	}
 	detector := incidents.NewDetector(incStore, d, hub.Connected, serverName)
 	notifier := notify.New(d, box, bus)
 	pushSvc := push.New(d, box)
@@ -251,6 +267,7 @@ func serve() error {
 	notifier.Push = pushSvc
 	notifier.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	notifier.ServerName = serverName
+	notifier.Runbook = func(typ string) string { return incidents.Runbooks(d)[typ] }
 	notifier.AppName = func(id string) string {
 		if v, err := appSvc.Get(id); err == nil {
 			return v.Name
@@ -309,12 +326,12 @@ func serve() error {
 	onCall.People = func() []oncall.Person {
 		var out []oncall.Person
 		if p, err := authSvc.Profile(); err == nil {
-			out = append(out, oncall.Person{ID: oncall.Owner, Name: cmp.Or(p.DisplayName, p.Username), Email: p.Email, Devices: pushSvc.Count("")})
+			out = append(out, oncall.Person{ID: oncall.Owner, Name: cmp.Or(p.DisplayName, p.Username), Username: p.Username, Email: p.Email, Devices: pushSvc.Count("")})
 		}
 		if list, err := authSvc.ListMembers(); err == nil {
 			for _, m := range list {
 				if !m.Disabled {
-					out = append(out, oncall.Person{ID: m.ID, Name: cmp.Or(m.DisplayName, m.Username), Email: m.Email, Devices: pushSvc.Count(m.ID)})
+					out = append(out, oncall.Person{ID: m.ID, Name: cmp.Or(m.DisplayName, m.Username), Username: m.Username, Email: m.Email, Devices: pushSvc.Count(m.ID)})
 				}
 			}
 		}
@@ -323,6 +340,21 @@ func serve() error {
 	incStore.Notify = func(ev incidents.Event) {
 		notifier.Incident(ev)
 		onCall.OnEvent(ev)
+	}
+	// The start of someone's on-call week: tell them, with the note the last person left.
+	onCall.OnHandover = func(from, to oncall.Person, note *oncall.Note, open int) {
+		member := to.ID
+		if member == oncall.Owner {
+			member = ""
+		}
+		body := fmt.Sprintf("%d open incident(s).", open)
+		if note != nil && note.Text != "" {
+			body = "From " + note.By + ": " + note.Text + "\n" + body
+		} else if from.Name != "" {
+			body = "Taking over from " + from.Name + ". " + body
+		}
+		phones.ToPerson(member, mobile.Message{Kind: "notice", Title: "You are on call now", Body: body, Severity: "info"})
+		pushSvc.SendTo(context.Background(), member, push.Message{Title: "You are on call now", Body: body, Tag: "handoff"})
 	}
 	status := statuspage.New(d, incStore)
 	status.DataDir, status.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
@@ -465,6 +497,57 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeDiskReport] = diskSvc.OnReport
 	hub.Handlers[proto.TypeDiskCleaned] = diskSvc.OnCleaned
+	dockerSvc := docker.New(bus)
+	dockerSvc.Send, dockerSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
+	hub.Handlers[proto.TypeDockerReport] = dockerSvc.OnReport
+	hub.Handlers[proto.TypeDockerResult] = dockerSvc.OnResult
+	admin.Send, admin.AgentVersion, admin.BroadcastConfig = hub.Send, diskSvc.AgentVersion, hub.BroadcastConfig
+	// Never blocked: the servers' own addresses, and addresses someone signed in from
+	// (SSH in the last 30 days, or the dashboard).
+	admin.Protected = func() []string {
+		var out []string
+		if recs, err := hub.Reg.List(); err == nil {
+			for _, r := range recs {
+				out = append(append(out, r.PublicIP), r.IPs...)
+			}
+		}
+		rows, err := d.Query(`SELECT DISTINCT ip FROM ssh_logins WHERE ts > ? UNION SELECT DISTINCT ip FROM sessions`, time.Now().Add(-30*24*time.Hour).UnixMilli())
+		if err == nil {
+			for rows.Next() {
+				var ip string
+				if rows.Scan(&ip) == nil && ip != "" {
+					out = append(out, ip)
+				}
+			}
+			rows.Close()
+		}
+		return out
+	}
+	admin.Notify = func(title, body, severity string) {
+		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
+	}
+	hub.Handlers[proto.TypeSSHFailures] = admin.OnFailures
+	hub.Handlers[proto.TypeBlockStatus] = admin.OnBlockStatus
+	hub.Handlers[proto.TypeFirewallReport] = admin.OnFirewallReport
+	hub.Handlers[proto.TypeFirewallResult] = admin.OnFirewallResult
+	hub.Handlers[proto.TypeUpdatesReport] = admin.OnUpdatesReport
+	hub.Handlers[proto.TypeUpdatesResult] = func(serverID string, data json.RawMessage) { admin.OnUpdatesResult(serverID, data, serverName) }
+	vulnSvc := vulns.New(d, bus)
+	vulnSvc.Send, vulnSvc.AgentVersion, vulnSvc.Connected = hub.Send, diskSvc.AgentVersion, hub.Connected
+	vulnSvc.AppName = notifier.AppName
+	vulnSvc.AppFolders = func(serverID string) map[string]string {
+		out := map[string]string{}
+		if views, err := appSvc.List(serverID); err == nil {
+			for _, v := range views {
+				if v.Path != "" {
+					out[v.ID] = v.Path
+				}
+			}
+		}
+		return out
+	}
+	vulnSvc.Notify = admin.Notify
+	hub.Handlers[proto.TypeDepsReport] = vulnSvc.OnReport
 	serverIDs := func() []string {
 		recs, _ := hub.Reg.List()
 		ids := make([]string, 0, len(recs))
@@ -474,6 +557,7 @@ func serve() error {
 		return ids
 	}
 	sec := security.New(d)
+	vulnSvc.ServerIDs = serverIDs
 	sec.Send, sec.ServerIDs, sec.AgentVersion, sec.Connected, sec.Name = hub.Send, serverIDs, diskSvc.AgentVersion, hub.Connected, serverName
 	sec.Ports, sec.Domains = appSvc.ServerPorts, appSvc.Domains
 	sec.AppPaths = func(serverID string) []string {
@@ -525,9 +609,21 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeHealth] = func(serverID string, data json.RawMessage) {
 		var res []proto.HealthResult
-		if json.Unmarshal(data, &res) == nil {
-			appSvc.IngestHealth(serverID, res)
+		if json.Unmarshal(data, &res) != nil {
+			return
 		}
+		// Uptime checks this agent runs for other sites come back as health results too.
+		var mine, probes []proto.HealthResult
+		for _, r := range res {
+			if id, ok := strings.CutPrefix(r.AppID, uptime.Prefix); ok {
+				r.AppID = id
+				probes = append(probes, r)
+			} else {
+				mine = append(mine, r)
+			}
+		}
+		appSvc.IngestHealth(serverID, mine)
+		upSvc.Ingest(serverID, probes)
 	}
 	hub.Handlers[proto.TypeUpdateResult] = func(serverID string, data json.RawMessage) {
 		var msg string
@@ -589,7 +685,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -605,6 +701,32 @@ func serve() error {
 	go status.Run(ctx)
 	go sec.Run(ctx)
 	go onCall.Run(ctx)
+	go upSvc.Run(ctx)
+	go vulnSvc.Run(ctx)
+	go func() {
+		for range time.Tick(time.Minute) {
+			admin.Sweep()
+			var connected []string
+			for _, id := range serverIDs() {
+				if hub.Connected(id) {
+					connected = append(connected, id)
+				}
+			}
+			admin.Tick(connected)
+		}
+	}()
+	unusual := &anomaly.Service{DB: d, Incidents: incStore, ServerIDs: serverIDs, Name: serverName, Now: time.Now,
+		Enabled: func() bool { return detector.Rules().Anomalies }}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Minute):
+				unusual.Check()
+			}
+		}
+	}()
 	go func() { // forecasts: shortly after start, then hourly
 		for {
 			select {

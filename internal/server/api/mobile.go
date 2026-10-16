@@ -119,6 +119,37 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 		s.Mobile.Remove(d.MemberID, d.ID)
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	// A person's own rules for alerts on their phones (web side).
+	mux.HandleFunc("GET /api/account/alert-rules", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		writeJSON(w, http.StatusOK, s.Mobile.Rules(sess.MemberID))
+	}))
+	mux.HandleFunc("PUT /api/account/alert-rules", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		var in mobile.AlertRules
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := s.Mobile.SaveRules(sess.MemberID, in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
+	mux.HandleFunc("GET /api/mobile/me/rules", s.deviceAuthed(func(w http.ResponseWriter, r *http.Request, d mobile.Device) {
+		writeJSON(w, http.StatusOK, s.Mobile.Rules(d.MemberID))
+	}))
+	mux.HandleFunc("PUT /api/mobile/me/rules", s.deviceAuthed(func(w http.ResponseWriter, r *http.Request, d mobile.Device) {
+		var in mobile.AlertRules
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := s.Mobile.SaveRules(d.MemberID, in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
 	mux.HandleFunc("POST /api/mobile/test", s.deviceAuthed(func(w http.ResponseWriter, r *http.Request, d mobile.Device) {
 		s.Mobile.ToDevice(d.ID, mobile.Message{Kind: "test", Title: "Fleetwatch test", Body: "Notifications reach this phone.", Severity: "info"})
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
@@ -135,8 +166,10 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 			FirstAt  int64  `json:"firstAt"`
 			LastAt   int64  `json:"lastAt"`
 			By       string `json:"by,omitempty"` // who acknowledged or muted it
+			Runbook  string `json:"runbook,omitempty"`
 		}
 		out := []item{}
+		books := incidents.Runbooks(s.DB)
 		if s.Incidents != nil {
 			list, _ := s.Incidents.List(incidents.Filter{Status: "open"})
 			for _, x := range list {
@@ -147,7 +180,7 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 				if rec, err := s.Fleet.Reg.Get(x.ServerID); err == nil {
 					name = rec.Name
 				}
-				out = append(out, item{x.ID, x.Title, x.Type, x.Severity, x.Status, name, x.FirstAt, x.LastAt, x.ActedBy()})
+				out = append(out, item{x.ID, x.Title, x.Type, x.Severity, x.Status, name, x.FirstAt, x.LastAt, x.ActedBy(), books[x.TypeKey]})
 			}
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -226,6 +259,8 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 		}
 	}))
 }
+
+func incidentsOpen() incidents.Filter { return incidents.Filter{Status: "open"} }
 
 // deviceAuthed lets the app in with its device token (Authorization: Bearer fwm_…).
 func (s *server) deviceAuthed(h func(w http.ResponseWriter, r *http.Request, d mobile.Device)) http.HandlerFunc {

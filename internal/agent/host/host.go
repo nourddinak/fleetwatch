@@ -24,6 +24,12 @@ var Capabilities = []string{"Metrics collection", "Process discovery", "PM2 inte
 // Hello describes this host. Errors from individual probes leave fields zero.
 func Hello(version string) proto.Hello {
 	h := proto.Hello{Protocol: proto.Protocol, AgentVersion: version, IPs: addresses(), Capabilities: Capabilities}
+	if smi() != "" {
+		h.Capabilities = append(append([]string{}, h.Capabilities...), "GPU monitoring")
+	}
+	if docker() {
+		h.Capabilities = append(append([]string{}, h.Capabilities...), "Docker")
+	}
 	if info, err := gohost.Info(); err == nil {
 		h.Hostname, h.Kernel, h.Arch, h.BootTime = info.Hostname, info.KernelVersion, info.KernelArch, int64(info.BootTime)
 		h.OS = strings.TrimSpace(info.Platform + " " + info.PlatformVersion)
@@ -111,6 +117,7 @@ func (s *Sampler) Sample() proto.Metrics {
 	if up, err := gohost.Uptime(); err == nil {
 		m.Uptime = up
 	}
+	m.GPUs = gpus()
 	if io, err := gonet.IOCounters(true); err == nil {
 		var rx, tx uint64
 		for _, c := range io {

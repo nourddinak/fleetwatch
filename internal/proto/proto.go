@@ -66,7 +66,18 @@ type Metrics struct {
 	Load15    float64 `json:"load15"`
 	NetRxBps  float64 `json:"netRxBps"` // bytes/s, all non-loopback interfaces
 	NetTxBps  float64 `json:"netTxBps"`
-	Uptime    uint64  `json:"uptime"` // seconds
+	Uptime    uint64  `json:"uptime"`         // seconds
+	GPUs      []GPU   `json:"gpus,omitempty"` // NVIDIA GPUs (agent 0.9.38+)
+}
+
+// GPU is one graphics card's reading.
+type GPU struct {
+	Name     string  `json:"name"`
+	Util     float64 `json:"util"`     // percent
+	MemUsed  uint64  `json:"memUsed"`  // bytes
+	MemTotal uint64  `json:"memTotal"` // bytes
+	TempC    float64 `json:"tempC"`
+	PowerW   float64 `json:"powerW"`
 }
 
 type Config struct {
@@ -77,6 +88,8 @@ type Config struct {
 	MaxLogLineBytes      int             `json:"maxLogLineBytes"` // longer lines are cut
 	HealthChecks         []HealthCheck   `json:"healthChecks"`
 	StorageTargets       []StorageTarget `json:"storageTargets"` // app folders to measure periodically
+	Blocking             bool            `json:"blocking"`       // keep BlockedIPs blocked (agent 0.9.38+)
+	BlockedIPs           []string        `json:"blockedIps"`     // addresses and CIDR ranges blocked fleet-wide
 }
 
 // LogTarget asks the agent to collect one application's logs. The agent resolves
@@ -371,6 +384,191 @@ type Finding struct {
 type SecurityReport struct {
 	At       int64     `json:"at"`
 	Findings []Finding `json:"findings"`
+}
+
+// Host administration (agent 0.9.38+): blocking repeat SSH guessers fleet-wide, the
+// firewall, package updates and app dependencies (for known vulnerabilities).
+const (
+	TypeSSHFailures    = "ssh.failures"    // agent → server: []SSHFailure since the last report
+	TypeBlockStatus    = "block.status"    // agent → server: BlockStatus after applying Config.BlockedIPs
+	TypeFirewallScan   = "firewall.scan"   // server → agent (no data)
+	TypeFirewallReport = "firewall.report" // agent → server: FirewallReport
+	TypeFirewallChange = "firewall.change" // server → agent: FirewallChange
+	TypeFirewallResult = "firewall.result" // agent → server: HostActionResult
+	TypeUpdatesScan    = "updates.scan"    // server → agent: UpdatesScan
+	TypeUpdatesReport  = "updates.report"  // agent → server: UpdatesReport
+	TypeUpdatesInstall = "updates.install" // server → agent: UpdatesInstall
+	TypeUpdatesResult  = "updates.result"  // agent → server: HostActionResult
+	TypeDepsScan       = "deps.scan"       // server → agent: DepsScan
+	TypeDepsReport     = "deps.report"     // agent → server: DepsReport
+)
+
+// SSHFailure is the failed SSH logins from one address.
+type SSHFailure struct {
+	IP    string   `json:"ip"`
+	Count int      `json:"count"`
+	Users []string `json:"users,omitempty"` // a few of the user names tried
+	Last  int64    `json:"last"`
+}
+
+type BlockStatus struct {
+	At      int64  `json:"at"`
+	Applied int    `json:"applied"`
+	Error   string `json:"error,omitempty"`
+}
+
+type FirewallRule struct {
+	Num       int    `json:"num"`
+	To        string `json:"to"`
+	Action    string `json:"action"` // ALLOW | DENY | REJECT | LIMIT
+	Direction string `json:"direction,omitempty"`
+	From      string `json:"from"`
+	V6        bool   `json:"v6"`
+	Raw       string `json:"raw"` // the rule as ufw prints it; identifies it for deletion
+}
+
+type FirewallReport struct {
+	At              int64          `json:"at"`
+	Tool            string         `json:"tool"` // ufw | firewalld | iptables | none
+	Active          bool           `json:"active"`
+	DefaultIncoming string         `json:"defaultIncoming,omitempty"` // ufw: deny | allow | reject
+	Rules           []FirewallRule `json:"rules"`
+	Raw             string         `json:"raw,omitempty"` // firewalld or iptables configuration, shown as is
+	SSHPort         int            `json:"sshPort"`
+}
+
+// FirewallChange: Action allow | deny | limit (Port, Proto, From), delete (Rule), enable or disable (ufw only).
+type FirewallChange struct {
+	RunID  string `json:"runId"`
+	Action string `json:"action"`
+	Port   string `json:"port,omitempty"`
+	Proto  string `json:"proto,omitempty"`
+	From   string `json:"from,omitempty"`
+	Rule   string `json:"rule,omitempty"`
+}
+
+type HostActionResult struct {
+	RunID  string `json:"runId"`
+	OK     bool   `json:"ok"`
+	Output string `json:"output,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type Package struct {
+	Name     string `json:"name"`
+	Current  string `json:"current,omitempty"`
+	New      string `json:"new"`
+	Security bool   `json:"security"`
+}
+
+type UpdatesScan struct {
+	Refresh bool `json:"refresh"` // download fresh package lists first
+}
+
+type UpdatesReport struct {
+	At             int64     `json:"at"`
+	Manager        string    `json:"manager"` // apt | dnf
+	Packages       []Package `json:"packages"`
+	RebootRequired bool      `json:"rebootRequired"`
+	AutoSecurity   bool      `json:"autoSecurity"` // unattended-upgrades installed
+	ListsAt        int64     `json:"listsAt,omitempty"`
+	Error          string    `json:"error,omitempty"`
+}
+
+type UpdatesInstall struct {
+	RunID        string `json:"runId"`
+	SecurityOnly bool   `json:"securityOnly"`
+}
+
+type DepsScan struct {
+	Apps map[string]string `json:"apps"` // app ID → folder
+}
+
+type Dep struct {
+	Ecosystem string `json:"ecosystem"` // npm | PyPI | Go | Packagist (OSV names)
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+}
+
+type DepsReport struct {
+	At   int64            `json:"at"`
+	Apps map[string][]Dep `json:"apps"`
+}
+
+// Docker: containers, compose stacks, images and volumes (agent 0.9.38+).
+const (
+	TypeDockerList   = "docker.list"   // server → agent: send a DockerReport (no data)
+	TypeDockerReport = "docker.report" // agent → server: DockerReport
+	TypeDockerAction = "docker.action" // server → agent: DockerAction
+	TypeDockerResult = "docker.result" // agent → server: DockerResult
+)
+
+type DockerContainer struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Image    string  `json:"image"`
+	State    string  `json:"state"`  // running | exited | paused | restarting | created | dead
+	Status   string  `json:"status"` // "Up 3 hours", "Exited (1) 2 minutes ago"
+	Ports    string  `json:"ports"`
+	Created  string  `json:"created"`
+	Project  string  `json:"project,omitempty"` // docker compose project
+	Service  string  `json:"service,omitempty"`
+	CPU      float64 `json:"cpu"`    // percent of one core
+	MemPct   float64 `json:"memPct"` // of the container's limit
+	MemUsed  int64   `json:"memUsed"`
+	MemLimit int64   `json:"memLimit"`
+}
+
+type DockerImage struct {
+	ID       string `json:"id"`
+	Repo     string `json:"repo"`
+	Tag      string `json:"tag"`
+	Size     int64  `json:"size"`
+	Created  string `json:"created"`
+	Dangling bool   `json:"dangling"`
+	InUse    bool   `json:"inUse"`
+}
+
+type DockerVolume struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+	InUse  bool   `json:"inUse"`
+}
+
+type DockerProject struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"` // "running(3)", "exited(1)"
+	ConfigFiles string `json:"configFiles"`
+}
+
+type DockerReport struct {
+	At         int64             `json:"at"`
+	Available  bool              `json:"available"` // the docker CLI is installed
+	Version    string            `json:"version,omitempty"`
+	Error      string            `json:"error,omitempty"`
+	Containers []DockerContainer `json:"containers"`
+	Images     []DockerImage     `json:"images"`
+	Volumes    []DockerVolume    `json:"volumes"`
+	Projects   []DockerProject   `json:"projects"`
+}
+
+// DockerAction: Kind container (start | stop | restart | remove | logs | update),
+// project (start | stop | restart | update), image (remove | prune) or volume (remove).
+type DockerAction struct {
+	RunID  string `json:"runId"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Action string `json:"action"`
+}
+
+type DockerResult struct {
+	RunID  string `json:"runId"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Action string `json:"action"`
+	OK     bool   `json:"ok"`
+	Output string `json:"output,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 type SSHLogin struct {

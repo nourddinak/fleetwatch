@@ -52,14 +52,15 @@ type Service struct {
 	ErrorCount func(appID string) int              // error/critical log lines in the last 24 hours
 	OnViews    func(serverID string, views []View) // fresh views of a server's apps (incident detection)
 
-	mu     sync.Mutex
-	inv    map[string]*proto.Inventory // latest inventory per server
-	status map[string]string           // last status per app, for change events
-	health map[string]healthState      // recent health check summary per app
+	mu      sync.Mutex
+	inv     map[string]*proto.Inventory // latest inventory per server
+	status  map[string]string           // last status per app, for change events
+	commits map[string]string           // last git commit seen per app (deploy detection)
+	health  map[string]healthState      // recent health check summary per app
 }
 
 func New(d *sql.DB, bus *live.Bus, m *metrics.Store, connected func(string) bool) *Service {
-	return &Service{db: d, Bus: bus, Metrics: m, Connected: connected, Now: time.Now, inv: map[string]*proto.Inventory{}, status: map[string]string{}, health: map[string]healthState{}}
+	return &Service{db: d, Bus: bus, Metrics: m, Connected: connected, Now: time.Now, inv: map[string]*proto.Inventory{}, status: map[string]string{}, health: map[string]healthState{}, commits: map[string]string{}}
 }
 
 func newID(prefix string) string {

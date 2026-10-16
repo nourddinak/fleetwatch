@@ -15,8 +15,9 @@ interface Member {
   disabled: boolean;
   createdAt: number;
   lastLoginAt: number;
+  twofaEnabled: boolean;
 }
-type Form = Omit<Member, "id" | "createdAt" | "lastLoginAt"> & { id?: string; password: string };
+type Form = Omit<Member, "id" | "createdAt" | "lastLoginAt" | "twofaEnabled"> & { id?: string; password: string; twofaEnabled?: boolean };
 
 const ROLE_INFO = {
   operator: "Sees the servers below, restarts apps, runs their commands, handles incidents, turns on maintenance and cleans disks. Cannot change settings, servers or the team.",
@@ -85,6 +86,7 @@ export function TeamSettings() {
               <Td>
                 <Badge tone={m.role === "operator" ? "info" : "neutral"} className="capitalize">{m.role}</Badge>
                 {m.disabled && <Badge tone="warn" className="ml-1">disabled</Badge>}
+                {m.twofaEnabled && <Badge tone="ok" className="ml-1">2FA</Badge>}
               </Td>
               <Td className="text-xs">{m.servers === null ? "All servers" : m.servers.map((id) => getServer(id)?.name ?? id).join(", ") || "None"}</Td>
               <Td className="text-xs text-muted">{m.lastLoginAt ? relTime(m.lastLoginAt) : "never"}</Td>
@@ -140,6 +142,21 @@ export function TeamSettings() {
               <Input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
             </Field>
             {form.id && <ToggleRow label="Disabled" desc="Cannot sign in; signed out right away." checked={form.disabled} onChange={(v) => setForm({ ...form, disabled: v })} />}
+            {form.id && form.twofaEnabled && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-surface2 px-3 py-2 text-sm">
+                <span>Two-factor authentication is on. Lost their phone? Reset it; they set it up again at their next sign-in.</span>
+                <Button size="sm" variant="secondary" onClick={async () => {
+                  try {
+                    await api("POST", `/api/members/${form.id}/reset-2fa`);
+                    toast("2FA reset and signed out");
+                    setForm({ ...form, twofaEnabled: false });
+                    list.reload();
+                  } catch (e) {
+                    toast((e as ApiError).message, "err");
+                  }
+                }}>Reset 2FA</Button>
+              </div>
+            )}
           </div>
         </Modal>
       )}

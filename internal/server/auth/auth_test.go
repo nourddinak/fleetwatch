@@ -301,3 +301,54 @@ func TestTwoFactorFlow(t *testing.T) {
 		t.Fatal("2FA still required after disable")
 	}
 }
+
+func TestMemberTwoFactor(t *testing.T) {
+	s, c := newService(t)
+	m, err := s.CreateMember(cl, MemberInput{Username: "sam", Role: RoleOperator, Password: "member-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.HasTwoFA(m.ID) {
+		t.Fatal("2FA on before setup")
+	}
+	if _, _, err := s.Begin2FAFor(cl, m.ID, "admin-password-1"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("member setup with the owner's password: %v", err)
+	}
+	sec, _, err := s.Begin2FAFor(cl, m.ID, "member-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes, err := s.Enable2FAFor(cl, m.ID, currentCode(t, sec, c.t))
+	if err != nil || !s.HasTwoFA(m.ID) || s.HasTwoFA("") {
+		t.Fatal(err)
+	}
+	// Login now stops at the second step, and only the member's own codes work.
+	tok, pending, err := s.Login(cl, "sam", "member-password-1")
+	if err != nil || !pending {
+		t.Fatal("member login not pending", err)
+	}
+	c.t = c.t.Add(time.Minute)
+	full, err := s.Verify2FA(cl, tok, currentCode(t, sec, c.t), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess, err := s.Authenticate(full); err != nil || sess.MemberID != m.ID || sess.MFAPending {
+		t.Fatalf("%+v %v", sess, err)
+	}
+	tok2, _, _ := s.Login(cl, "sam", "member-password-1")
+	if _, err := s.Verify2FA(cl, tok2, codes[0], true); err != nil {
+		t.Fatal("member recovery code:", err)
+	}
+	if p, _ := s.MemberProfile(m.ID); !p.TwoFAEnabled || p.RecoveryCodesLeft != recoveryCodeCnt-1 {
+		t.Fatalf("%+v", p)
+	}
+	if p, _ := s.Profile(); p.TwoFAEnabled || p.RecoveryCodesLeft != 0 {
+		t.Fatalf("owner sees the member's codes: %+v", p)
+	}
+	if err := s.ResetMember2FA(cl, m.ID); err != nil || s.HasTwoFA(m.ID) {
+		t.Fatal("reset", err)
+	}
+	if _, err := s.Authenticate(full); err == nil {
+		t.Fatal("sessions kept after a 2FA reset")
+	}
+}

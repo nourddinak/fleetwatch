@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { Activity, Boxes, Cpu, HardDrive, KeyRound, MemoryStick, Network, Plug, Plus, PowerOff, RefreshCw, Timer, Trash2 } from "lucide-react";
+import { Activity, Boxes, Cpu, Gpu, HardDrive, KeyRound, MemoryStick, Network, Plug, Plus, PowerOff, RefreshCw, Timer, Trash2 } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
 import { api, toSeries, useApi, type ApiError, type EnrollInfo, type MetricKey, type MetricPoint, type ServerEvent } from "../api/client";
 import type { Range, Server } from "../mock/types";
@@ -63,7 +63,9 @@ export function ServerDetail() {
           { to: `${base}/applications`, label: "Applications", badge: <Badge>{c.apps}</Badge> },
           { to: `${base}/metrics`, label: "Metrics" },
           { to: `${base}/ports`, label: "Ports" },
+          { to: `${base}/firewall`, label: "Firewall" },
           { to: `${base}/storage`, label: "Storage" },
+          ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker" }] : []),
           { to: `${base}/incidents`, label: "Incidents", badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
           { to: `${base}/agent`, label: "Agent" },
           { to: `${base}/settings`, label: "Settings" },
@@ -103,6 +105,11 @@ export function ServerOverview() {
         <MetricCard label="Uptime" value={dc ? "—" : fmtDur(s.uptimeSec)} icon={<Timer size={14} />} sub={dc ? "unknown while disconnected" : `booted ${dateTime(Date.now() - s.uptimeSec * 1000)}`} />
         <MetricCard to={`/servers/${s.id}/agent`} label="Agent health" value={dc ? "Offline" : `${s.latencyMs}ms`} tone={dc ? "crit" : s.latencyMs > 200 ? "warn" : "ok"} icon={<Plug size={14} />} sub={`heartbeat ${seen(s)}`} />
         <MetricCard to={`/servers/${s.id}/applications`} label="Applications" value={c.apps} icon={<Boxes size={14} />} sub={`${c.incidents} incidents · ${c.warnings} warnings`} tone={c.incidents ? "warn" : undefined} />
+        {(s.gpus ?? []).map((g, i) => (
+          <MetricCard key={i} to={`/servers/${s.id}/metrics`} label={(s.gpus!.length > 1 ? `GPU ${i} · ` : "GPU · ") + g.name} value={g.util.toFixed(0)} unit="%" progress={g.util} icon={<Gpu size={14} />}
+            tone={levelTone(g.memTotalGb ? (g.memUsedGb / g.memTotalGb) * 100 : 0, 85, 95) === "ok" ? undefined : "warn"}
+            sub={`${g.memUsedGb} / ${g.memTotalGb} GB memory · ${g.tempC.toFixed(0)}°C${g.powerW ? ` · ${g.powerW.toFixed(0)} W` : ""}`} />
+        ))}
       </div>
       <Card>
         <SectionTitle title="Recent server events" sub="Agent connections, reboots and changes" />
@@ -149,6 +156,10 @@ const SERVER_PANELS: { m: MetricKey; title: string; unit: string; max?: number; 
   { m: "netTx", title: "Network transmit", unit: " Mbps" },
   { m: "load", title: "Load average (1m)", unit: "" },
 ];
+const GPU_PANELS: typeof SERVER_PANELS = [
+  { m: "gpu", title: "GPU usage", unit: "%", max: 100 },
+  { m: "gpuMem", title: "GPU memory", unit: "%", max: 100, thr: 95 },
+];
 export function ServerMetrics() {
   const s = useServer()!;
   const [range, setRange] = useState<Range>("24h");
@@ -168,7 +179,7 @@ export function ServerMetrics() {
         <EmptyState title="No data in this range yet" desc="The first minute of data appears shortly after the agent connects." />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {SERVER_PANELS.map((p) => (
+          {[...SERVER_PANELS, ...(s.gpus?.length ? GPU_PANELS : [])].map((p) => (
             <MetricPanel key={p.m} title={p.title} data={toSeries(data, p.m)} unit={p.unit} max={p.max} threshold={p.thr} sub={`Last ${range}`} />
           ))}
         </div>

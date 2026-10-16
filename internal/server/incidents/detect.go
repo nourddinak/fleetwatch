@@ -19,25 +19,26 @@ import (
 
 // Rules is the "incidentRules" settings section.
 type Rules struct {
-	RestartThreshold   int `json:"restartThreshold"`
-	RestartWindowMin   int `json:"restartWindowMin"`
-	RepeatedErrorCount int `json:"repeatedErrorCount"`
-	ErrorWindowMin     int `json:"errorWindowMin"`
-	HealthFailures     int `json:"healthFailures"`
-	CPUThreshold       int `json:"cpuThreshold"`
-	CPUMinutes         int `json:"cpuMinutes"`
-	RAMThreshold       int `json:"ramThreshold"`
-	RAMMinutes         int `json:"ramMinutes"`
-	DiskThreshold      int `json:"diskThreshold"`
-	OfflineGraceSec    int `json:"offlineGraceSec"`
-	SSLWarnDays        int `json:"sslWarnDays"`    // certificate expiry warning
-	DomainWarnDays     int `json:"domainWarnDays"` // domain registration expiry warning
+	RestartThreshold   int  `json:"restartThreshold"`
+	RestartWindowMin   int  `json:"restartWindowMin"`
+	RepeatedErrorCount int  `json:"repeatedErrorCount"`
+	ErrorWindowMin     int  `json:"errorWindowMin"`
+	HealthFailures     int  `json:"healthFailures"`
+	CPUThreshold       int  `json:"cpuThreshold"`
+	CPUMinutes         int  `json:"cpuMinutes"`
+	RAMThreshold       int  `json:"ramThreshold"`
+	RAMMinutes         int  `json:"ramMinutes"`
+	DiskThreshold      int  `json:"diskThreshold"`
+	OfflineGraceSec    int  `json:"offlineGraceSec"`
+	SSLWarnDays        int  `json:"sslWarnDays"`    // certificate expiry warning
+	DomainWarnDays     int  `json:"domainWarnDays"` // domain registration expiry warning
+	Anomalies          bool `json:"anomalies"`      // unusual CPU, memory or traffic for the time of day
 }
 
 func DefaultRules() Rules {
 	return Rules{RestartThreshold: 5, RestartWindowMin: 10, RepeatedErrorCount: 25, ErrorWindowMin: 5, HealthFailures: 3,
 		CPUThreshold: 90, CPUMinutes: 5, RAMThreshold: 90, RAMMinutes: 5, DiskThreshold: 85, OfflineGraceSec: 60,
-		SSLWarnDays: 14, DomainWarnDays: 14}
+		SSLWarnDays: 14, DomainWarnDays: 14, Anomalies: true}
 }
 
 func (r Rules) Validate() error {

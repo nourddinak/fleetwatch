@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,7 +41,28 @@ func (s *server) serverRoutes(mux *http.ServeMux) {
 }
 
 func (s *server) audit(r *http.Request, action, target, detail string) {
-	audit.Record(s.DB, audit.Event{Action: action, OK: true, IP: clientIP(r), UserAgent: r.UserAgent(), Target: target, Detail: detail})
+	actor := s.actor(r)
+	audit.Record(s.DB, audit.Event{Action: action, OK: true, IP: clientIP(r), UserAgent: r.UserAgent(), Target: target, Detail: detail, Actor: actor})
+	if s.Bus != nil {
+		s.Bus.Publish("activity", s.activityOf(audit.Row{TS: time.Now().UnixMilli(), Action: action, OK: true, Target: target, Detail: detail, Actor: actor}))
+	}
+}
+
+type sessionKey struct{}
+
+// actor names whoever made the request: a member's username or the owner's name.
+func (s *server) actor(r *http.Request) string {
+	sess, ok := r.Context().Value(sessionKey{}).(auth.Session)
+	if !ok {
+		return ""
+	}
+	if !sess.Owner() {
+		return sess.Username
+	}
+	if p, err := s.Auth.Profile(); err == nil {
+		return cmp.Or(p.DisplayName, p.Username)
+	}
+	return "owner"
 }
 
 // publicURL is the base URL agents use to reach this server.

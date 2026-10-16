@@ -32,6 +32,7 @@ type Member struct {
 	Disabled    bool     `json:"disabled"`
 	CreatedAt   int64    `json:"createdAt"`
 	LastLoginAt int64    `json:"lastLoginAt"`
+	TwoFA       bool     `json:"twofaEnabled"`
 }
 
 // MemberInput creates or changes a member; an empty Password keeps the current one.
@@ -85,7 +86,7 @@ func (in *MemberInput) validate(creating bool) error {
 }
 
 func (s *Service) ListMembers() ([]Member, error) {
-	rows, err := s.db.Query(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at FROM members ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL FROM members ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (s *Service) ListMembers() ([]Member, error) {
 	for rows.Next() {
 		var m Member
 		var servers string
-		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA); err != nil {
 			return nil, err
 		}
 		m.Servers = decodeServers(servers)
@@ -106,8 +107,8 @@ func (s *Service) ListMembers() ([]Member, error) {
 func (s *Service) GetMember(id string) (Member, error) {
 	var m Member
 	var servers string
-	err := s.db.QueryRow(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at FROM members WHERE id = ?`, id).
-		Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt)
+	err := s.db.QueryRow(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL FROM members WHERE id = ?`, id).
+		Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrNoMember
 	}
@@ -176,6 +177,7 @@ func (s *Service) DeleteMember(c Client, id string) error {
 		return err
 	}
 	s.db.Exec(`DELETE FROM sessions WHERE member_id = ?`, id)
+	s.db.Exec(`DELETE FROM recovery_codes WHERE member_id = ?`, id)
 	if _, err := s.db.Exec(`DELETE FROM members WHERE id = ?`, id); err != nil {
 		return err
 	}
@@ -229,7 +231,9 @@ func (s *Service) MemberProfile(id string) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	return Profile{Username: m.Username, DisplayName: m.DisplayName, Email: m.Email, Role: m.Role, Servers: m.Servers}, nil
+	p := Profile{Username: m.Username, DisplayName: m.DisplayName, Email: m.Email, Role: m.Role, Servers: m.Servers, TwoFAEnabled: m.TwoFA}
+	s.db.QueryRow(`SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL AND member_id = ?`, id).Scan(&p.RecoveryCodesLeft)
+	return p, nil
 }
 
 // UpdateMemberProfile lets a member change their own name and email.

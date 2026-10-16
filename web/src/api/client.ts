@@ -62,6 +62,8 @@ export interface Profile {
   passwordChangedAt: number;
   twofaEnabled: boolean;
   recoveryCodesLeft: number;
+  /** The owner requires 2FA and this member has not turned it on yet. */
+  twofaRequired?: boolean;
 }
 
 export interface SessionInfo {
@@ -78,6 +80,7 @@ export interface SecuritySettings {
   sessionTimeoutMin: number;
   lockoutAfter: number;
   reauthForCommands: boolean;
+  require2FA: boolean;
 }
 
 export interface AuditRow {
@@ -108,6 +111,8 @@ export interface MetricPoint {
   load: number;
   netRx: number;
   netTx: number;
+  gpu: number;
+  gpuMem: number;
 }
 export type MetricKey = Exclude<keyof MetricPoint, "t">;
 export const toSeries = (pts: MetricPoint[] | null, m: MetricKey) => (pts ?? []).map((p) => ({ t: p.t, v: p[m] }));

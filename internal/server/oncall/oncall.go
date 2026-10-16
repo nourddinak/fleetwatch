@@ -53,10 +53,11 @@ func Defaults() Config {
 
 // Person is someone who can be on call.
 type Person struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Email   string `json:"email"`
-	Devices int    `json:"devices"` // phones with push turned on
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username,omitempty"`
+	Email    string `json:"email"`
+	Devices  int    `json:"devices"` // phones with push turned on
 }
 
 // Shift is one stretch of on-call duty.
@@ -85,10 +86,13 @@ type Service struct {
 	Muted     func(serverID, appID string) bool
 	PublicURL func() string
 	Now       func() time.Time
+	// OnHandover tells the person coming on call (with the note the last one left).
+	OnHandover func(from, to Person, note *Note, openIncidents int)
 
-	key   []byte
-	mu    sync.Mutex
-	queue map[string]*step
+	key       []byte
+	mu        sync.Mutex
+	queue     map[string]*step
+	lastShift int64 // start of the shift seen last, to notice handovers
 }
 
 func New(d *sql.DB, key []byte) *Service {
@@ -302,6 +306,7 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			s.tick(ctx)
+			s.watchHandover()
 		}
 	}
 }
@@ -341,7 +346,9 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	for _, j := range jobs {
-		if err := s.Page(ctx, j.p, j.x, s.AckURL(j.x.ID, j.p.ID), j.level); err != nil {
+		err := s.Page(ctx, j.p, j.x, s.AckURL(j.x.ID, j.p.ID), j.level)
+		s.recordPage(j.x.ID, j.p.ID, j.level, err == nil)
+		if err != nil {
 			slog.Warn("on-call page failed", "person", j.p.Name, "err", err)
 		}
 	}

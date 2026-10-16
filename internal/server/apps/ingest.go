@@ -39,6 +39,16 @@ func (s *Service) Ingest(serverID string, inv proto.Inventory) {
 		if seen && prev != v.Status && prev != "unknown" && v.Status != "unknown" {
 			s.event(serverID, a.ID, "status", fmt.Sprintf("%s: %s → %s", a.Name, prev, v.Status))
 		}
+		// A new commit checked out in the app's folder is a deploy (shown on charts and in postmortems).
+		if g := v.Git; g != nil && g.Commit != "" {
+			s.mu.Lock()
+			old, known := s.commits[a.ID]
+			s.commits[a.ID] = g.Commit
+			s.mu.Unlock()
+			if known && old != g.Commit {
+				s.event(serverID, a.ID, "deploy", fmt.Sprintf("%s deployed %.7s: %s", a.Name, g.Commit, g.Message))
+			}
+		}
 		if v.ProcessFound {
 			s.db.Exec(`UPDATE apps SET last_seen_at = ? WHERE id = ?`, now, a.ID)
 			if a.Flags.Metrics {

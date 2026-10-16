@@ -278,6 +278,8 @@ func (s *Service) targets(where string, args ...any) []target {
 // server ("" = a notice for the owner only).
 func (s *Service) Alert(m Message) {
 	scopes := map[string][]string{}
+	rules := map[string]AlertRules{}
+	now := time.Now()
 	for _, t := range s.targets(` WHERE alerts = 'all'`) {
 		if m.ServerID == "" && t.member != "" {
 			continue
@@ -292,6 +294,14 @@ func (s *Service) Alert(m Message) {
 		}
 		if servers != nil && !slices.Contains(servers, m.ServerID) {
 			continue
+		}
+		r, ok := rules[t.member]
+		if !ok {
+			r = s.Rules(t.member)
+			rules[t.member] = r
+		}
+		if !r.allows(m, now) {
+			continue // the person's own rules: severity, servers, quiet hours
 		}
 		s.queue(t.id, m)
 	}

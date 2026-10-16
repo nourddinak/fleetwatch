@@ -61,6 +61,7 @@ func TestEscalation(t *testing.T) {
 	now := time.Date(2026, 10, 14, 3, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
 	s.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	store.Now = s.Now // incidents and pages on the same clock
 	s.Incidents = store
 	s.People = func() []Person {
 		return []Person{{ID: Owner, Name: "Owner"}, {ID: "ana", Name: "Ana"}, {ID: "ben", Name: "Ben"}}
@@ -116,5 +117,40 @@ func TestEscalation(t *testing.T) {
 	advance(time.Minute)
 	if len(paged) != 2 {
 		t.Fatalf("a warning paged someone: %v", paged)
+	}
+
+	// The report: Ana was paged and missed it, Ben was paged after her and answered.
+	stats, pages := s.Report(30)
+	by := map[string]PersonStats{}
+	for _, st := range stats {
+		by[st.Person] = st
+	}
+	if len(pages) != 2 || by["ana"].Pages != 1 || by["ana"].Missed != 1 || by["ben"].Acked != 1 || by["ben"].Escalated != 1 || by["ana"].Night != 1 {
+		t.Fatalf("%+v %+v", by, pages)
+	}
+	if by["ana"].HoursOnCall <= 0 {
+		t.Fatal("no on-call hours")
+	}
+
+	// Handover: Ana leaves a note; Ben is told when his week starts.
+	if _, err := s.SaveNote("web1 disk is at 80%, cleanup planned", "Ana"); err != nil {
+		t.Fatal(err)
+	}
+	var told []string
+	s.OnHandover = func(from, to Person, note *Note, open int) {
+		told = append(told, from.ID+">"+to.ID+":"+note.Text)
+	}
+	s.watchHandover()
+	mu.Lock()
+	now = time.Date(2026, 10, 19, 9, 30, 0, 0, time.UTC)
+	mu.Unlock()
+	s.watchHandover()
+	s.watchHandover()
+	if len(told) != 1 || told[0] != "ana>ben:web1 disk is at 80%, cleanup planned" {
+		t.Fatalf("%v", told)
+	}
+	h := s.Handoff()
+	if h.Current == nil || h.Current.Person != "ben" || h.Note == nil || h.Note.By != "Ana" || h.Summary == nil || h.Summary.Opened != 2 || h.Summary.Pages != 2 {
+		t.Fatalf("%+v %+v", h, h.Summary)
 	}
 }

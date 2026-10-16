@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"net/http"
 	"strconv"
 
@@ -13,6 +14,63 @@ func (s *server) incidentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/incidents", s.authed(s.listIncidents))
 	mux.HandleFunc("GET /api/incidents/{id}", s.authed(s.getIncident))
 	mux.HandleFunc("POST /api/incidents/{id}/{action}", s.authed(s.actIncident))
+	mux.HandleFunc("GET /api/incidents/{id}/comments", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		list, err := s.Incidents.Comments(r.PathValue("id"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	}))
+	mux.HandleFunc("POST /api/incidents/{id}/comments", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Text string }
+		if !decode(w, r, &in) {
+			return
+		}
+		c, err := s.Incidents.AddComment(r.PathValue("id"), cmp.Or(s.actor(r), "someone"), in.Text)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, c)
+	}))
+	mux.HandleFunc("GET /api/incidents/{id}/postmortem", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		p, err := s.Incidents.Postmortem(r.PathValue("id"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"postmortem": p, "runbook": incidents.Runbooks(s.DB)[p.Incident.TypeKey]})
+	}))
+	mux.HandleFunc("POST /api/incidents/{id}/postmortem", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in incidents.Notes
+		if !decode(w, r, &in) {
+			return
+		}
+		n, err := s.Incidents.SaveNotes(r.PathValue("id"), in, s.actor(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		x, _ := s.Incidents.Get(r.PathValue("id"))
+		s.audit(r, "postmortem.save", x.ID, x.Title)
+		writeJSON(w, http.StatusOK, n)
+	}))
+	mux.HandleFunc("GET /api/runbooks", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, map[string]any{"runbooks": incidents.Runbooks(s.DB), "types": incidents.Labels})
+	}))
+	mux.HandleFunc("PUT /api/runbooks/{type}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Text string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := incidents.SaveRunbook(s.DB, r.PathValue("type"), in.Text); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "runbook.save", r.PathValue("type"), "")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
 	mux.HandleFunc("GET /api/settings/incident-rules", s.authed(s.getIncidentRules))
 	mux.HandleFunc("PUT /api/settings/incident-rules", s.authed(s.putIncidentRules))
 
@@ -52,7 +110,7 @@ func (s *server) actIncident(w http.ResponseWriter, r *http.Request, sess auth.S
 	if r.ContentLength > 0 && !decode(w, r, &in) {
 		return
 	}
-	x, err := s.Incidents.Act(r.PathValue("id"), r.PathValue("action"), in.Note, sess.Username)
+	x, err := s.Incidents.Act(r.PathValue("id"), r.PathValue("action"), in.Note, s.actor(r))
 	if err != nil {
 		fail(w, err)
 		return

@@ -254,3 +254,53 @@ func TestNormalize(t *testing.T) {
 		t.Fatalf("not grouped:\n%s\n%s", a, b)
 	}
 }
+
+func TestCommentsRunbooksPostmortem(t *testing.T) {
+	e := setup(t)
+	e.s.Ensure(Signal{Type: "high_ram", Key: "high_ram|s1", Severity: "warning", Title: "RAM", ServerID: "s1"})
+	x := e.open(t)["high_ram"]
+	if _, err := e.s.AddComment(x.ID, "sam", "  "); err == nil {
+		t.Fatal("empty comment accepted")
+	}
+	if _, err := e.s.AddComment(x.ID, "sam", "Looking at the swap now"); err != nil {
+		t.Fatal(err)
+	}
+	e.s.db.Exec(`INSERT INTO events (ts, server_id, app_id, kind, text) VALUES (?, 's1', NULL, 'deploy', 'Deployed abc123')`, x.FirstAt-60_000)
+	e.s.db.Exec(`INSERT INTO events (ts, server_id, app_id, kind, text) VALUES (?, 's1', NULL, 'reboot', 'too early')`, x.FirstAt-3*3600_000)
+	e.s.Act(x.ID, "acknowledge", "", "sam")
+	e.s.Act(x.ID, "resolve", "added swap", "sam")
+	p, err := e.s.Postmortem(x.ID)
+	if err != nil || p.AckBy != "sam" || p.DurationMs < 0 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	kinds := map[string]int{}
+	for i, m := range p.Timeline {
+		kinds[m.Kind]++
+		if i > 0 && m.TS < p.Timeline[i-1].TS {
+			t.Fatal("timeline out of order")
+		}
+		if m.Text == "too early" {
+			t.Fatal("event outside the window included")
+		}
+	}
+	if kinds["deploy"] != 1 || kinds["comment"] != 1 || kinds["incident"] < 3 {
+		t.Fatalf("%v", kinds)
+	}
+	if _, err := e.s.SaveNotes(x.ID, Notes{RootCause: "no swap"}, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := e.s.Postmortem(x.ID); p.Notes.RootCause != "no swap" || p.Notes.UpdatedBy != "sam" {
+		t.Fatalf("%+v", p.Notes)
+	}
+	if err := SaveRunbook(e.s.db, "nope", "x"); err == nil {
+		t.Fatal("runbook for an unknown type")
+	}
+	SaveRunbook(e.s.db, "high_ram", "1. Check top\n2. Restart the leaking app")
+	if Runbooks(e.s.db)["high_ram"] == "" {
+		t.Fatal("runbook not saved")
+	}
+	SaveRunbook(e.s.db, "high_ram", "")
+	if _, ok := Runbooks(e.s.db)["high_ram"]; ok {
+		t.Fatal("runbook not removed")
+	}
+}

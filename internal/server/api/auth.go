@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -54,6 +55,13 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 		if !s.allowed(w, r, sess) {
 			return
 		}
+		// "Require 2FA for everyone": a member without it can only set it up (or sign out).
+		if !sess.Owner() && !strings.HasPrefix(r.URL.Path, "/api/2fa/") && !strings.HasPrefix(r.URL.Path, "/api/account") &&
+			s.Auth.Security().Require2FA && !s.Auth.HasTwoFA(sess.MemberID) {
+			writeError(w, http.StatusForbidden, "2fa_required", "The owner requires two-factor authentication: turn it on to continue.")
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess))
 		// A member limited to some servers only gets their part of every list.
 		if sc := s.scopeOf(sess); sc != nil && r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/ws") {
 			sw := &scopedWriter{ResponseWriter: w}
@@ -164,6 +172,7 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		p.TwoFARequired = s.Auth.Security().Require2FA && !p.TwoFAEnabled
 		writeJSON(w, http.StatusOK, p)
 		return
 	}
@@ -269,6 +278,10 @@ func (s *server) putSecurity(w http.ResponseWriter, r *http.Request, _ auth.Sess
 	if !decode(w, r, &in) {
 		return
 	}
+	if in.Require2FA && !s.Auth.HasTwoFA("") {
+		writeError(w, http.StatusBadRequest, "invalid_input", "Turn on your own two-factor authentication first.")
+		return
+	}
 	if err := s.Auth.SaveSecurity(in); err != nil {
 		fail(w, err)
 		return
@@ -295,12 +308,12 @@ func (s *server) auditLog(w http.ResponseWriter, r *http.Request, _ auth.Session
 	writeJSON(w, http.StatusOK, rows)
 }
 
-func (s *server) setup2FA(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) setup2FA(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ Password string }
 	if !decode(w, r, &in) {
 		return
 	}
-	secretB32, uri, err := s.Auth.Begin2FA(client(r), in.Password)
+	secretB32, uri, err := s.Auth.Begin2FAFor(client(r), sess.MemberID, in.Password)
 	if err != nil {
 		fail(w, err)
 		return
@@ -316,12 +329,12 @@ func (s *server) setup2FA(w http.ResponseWriter, r *http.Request, _ auth.Session
 	})
 }
 
-func (s *server) enable2FA(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) enable2FA(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ Code string }
 	if !decode(w, r, &in) {
 		return
 	}
-	codes, err := s.Auth.Enable2FA(client(r), in.Code)
+	codes, err := s.Auth.Enable2FAFor(client(r), sess.MemberID, in.Code)
 	if err != nil {
 		fail(w, err)
 		return
@@ -329,7 +342,7 @@ func (s *server) enable2FA(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	writeJSON(w, http.StatusOK, map[string][]string{"recoveryCodes": codes})
 }
 
-func (s *server) disable2FA(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) disable2FA(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct {
 		Password, Code string
 		Recovery       bool
@@ -337,19 +350,27 @@ func (s *server) disable2FA(w http.ResponseWriter, r *http.Request, _ auth.Sessi
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.Auth.Disable2FA(client(r), in.Password, in.Code, in.Recovery); err != nil {
+	if s.Auth.Security().Require2FA && !sess.Owner() {
+		writeError(w, http.StatusConflict, "conflict", "Two-factor authentication is required on this dashboard; it cannot be turned off.")
+		return
+	}
+	if s.Auth.Security().Require2FA && sess.Owner() {
+		writeError(w, http.StatusConflict, "conflict", "Turn off “Require 2FA for everyone” first.")
+		return
+	}
+	if err := s.Auth.Disable2FAFor(client(r), sess.MemberID, in.Password, in.Code, in.Recovery); err != nil {
 		fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *server) regenRecovery(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) regenRecovery(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ Password string }
 	if !decode(w, r, &in) {
 		return
 	}
-	codes, err := s.Auth.RegenerateRecoveryCodes(client(r), in.Password)
+	codes, err := s.Auth.RegenerateRecoveryCodesFor(client(r), sess.MemberID, in.Password)
 	if err != nil {
 		fail(w, err)
 		return

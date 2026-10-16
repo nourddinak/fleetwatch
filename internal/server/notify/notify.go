@@ -55,9 +55,9 @@ func (r Rules) wanted(kind, typ string) bool {
 		return pick(opened, r.AppOffline, r.AppRecovered)
 	case "crash_loop":
 		return pick(opened, r.CrashLoop, r.AppRecovered)
-	case "health_failed":
+	case "health_failed", "uptime_down":
 		return pick(opened, r.HealthFailed, r.HealthRecovered)
-	case "high_cpu", "high_ram", "disk_full":
+	case "high_cpu", "high_ram", "disk_full", "anomaly", "uptime_slow":
 		return pick(opened, r.Resources, r.OtherResolved)
 	case "repeated_errors":
 		return pick(opened, r.RepeatedErrors, r.OtherResolved)
@@ -110,7 +110,8 @@ type Service struct {
 	ServerName func(serverID string) string
 	AppName    func(appID string) string
 	PublicURL  string
-	Push       *push.Service // browser push; optional
+	Push       *push.Service                    // browser push; optional
+	Runbook    func(incidentType string) string // "how to fix" steps added to alerts; optional
 	Now        func() time.Time
 
 	queue chan job
@@ -315,6 +316,14 @@ func (s *Service) Incident(ev incidents.Event) {
 		msg.Body = fmt.Sprintf("%s · %s · %s", x.Type, strings.ToUpper(x.Severity), where)
 		if len(x.Samples) > 0 {
 			msg.Body += "\n" + x.Samples[len(x.Samples)-1]
+		}
+		if s.Runbook != nil {
+			if rb := s.Runbook(x.TypeKey); rb != "" {
+				if len(rb) > 600 {
+					rb = rb[:600] + "…"
+				}
+				msg.Body += "\n\nHow to fix:\n" + rb
+			}
 		}
 	}
 	if s.PublicURL != "" {

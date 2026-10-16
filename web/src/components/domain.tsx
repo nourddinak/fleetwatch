@@ -8,6 +8,7 @@ import { cn } from "../utils/cn";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CopyButton, Drawer, IncidentStatusBadge, KV, Modal, Select, SeverityBadge, Spinner, Table, Td, Tr } from "./ui";
 import type { ApiError } from "../api/client";
+import { IncidentComments, RunbookBox } from "./IncidentExtras";
 
 /* ---------------- pickers ---------------- */
 export function ServerPicker({ value, onChange, includeAll = true, className }: { value: string; onChange: (v: string) => void; includeAll?: boolean; className?: string }) {
@@ -200,8 +201,9 @@ export function IncidentDrawer({ incidentId, onClose }: { incidentId: string | n
             <Badge className="font-mono">{inc.id}</Badge>
           </div>
           <IncidentActions incident={inc} />
+          <RunbookBox typeKey={inc.typeKey} />
           <dl className="grid grid-cols-2 gap-x-6 rounded-2xl bg-surface2 px-4">
-            <KV label="Server"><Link className="underline-offset-2 hover:underline" to={`/servers/${inc.serverId}`} onClick={onClose}>{srv?.name}</Link></KV>
+            <KV label="Server">{srv ? <Link className="underline-offset-2 hover:underline" to={`/servers/${inc.serverId}`} onClick={onClose}>{srv.name}</Link> : "— (outside check)"}</KV>
             <KV label="Application">{app ? <Link className="underline-offset-2 hover:underline" to={`/applications/${app.id}`} onClick={onClose}>{app.name}</Link> : "— (server-level)"}</KV>
             <KV label="First detected">{dateTime(inc.firstAt)}</KV>
             <KV label="Last detected">{dateTime(inc.lastAt)}</KV>
@@ -228,6 +230,10 @@ export function IncidentDrawer({ incidentId, onClose }: { incidentId: string | n
                 <div key={i} className="break-all">{l}</div>
               ))}
             </div>
+          </div>
+          <IncidentComments incidentId={inc.id} />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => { nav(`/incidents/${inc.id}/postmortem`); onClose(); }}>Postmortem</Button>
           </div>
           {app && (
             <div className="flex flex-wrap gap-2">

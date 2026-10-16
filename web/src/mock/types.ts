@@ -51,6 +51,17 @@ export interface Server {
   capabilities: string[];
   enrolled: boolean;
   transport: string;
+  /** NVIDIA GPUs (agent 0.9.38+); empty without one. */
+  gpus?: GPU[];
+}
+
+export interface GPU {
+  name: string;
+  util: number;
+  memUsedGb: number;
+  memTotalGb: number;
+  tempC: number;
+  powerW: number;
 }
 
 export interface PortInfo {

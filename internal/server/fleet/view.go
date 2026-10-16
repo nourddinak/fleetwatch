@@ -42,6 +42,17 @@ type View struct {
 	Capabilities       []string   `json:"capabilities"`
 	Enrolled           bool       `json:"enrolled"`
 	Transport          string     `json:"transport"`
+	GPUs               []GPU      `json:"gpus"`
+}
+
+// GPU is one graphics card as the UI shows it.
+type GPU struct {
+	Name       string  `json:"name"`
+	Util       float64 `json:"util"` // percent
+	MemUsedGB  float64 `json:"memUsedGb"`
+	MemTotalGB float64 `json:"memTotalGb"`
+	TempC      float64 `json:"tempC"`
+	PowerW     float64 `json:"powerW"`
 }
 
 const gb = 1 << 30
@@ -56,7 +67,7 @@ func (h *Hub) View(x Record) View {
 		RAMGB: r1(float64(x.MemTotal) / gb), SwapGB: r1(float64(x.SwapTotal) / gb), DiskGB: r1(float64(x.DiskTotal) / gb),
 		AgentVersion: x.AgentVersion, LatestAgentVersion: h.Version, LastSeen: x.LastSeenAt, ConnectedSince: x.ConnectedSince,
 		CreatedAt: x.CreatedAt, Notes: x.Notes, NotifyOverride: x.NotifyOverride, Capabilities: x.Capabilities,
-		Enrolled: x.EnrolledAt != 0, Pings: []Ping{},
+		Enrolled: x.EnrolledAt != 0, Pings: []Ping{}, GPUs: []GPU{},
 	}
 	if v.PrivateIPs == nil {
 		v.PrivateIPs = []string{}
@@ -73,6 +84,10 @@ func (h *Hub) View(x Record) View {
 		v.NetRx, v.NetTx = r2(s.NetRx*8/1e6), r2(s.NetTx*8/1e6)
 		v.Load = [3]float64{r2(m.Load1), r2(m.Load5), r2(m.Load15)}
 		v.UptimeSec = m.Uptime
+		for _, g := range m.GPUs {
+			v.GPUs = append(v.GPUs, GPU{Name: g.Name, Util: r1(g.Util), MemUsedGB: r1(float64(g.MemUsed) / gb), MemTotalGB: r1(float64(g.MemTotal) / gb),
+				TempC: g.TempC, PowerW: r1(g.PowerW)})
+		}
 	}
 	c := h.conn(x.ID)
 	switch {

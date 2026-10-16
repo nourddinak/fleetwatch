@@ -161,8 +161,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Live feed: REST snapshots, then WebSocket pushes. Reconnects with backoff and
   // re-fetches on reconnect, since messages sent while disconnected are lost.
+  const blocked = !!me?.twofaRequired; // must set up 2FA first: every other call is refused
   useEffect(() => {
-    if (auth !== "in") return;
+    if (auth !== "in" || blocked) return;
     let ws: WebSocket | null = null;
     let timer = 0;
     let stopped = false;
@@ -230,7 +231,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       clearTimeout(timer);
       ws?.close();
     };
-  }, [auth, upsertServer, removeServer, reloadDiscoveries, refreshMe]);
+  }, [auth, blocked, upsertServer, removeServer, reloadDiscoveries, refreshMe]);
 
   // Re-render every 5s so relative times ("seen 10s ago") stay current.
   useEffect(() => {

@@ -1,6 +1,6 @@
-import { Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, Radio, ScrollText, ShieldCheck, Search, Server, Settings, Sun, X } from "lucide-react";
+import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, Radio, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -8,6 +8,25 @@ import { AddAppDialog } from "./AddAppDialog";
 import { LoadingState, Spinner } from "./ui";
 import { useApi } from "../api/client";
 import { UpdateBanner } from "./PlatformUpdate";
+
+const TwoFASetup = lazy(() => import("../pages/Settings").then((m) => ({ default: m.TwoFASettings })));
+
+/** The owner requires 2FA: a member without it sets it up before anything else. */
+function Force2FA() {
+  const { logout } = useStore();
+  return (
+    <div className="min-h-screen bg-bg px-4 py-10 text-fg">
+      <div className="mx-auto max-w-xl space-y-4">
+        <h1 className="text-xl font-semibold">Turn on two-factor authentication</h1>
+        <p className="text-sm text-muted">The owner of this dashboard requires it for everyone. Scan the code with an authenticator app (Google Authenticator, 1Password, Authy…), then you are in.</p>
+        <Suspense fallback={<LoadingState />}>
+          <TwoFASetup />
+        </Suspense>
+        <button className="text-sm text-muted underline" onClick={logout}>Sign out</button>
+      </div>
+    </div>
+  );
+}
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -30,7 +49,7 @@ export function ThemeToggle({ className }: { className?: string }) {
 }
 
 export function RequireAuth() {
-  const { auth } = useStore();
+  const { auth, me } = useStore();
   if (auth === "loading")
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg text-muted">
@@ -40,6 +59,7 @@ export function RequireAuth() {
   if (auth === "setup") return <Navigate to="/setup" replace />;
   if (auth === "needs2fa") return <Navigate to="/2fa" replace />;
   if (auth !== "in") return <Navigate to="/login" replace />;
+  if (me?.twofaRequired) return <Force2FA />;
   return <Shell />;
 }
 
@@ -87,6 +107,8 @@ function Shell() {
     { to: "/applications", label: "Applications", icon: Boxes },
     { to: "/logs", label: "Logs", icon: ScrollText },
     { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
+    { to: "/team", label: "Team", icon: Users },
+    { to: "/uptime", label: "Uptime", icon: Gauge },
     { to: "/domains", label: "Domains", icon: Globe },
     ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),
     { to: "/security", label: "Security", icon: ShieldCheck },

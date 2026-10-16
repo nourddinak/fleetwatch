@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strconv"
 	"time"
 
 	"fleetwatch/internal/server/auth"
@@ -38,6 +39,32 @@ func (s *server) onCallRoutes(mux *http.ServeMux) {
 		}
 		s.audit(r, "oncall.save", "", fmt.Sprintf("enabled=%v, %d in rotation", in.Enabled, len(in.Rotation)))
 		writeJSON(w, http.StatusOK, view())
+	}))
+	// The handoff between shifts and the on-call report: for the whole team.
+	mux.HandleFunc("GET /api/handoff", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		h := s.OnCall.Handoff()
+		names := map[string]string{}
+		for _, p := range s.OnCall.People() {
+			names[p.ID] = p.Name
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"handoff": h, "names": names})
+	}))
+	mux.HandleFunc("PUT /api/handoff", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Note string }
+		if !decode(w, r, &in) {
+			return
+		}
+		n, err := s.OnCall.SaveNote(in.Note, s.actor(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, n)
+	}))
+	mux.HandleFunc("GET /api/reports/oncall", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		people, pages := s.OnCall.Report(days)
+		writeJSON(w, http.StatusOK, map[string]any{"people": people, "pages": pages})
 	}))
 	// GET shows a button (mail scanners open links); POST acknowledges.
 	mux.HandleFunc("GET /api/public/ack", func(w http.ResponseWriter, r *http.Request) {

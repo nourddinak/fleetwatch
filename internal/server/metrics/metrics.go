@@ -34,18 +34,18 @@ type Kind struct {
 }
 
 var (
-	ServerKind = Kind{"server_metrics", "server_id", []string{"cpu", "mem", "swap", "disk", "load1", "net_rx", "net_tx"}}
+	ServerKind = Kind{"server_metrics", "server_id", []string{"cpu", "mem", "swap", "disk", "load1", "net_rx", "net_tx", "gpu", "gpu_mem"}}
 	AppKind    = Kind{"app_metrics", "app_id", []string{"cpu", "mem", "restarts"}}
 )
 
-// Sample is one host reading: percentages for cpu/mem/swap/disk, bytes/s for network.
+// Sample is one host reading: percentages for cpu/mem/swap/disk/gpu, bytes/s for network.
 type Sample struct {
-	CPU, Mem, Swap, Disk, Load1, NetRx, NetTx float64
+	CPU, Mem, Swap, Disk, Load1, NetRx, NetTx, GPU, GPUMem float64
 }
 
 // Values orders a Sample like ServerKind.Cols.
 func (s Sample) Values() []float64 {
-	return []float64{s.CPU, s.Mem, s.Swap, s.Disk, s.Load1, s.NetRx, s.NetTx}
+	return []float64{s.CPU, s.Mem, s.Swap, s.Disk, s.Load1, s.NetRx, s.NetTx, s.GPU, s.GPUMem}
 }
 
 func pct(used, total uint64) float64 {
@@ -56,8 +56,16 @@ func pct(used, total uint64) float64 {
 }
 
 func FromProto(m proto.Metrics) Sample {
-	return Sample{CPU: m.CPU, Mem: pct(m.MemUsed, m.MemTotal), Swap: pct(m.SwapUsed, m.SwapTotal), Disk: pct(m.DiskUsed, m.DiskTotal),
+	s := Sample{CPU: m.CPU, Mem: pct(m.MemUsed, m.MemTotal), Swap: pct(m.SwapUsed, m.SwapTotal), Disk: pct(m.DiskUsed, m.DiskTotal),
 		Load1: m.Load1, NetRx: m.NetRxBps, NetTx: m.NetTxBps}
+	// Several GPUs: average utilization, and memory used of all of them together.
+	var used, total uint64
+	for _, g := range m.GPUs {
+		s.GPU += g.Util / float64(len(m.GPUs))
+		used, total = used+g.MemUsed, total+g.MemTotal
+	}
+	s.GPUMem = pct(used, total)
+	return s
 }
 
 type bucket struct {
@@ -244,20 +252,23 @@ func (s *Store) Rows(id, rangeID string, now time.Time) ([]Row, error) {
 
 // Point is one host chart bucket in UI units: percentages and Mbps.
 type Point struct {
-	T     int64   `json:"t"`
-	CPU   float64 `json:"cpu"`
-	RAM   float64 `json:"ram"`
-	Swap  float64 `json:"swap"`
-	Disk  float64 `json:"disk"`
-	Load  float64 `json:"load"`
-	NetRx float64 `json:"netRx"`
-	NetTx float64 `json:"netTx"`
+	T      int64   `json:"t"`
+	CPU    float64 `json:"cpu"`
+	RAM    float64 `json:"ram"`
+	Swap   float64 `json:"swap"`
+	Disk   float64 `json:"disk"`
+	Load   float64 `json:"load"`
+	NetRx  float64 `json:"netRx"`
+	NetTx  float64 `json:"netTx"`
+	GPU    float64 `json:"gpu"`
+	GPUMem float64 `json:"gpuMem"`
 }
 
 func ServerPoints(rows []Row) []Point {
 	out := make([]Point, len(rows))
 	for i, r := range rows {
-		out[i] = Point{T: r.T, CPU: r.V[0], RAM: r.V[1], Swap: r.V[2], Disk: r.V[3], Load: r.V[4], NetRx: r.V[5] * 8 / 1e6, NetTx: r.V[6] * 8 / 1e6}
+		out[i] = Point{T: r.T, CPU: r.V[0], RAM: r.V[1], Swap: r.V[2], Disk: r.V[3], Load: r.V[4], NetRx: r.V[5] * 8 / 1e6, NetTx: r.V[6] * 8 / 1e6,
+			GPU: r.V[7], GPUMem: r.V[8]}
 	}
 	return out
 }

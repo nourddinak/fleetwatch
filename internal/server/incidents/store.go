@@ -39,6 +39,9 @@ var Labels = map[string]string{
 	"disk_filling":      "Disk Filling Up",
 	"memory_leak":       "Possible Memory Leak",
 	"security":          "Security",
+	"uptime_down":       "Site Down",
+	"uptime_slow":       "Slow Response",
+	"anomaly":           "Unusual Activity",
 }
 
 type entry struct {
@@ -103,8 +106,8 @@ func (x Incident) ActedBy() string {
 	for i := len(x.Timeline) - 1; i >= 0; i-- {
 		for _, p := range []string{"Acknowledged by ", "Muted by "} {
 			if rest, ok := strings.CutPrefix(x.Timeline[i].Text, p); ok {
-				name, _, _ := strings.Cut(rest, " for 24 hours")
-				return strings.TrimSuffix(name, " (phone)")
+				name, _, _ := strings.Cut(rest, " for ")
+				return strings.TrimSuffix(strings.TrimSuffix(name, " (phone)"), " (on call)")
 			}
 		}
 	}
@@ -335,6 +338,12 @@ func (s *Store) Act(id, action, note, by string) (Incident, error) {
 		}
 		x.Status, x.MutedUntil = "muted", now+24*3600_000
 		x.Timeline = addTimeline(x.Timeline, now, "Muted by "+by+" for 24 hours (no notifications)")
+	case "mute1h": // "not now" from a phone notification
+		if x.Status == "resolved" {
+			return x, valid.Error("incident is already resolved")
+		}
+		x.Status, x.MutedUntil = "muted", now+3600_000
+		x.Timeline = addTimeline(x.Timeline, now, "Muted by "+by+" for 1 hour (no notifications)")
 	case "resolve":
 		if x.Status == "resolved" {
 			return x, valid.Error("incident is already resolved")

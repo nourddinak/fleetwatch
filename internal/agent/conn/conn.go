@@ -14,12 +14,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"fleetwatch/internal/agent/config"
+	"fleetwatch/internal/agent/docker"
 	agentexec "fleetwatch/internal/agent/exec"
 	"fleetwatch/internal/agent/health"
 	"fleetwatch/internal/agent/host"
@@ -55,6 +57,8 @@ type Runner struct {
 	scanNow     chan struct{}
 	cur         atomic.Pointer[websocket.Conn] // live connection, nil while disconnected
 	loginsSince atomic.Int64                   // newest SSH login sent (unix ms)
+	blocks      atomic.Pointer[string]         // the block list last applied ("" = none yet)
+	blockMu     sync.Mutex
 }
 
 // Run connects and reconnects until ctx ends or the server requests a restart.
@@ -133,6 +137,7 @@ func (r *Runner) session(ctx context.Context) error {
 	go r.logLoop(ctx, c)
 	go r.resultLoop(ctx, c)
 	go r.loginLoop(ctx)
+	go r.failureLoop(ctx)
 
 	// Reader: handles server frames (and answers pings, which needs an active reader).
 	go func() {
@@ -161,6 +166,7 @@ func (r *Runner) session(ctx context.Context) error {
 				r.logs.SetTargets(cfg.LogTargets, cfg.MaxLogLineBytes)
 				r.health.Set(cfg.HealthChecks)
 				r.storage.Set(cfg.StorageTargets)
+				go r.applyBlocks(rootCtx, cfg.Blocking, cfg.BlockedIPs)
 				if cfg.DiscoveryRoots != nil {
 					roots := cfg.DiscoveryRoots
 					r.roots.Store(&roots)
@@ -211,6 +217,45 @@ func (r *Runner) session(ctx context.Context) error {
 				var req proto.SecurityScan
 				if json.Unmarshal(env.Data, &req) == nil {
 					go func() { r.sendCurrent(proto.TypeSecurityReport, hostcheck.SecurityScan(rootCtx, req)) }()
+				}
+			case proto.TypeDockerList:
+				go func() { r.sendCurrent(proto.TypeDockerReport, docker.Report(rootCtx)) }()
+			case proto.TypeDockerAction:
+				var req proto.DockerAction
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() {
+						r.sendCurrent(proto.TypeDockerResult, docker.Act(rootCtx, req))
+						if req.Action != "logs" {
+							r.sendCurrent(proto.TypeDockerReport, docker.Report(rootCtx))
+						}
+					}()
+				}
+			case proto.TypeFirewallScan:
+				go func() { r.sendCurrent(proto.TypeFirewallReport, hostcheck.Firewall(rootCtx)) }()
+			case proto.TypeFirewallChange:
+				var req proto.FirewallChange
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() {
+						r.sendCurrent(proto.TypeFirewallResult, hostcheck.ChangeFirewall(rootCtx, req))
+						r.sendCurrent(proto.TypeFirewallReport, hostcheck.Firewall(rootCtx))
+					}()
+				}
+			case proto.TypeUpdatesScan:
+				var req proto.UpdatesScan
+				json.Unmarshal(env.Data, &req)
+				go func() { r.sendCurrent(proto.TypeUpdatesReport, hostcheck.Updates(rootCtx, req.Refresh)) }()
+			case proto.TypeUpdatesInstall:
+				var req proto.UpdatesInstall
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() {
+						r.sendCurrent(proto.TypeUpdatesResult, hostcheck.InstallUpdates(rootCtx, req))
+						r.sendCurrent(proto.TypeUpdatesReport, hostcheck.Updates(rootCtx, false))
+					}()
+				}
+			case proto.TypeDepsScan:
+				var req proto.DepsScan
+				if json.Unmarshal(env.Data, &req) == nil {
+					go func() { r.sendCurrent(proto.TypeDepsReport, hostcheck.Deps(req)) }()
 				}
 			case proto.TypeDiskScan:
 				go func() { r.sendCurrent(proto.TypeDiskReport, hostcheck.DiskScan(rootCtx)) }()
@@ -370,6 +415,39 @@ func Enroll(ctx context.Context, serverURL, token string) (proto.EnrollResponse,
 		return out, errors.New("enrollment: unexpected server response")
 	}
 	return out, nil
+}
+
+// applyBlocks keeps the firewall chain of blocked addresses in step with the server's
+// list, touching iptables only when the list changed.
+func (r *Runner) applyBlocks(ctx context.Context, enabled bool, list []string) {
+	r.blockMu.Lock()
+	defer r.blockMu.Unlock()
+	key := fmt.Sprint(enabled, list)
+	if prev := r.blocks.Load(); (prev == nil && !enabled) || (prev != nil && *prev == key) {
+		return // never turned on, or nothing changed
+	}
+	st := hostcheck.ApplyBlocks(ctx, enabled, list)
+	r.blocks.Store(&key)
+	if enabled {
+		r.sendCurrent(proto.TypeBlockStatus, st)
+	}
+}
+
+// failureLoop reports failed SSH logins every minute, so the server can block an
+// address that guesses passwords on any of its servers.
+func (r *Runner) failureLoop(ctx context.Context) {
+	since := time.Now().Add(-10 * time.Minute)
+	for {
+		list, newest := hostcheck.Failures(ctx, since)
+		if len(list) == 0 || r.sendCurrent(proto.TypeSSHFailures, list) == nil {
+			since = newest.Add(time.Microsecond)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		}
+	}
 }
 
 // loginLoop reports new successful SSH logins every few minutes. After a start it
