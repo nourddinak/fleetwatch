@@ -37,6 +37,7 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, s.Status.Public(c))
 	}
 	mux.HandleFunc("GET /api/public/status", public)
+	s.statusSetupRoutes(mux)
 	mux.HandleFunc("GET /api/public/status/{slug}", public)
 
 	mux.HandleFunc("GET /api/status-pages", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {

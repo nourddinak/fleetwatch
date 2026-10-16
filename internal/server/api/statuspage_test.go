@@ -145,6 +145,14 @@ func TestStatusPages(t *testing.T) {
 		t.Errorf("own domain assets: %d", st)
 	}
 
+	// The setup check names the record to add; reached by IP, that is an A record.
+	if st, out := c.do("GET", "/api/status-pages/setup?domain=Status.Example.co.uk", nil); st != 200 || out["recordType"] != "A" ||
+		out["name"] != "status" || out["zone"] != "example.co.uk" {
+		t.Fatalf("setup: %d %v", st, out)
+	}
+	if st, _ := anon.do("GET", "/api/status-pages/setup?domain=x.com", nil); st != 401 {
+		t.Fatalf("anonymous setup check: %d", st)
+	}
 	if st, _ := c.do("DELETE", "/api/status-pages/"+shopID, nil); st != 204 {
 		t.Fatalf("delete: %d", st)
 	}

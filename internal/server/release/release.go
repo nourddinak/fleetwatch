@@ -200,8 +200,8 @@ func (c *Checker) Status() Status {
 	}
 	_, err := os.Stat(c.HelperPath)
 	st.CanApply = err == nil && !st.Disabled
-	_, err = os.Stat(filepath.Join(c.DataDir, requestFile))
-	st.Applying = err == nil
+	raw, err := os.ReadFile(filepath.Join(c.DataDir, requestFile))
+	st.Applying = err == nil && strings.TrimSpace(string(raw)) != "caddy" // "caddy": a status page domain setup, not an update
 	if raw, err := os.ReadFile(filepath.Join(c.DataDir, statusFile)); err == nil {
 		var r Result
 		if json.Unmarshal(raw, &r) == nil {

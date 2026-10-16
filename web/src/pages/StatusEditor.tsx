@@ -308,10 +308,10 @@ export function StatusEditor() {
                 <CopyButton text={publicUrl} />
               </div>
             </Field>
-            <Field label="Own domain (optional)" className="mt-4" hint="That name then shows only the status page; the dashboard is not reachable through it.">
-              <Input value={c.domain} placeholder="status.example.com" onChange={(e) => set({ domain: e.target.value })} />
+            <Field label="Own domain (optional)" className="mt-4" hint="Not needed: the public link above already works. With a domain, that name shows only this page; the dashboard is not reachable through it.">
+              <Input value={c.domain} placeholder={`${c.slug || "status"}.${location.hostname.split(".").slice(-2).join(".")}`} onChange={(e) => set({ domain: e.target.value })} />
             </Field>
-            <DomainGuide domain={c.domain} />
+            <DomainGuide domain={c.domain} savedDomain={saved.data.domain} savedAt={saved.data.updatedAt} />
           </Card>
 
           <Card>
@@ -515,76 +515,157 @@ function NoticeDialog({ notice, onClose, onSave }: { notice: Notice; onClose: ()
   );
 }
 
-/** Step-by-step setup of a page's own domain: DNS (any provider, Cloudflare notes), then Caddy. */
-function DomainGuide({ domain }: { domain: string }) {
-  const d = domain.trim().toLowerCase() || "status.example.com";
-  const labels = d.split(".");
-  const name = labels.length > 2 ? labels.slice(0, -2).join(".") : "@"; // most DNS panels want only the part before your domain
-  const dashboard = location.hostname;
-  const byIp = /^[\d.]+$|:/.test(dashboard) || dashboard === "localhost";
-  const file = `/etc/caddy/fleetwatch-status-${d}.caddy`;
-  const Step = ({ n, title, children }: { n: number; title: string; children: ReactNode }) => (
+interface Setup {
+  domain: string;
+  zone: string;
+  name: string;
+  dashboardHost: string;
+  dashboardProxied: boolean;
+  serverIp: string;
+  recordType: "A" | "CNAME";
+  recordValue: string;
+  resolves: string[];
+  dns: "ok" | "cloudflare" | "elsewhere" | "missing";
+  webServer: { auto: boolean; state: "pending" | "ok" | "error" | "outdated" | "none"; last?: { ts: number; ok: boolean; error?: string; domains: string[] }; domains: string[] };
+}
+
+function Step({ n, title, done, children }: { n: number; title: string; done?: boolean; children: ReactNode }) {
+  return (
     <li className="flex gap-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface2 text-xs font-semibold">{n}</span>
+      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${done ? "bg-ok-soft text-ok" : "bg-surface2"}`}>{done ? "✓" : n}</span>
       <div className="min-w-0 flex-1 space-y-2">
         <div className="text-sm font-medium text-fg">{title}</div>
         {children}
       </div>
     </li>
   );
-  const Rec = ({ type, value }: { type: string; value: string }) => (
-    <div className="overflow-x-auto rounded-xl border border-line">
-      <table className="w-full text-left text-xs">
-        <thead className="bg-surface2 text-muted">
-          <tr><th className="px-3 py-1.5 font-medium">Type</th><th className="px-3 py-1.5 font-medium">Name</th><th className="px-3 py-1.5 font-medium">Target / content</th><th className="px-3 py-1.5 font-medium">TTL</th></tr>
-        </thead>
-        <tbody className="font-mono text-fg">
-          <tr><td className="px-3 py-2">{type}</td><td className="px-3 py-2">{name}</td><td className="px-3 py-2">{value}</td><td className="px-3 py-2">Auto</td></tr>
-        </tbody>
-      </table>
-    </div>
-  );
+}
+
+/** Setup of a page's own domain, with this dashboard's real names and live checks. */
+function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDomain: string; savedAt?: number }) {
+  const d = domain.trim().toLowerCase();
+  const [info, setInfo] = useState<Setup | null>(null);
+  const [n, setN] = useState(0);
+  const [applying, setApplying] = useState(false);
+  useEffect(() => {
+    if (!d) return;
+    let live = true;
+    const t = setTimeout(() => {
+      api<Setup>("GET", `/api/status-pages/setup?domain=${encodeURIComponent(d)}`).then((x) => live && setInfo(x)).catch(() => {});
+    }, 500);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [d, n, savedAt]);
+  const ws = info?.webServer;
+  // After a save the dashboard asks the root helper to set up Caddy: follow it.
+  const [polls, setPolls] = useState(0);
+  useEffect(() => setPolls(0), [savedAt]);
+  useEffect(() => {
+    const waiting = ws?.state === "pending" || (ws?.auto && ws.state === "outdated" && savedDomain === d);
+    if (!waiting || polls >= 20) return;
+    const t = setTimeout(() => (setPolls((x) => x + 1), setN((x) => x + 1)), 2000);
+    return () => clearTimeout(t);
+  }, [ws, polls, savedDomain, d]);
+
+  if (!d) return null;
+  if (!info || info.domain !== d) return <div className="mt-3 flex items-center gap-2 text-xs text-muted"><Spinner size={12} /> Checking {d}…</div>;
+
+  const saved = savedDomain === d;
+  const served = saved && ws?.state === "ok" && ws.last?.domains.includes(d);
+  const cf = info.dashboardProxied;
+  const apply = async () => {
+    setApplying(true);
+    try {
+      await api("POST", "/api/status-pages/setup/apply");
+    } catch {
+      /* shown by the next check */
+    }
+    setApplying(false);
+    setN((x) => x + 1);
+  };
+  const dnsMsg = {
+    ok: <span className="text-ok">✓ {d} points to this server.</span>,
+    cloudflare: <span className="text-ok">✓ {d} is on Cloudflare's proxy (orange cloud).{cf ? "" : " For the first setup, switch it to DNS only so the server can get its certificate."}</span>,
+    elsewhere: <span className="text-warn">{d} points somewhere else ({info.resolves.join(", ")}). Change the record as above.</span>,
+    missing: <span className="text-warn">{d} has no record yet. New records can take a few minutes to show up.</span>,
+  }[info.dns];
+
   return (
-    <details className="group mt-3 rounded-2xl border border-line p-4 text-xs text-muted" open={!!domain.trim()}>
-      <summary className="cursor-pointer select-none text-sm font-medium text-fg">How to set up your own domain</summary>
-      <ol className="mt-4 space-y-5">
-        <Step n={1} title="Add a DNS record at your domain provider">
-          <p>In the DNS settings of your domain (Cloudflare, Namecheap, GoDaddy, Hostinger…), add one record that points the name at this dashboard's server:</p>
-          {byIp ? (
-            <Rec type="A" value="the public IP address of this dashboard's server" />
-          ) : (
-            <>
-              <Rec type="CNAME" value={dashboard} />
-              <p>
-                Or, if your provider has no CNAME (or the name is your bare domain): an <b>A</b> record with the same IP address that <span className="font-mono">{dashboard}</span> points to.
-              </p>
-            </>
-          )}
-          <p>The name is only the part before your domain: for <span className="font-mono">{d}</span> type <span className="font-mono">{name}</span>. Some providers want the full name; that works too.</p>
-        </Step>
-        <Step n={2} title="On Cloudflare: start with the grey cloud">
-          <p>
-            Set <b>Proxy status</b> to <b>DNS only</b> (grey cloud) for now, so the server can get its HTTPS certificate in step 3. Once <span className="font-mono">https://{d}</span> opens, you may switch it to <b>Proxied</b> (orange cloud); then keep <b>SSL/TLS → Overview</b> set to <b>Full (strict)</b>. Not on Cloudflare? Skip this step.
-          </p>
-          {!byIp && (
+    <div className="mt-3 rounded-2xl border border-line p-4 text-xs text-muted">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-fg">Set up {d}</span>
+        <Button size="sm" variant="ghost" onClick={() => setN((x) => x + 1)}>Check again</Button>
+      </div>
+      <ol className="space-y-5">
+        <Step n={1} title={`Add this DNS record where ${info.zone} is managed`} done={info.dns === "ok" || info.dns === "cloudflare"}>
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-surface2 text-muted">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">Type</th>
+                  <th className="px-3 py-1.5 font-medium">Name</th>
+                  <th className="px-3 py-1.5 font-medium">{info.recordType === "A" ? "IPv4 address" : "Target"}</th>
+                  <th className="px-3 py-1.5 font-medium">Proxy (Cloudflare)</th>
+                </tr>
+              </thead>
+              <tbody className="text-fg">
+                <tr>
+                  <td className="px-3 py-2 font-mono">{info.recordType}</td>
+                  <td className="px-3 py-2 font-mono">{info.name}</td>
+                  <td className="px-3 py-2 font-mono">{info.recordValue || <span className="font-sans text-muted">your server's public IP</span>}</td>
+                  <td className="px-3 py-2">DNS only (grey)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {info.recordType === "A" && cf && (
             <p>
-              If <span className="font-mono">{dashboard}</span> is itself proxied by Cloudflare (orange cloud), use the <b>A</b> record with the server's IP instead of the CNAME, or the grey cloud will not reach the server.
+              An <b>A</b> record, not a CNAME: <span className="font-mono">{info.dashboardHost}</span> is behind Cloudflare's proxy, so a CNAME to it would end at Cloudflare instead of your server.
             </p>
           )}
+          {info.recordType === "CNAME" && <p>A CNAME follows the dashboard if its server ever changes. If your provider has no CNAME for this name, use an <b>A</b> record with the same IP as <span className="font-mono">{info.dashboardHost}</span>.</p>}
+          <p>{dnsMsg}</p>
         </Step>
-        <Step n={3} title="Tell the web server about the name">
-          <p>On this dashboard's server, run (once per domain):</p>
-          <CodeBlock>{`sudo ops-server caddy-config ${d} | sudo tee ${file}
-grep -qxF 'import ${file}' /etc/caddy/Caddyfile || echo 'import ${file}' | sudo tee -a /etc/caddy/Caddyfile
+
+        <Step n={2} title="Web server and HTTPS" done={!!served}>
+          {!ws?.auto ? (
+            <>
+              <p>This server cannot set up Caddy by itself (it was installed without the one-click update helper, or without Caddy). Run this on the dashboard's server once:</p>
+              <CodeBlock>{`sudo ops-server caddy-config ${d} | sudo tee /etc/caddy/fleetwatch-status-${d}.caddy
+grep -qxF 'import /etc/caddy/fleetwatch-status-${d}.caddy' /etc/caddy/Caddyfile || echo 'import /etc/caddy/fleetwatch-status-${d}.caddy' | sudo tee -a /etc/caddy/Caddyfile
 sudo systemctl reload caddy`}</CodeBlock>
-          <p>Caddy then gets a free HTTPS certificate for the name by itself.</p>
+            </>
+          ) : !saved ? (
+            <p>Nothing to run: when you <b>save</b> this page, the dashboard adds {d} to Caddy for you, and Caddy gets its HTTPS certificate on its own.</p>
+          ) : ws.state === "pending" ? (
+            <p className="flex items-center gap-2"><Spinner size={12} /> Adding {d} to Caddy…</p>
+          ) : ws.state === "error" ? (
+            <div className="space-y-2">
+              <p className="text-crit">Caddy setup failed: {ws.last?.error}</p>
+              <Button size="sm" variant="secondary" disabled={applying} onClick={apply}>{applying && <Spinner size={12} />} Try again</Button>
+            </div>
+          ) : served ? (
+            <p className="text-ok">✓ Caddy serves {d}. It gets the HTTPS certificate as soon as the DNS record works.</p>
+          ) : (
+            <div className="space-y-2">
+              <p>Caddy has not been set up for {d} yet.</p>
+              <Button size="sm" variant="secondary" disabled={applying} onClick={apply}>{applying && <Spinner size={12} />} Set up now</Button>
+            </div>
+          )}
         </Step>
-        <Step n={4} title="Save this page and open it">
+
+        <Step n={3} title="Open it">
           <p>
-            Save, turn the page on, then open <span className="font-mono">https://{d}</span>. New DNS records can take a few minutes (rarely up to a few hours) to work everywhere. Still not loading? Check the record with <span className="font-mono">nslookup {d}</span> and the web server with <span className="font-mono">sudo journalctl -u caddy -n 50</span>.
+            Turn the page on and open{" "}
+            <a href={`https://${d}`} target="_blank" rel="noreferrer" className="font-mono text-fg underline-offset-2 hover:underline">https://{d}</a>. The first visit can take a few seconds while the certificate is issued.
+          </p>
+          <p>
+            On Cloudflare you can switch the record to <b>Proxied</b> (orange cloud) once that works; then keep <b>SSL/TLS → Overview</b> on <b>Full (strict)</b>.
           </p>
         </Step>
       </ol>
-    </details>
+    </div>
   );
 }

@@ -150,6 +150,10 @@ func selfUpdate() error {
 	if err != nil {
 		return err
 	}
+	// The same root helper also sets up Caddy for status pages with their own domain.
+	if dir := env("OPS_DATA_DIR", "data"); statuspage.CaddyRequested(dir) {
+		return statuspage.CaddySync(dir, env("OPS_LISTEN", "127.0.0.1:8090"))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	tag, err := release.Install(ctx, env("OPS_UPDATE_SOURCE", release.DefaultSource), env("OPS_DATA_DIR", "data"), exe)
@@ -396,6 +400,7 @@ func serve() error {
 		}()
 	}
 	status := statuspage.New(d, incStore)
+	status.DataDir, status.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
 	status.AppState = func(id string) (string, string, int64, bool) {
 		v, err := appSvc.Get(id)
 		if err != nil {

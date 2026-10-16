@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -213,6 +214,9 @@ type Service struct {
 	AppState    func(id string) (state, serverID string, created int64, ok bool)
 	ServerState func(id string) (state string, created int64, ok bool)
 	Now         func() time.Time
+	// DataDir and HelperPath enable the automatic Caddy setup for page domains (see
+	// caddy.go); empty DataDir turns it off.
+	DataDir, HelperPath string
 
 	mu    sync.Mutex
 	pages []Config
@@ -299,6 +303,7 @@ func (s *Service) Save(c Config) (Config, error) {
 		return c, ErrNotFound
 	}
 	c.UpdatedAt = s.Now().UnixMilli()
+	before := s.domains()
 	next := append([]Config(nil), s.pages...)
 	if at < 0 {
 		next = append(next, c)
@@ -310,6 +315,9 @@ func (s *Service) Save(c Config) (Config, error) {
 	}
 	s.pages = next
 	delete(s.cache, c.ID) // show changes right away
+	if !slices.Equal(before, s.domains()) {
+		go s.SyncWebServer()
+	}
 	return c, nil
 }
 
@@ -325,11 +333,15 @@ func (s *Service) Delete(id string) error {
 	if len(next) == len(s.pages) {
 		return ErrNotFound
 	}
+	before := s.domains()
 	if err := settings.Save(s.db, settingsKey, next); err != nil {
 		return err
 	}
 	s.pages = next
 	delete(s.cache, id)
+	if !slices.Equal(before, s.domains()) {
+		go s.SyncWebServer()
+	}
 	return nil
 }
 
