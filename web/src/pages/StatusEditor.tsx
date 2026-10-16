@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowDown, ArrowUp, ExternalLink, Eye, Plus, Radio, Trash2, Upload, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
@@ -317,14 +317,7 @@ export function StatusEditor() {
             <Field label="Own domain (optional)" className="mt-4" hint="That name then shows only the status page; the dashboard is not reachable through it.">
               <Input value={c.domain} placeholder="status.example.com" onChange={(e) => set({ domain: e.target.value })} />
             </Field>
-            {c.domain && (
-              <div className="mt-3 space-y-2 text-xs text-muted">
-                <p>Point the name's DNS at this server, then on this server run:</p>
-                <CodeBlock>{`sudo ops-server caddy-config ${c.domain.trim().toLowerCase()} | sudo tee /etc/caddy/fleetwatch-status.caddy
-echo 'import /etc/caddy/fleetwatch-status.caddy' | sudo tee -a /etc/caddy/Caddyfile
-sudo systemctl reload caddy`}</CodeBlock>
-              </div>
-            )}
+            <DomainGuide domain={c.domain} />
           </Card>
 
           <Card>
@@ -525,5 +518,79 @@ function NoticeDialog({ notice, onClose, onSave }: { notice: Notice; onClose: ()
         <p className="text-xs text-muted">Save the page afterwards to publish it.</p>
       </div>
     </Modal>
+  );
+}
+
+/** Step-by-step setup of a page's own domain: DNS (any provider, Cloudflare notes), then Caddy. */
+function DomainGuide({ domain }: { domain: string }) {
+  const d = domain.trim().toLowerCase() || "status.example.com";
+  const labels = d.split(".");
+  const name = labels.length > 2 ? labels.slice(0, -2).join(".") : "@"; // most DNS panels want only the part before your domain
+  const dashboard = location.hostname;
+  const byIp = /^[\d.]+$|:/.test(dashboard) || dashboard === "localhost";
+  const file = `/etc/caddy/fleetwatch-status-${d}.caddy`;
+  const Step = ({ n, title, children }: { n: number; title: string; children: ReactNode }) => (
+    <li className="flex gap-3">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface2 text-xs font-semibold">{n}</span>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="text-sm font-medium text-fg">{title}</div>
+        {children}
+      </div>
+    </li>
+  );
+  const Rec = ({ type, value }: { type: string; value: string }) => (
+    <div className="overflow-x-auto rounded-xl border border-line">
+      <table className="w-full text-left text-xs">
+        <thead className="bg-surface2 text-muted">
+          <tr><th className="px-3 py-1.5 font-medium">Type</th><th className="px-3 py-1.5 font-medium">Name</th><th className="px-3 py-1.5 font-medium">Target / content</th><th className="px-3 py-1.5 font-medium">TTL</th></tr>
+        </thead>
+        <tbody className="font-mono text-fg">
+          <tr><td className="px-3 py-2">{type}</td><td className="px-3 py-2">{name}</td><td className="px-3 py-2">{value}</td><td className="px-3 py-2">Auto</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+  return (
+    <details className="group mt-3 rounded-2xl border border-line p-4 text-xs text-muted" open={!!domain.trim()}>
+      <summary className="cursor-pointer select-none text-sm font-medium text-fg">How to set up your own domain</summary>
+      <ol className="mt-4 space-y-5">
+        <Step n={1} title="Add a DNS record at your domain provider">
+          <p>In the DNS settings of your domain (Cloudflare, Namecheap, GoDaddy, Hostinger…), add one record that points the name at this dashboard's server:</p>
+          {byIp ? (
+            <Rec type="A" value="the public IP address of this dashboard's server" />
+          ) : (
+            <>
+              <Rec type="CNAME" value={dashboard} />
+              <p>
+                Or, if your provider has no CNAME (or the name is your bare domain): an <b>A</b> record with the same IP address that <span className="font-mono">{dashboard}</span> points to.
+              </p>
+            </>
+          )}
+          <p>The name is only the part before your domain: for <span className="font-mono">{d}</span> type <span className="font-mono">{name}</span>. Some providers want the full name; that works too.</p>
+        </Step>
+        <Step n={2} title="On Cloudflare: start with the grey cloud">
+          <p>
+            Set <b>Proxy status</b> to <b>DNS only</b> (grey cloud) for now, so the server can get its HTTPS certificate in step 3. Once <span className="font-mono">https://{d}</span> opens, you may switch it to <b>Proxied</b> (orange cloud); then keep <b>SSL/TLS → Overview</b> set to <b>Full (strict)</b>. Not on Cloudflare? Skip this step.
+          </p>
+          {!byIp && (
+            <p>
+              If <span className="font-mono">{dashboard}</span> is itself proxied by Cloudflare (orange cloud), use the <b>A</b> record with the server's IP instead of the CNAME, or the grey cloud will not reach the server.
+            </p>
+          )}
+        </Step>
+        <Step n={3} title="Tell the web server about the name">
+          <p>On this dashboard's server, run (once per domain):</p>
+          <CodeBlock>{`sudo ops-server caddy-config ${d} | sudo tee ${file}
+grep -qxF 'import ${file}' /etc/caddy/Caddyfile || echo 'import ${file}' | sudo tee -a /etc/caddy/Caddyfile
+sudo systemctl reload caddy`}</CodeBlock>
+          <p>Caddy then gets a free HTTPS certificate for the name by itself.</p>
+        </Step>
+        <Step n={4} title="Save this page and open it">
+          <p>
+            Save, turn the page on, then open <span className="font-mono">https://{d}</span>. New DNS records can take a few minutes (rarely up to a few hours) to work everywhere. Still not loading? Check the record with <span className="font-mono">nslookup {d}</span> and the web server with <span className="font-mono">sudo journalctl -u caddy -n 50</span>.
+          </p>
+        </Step>
+      </ol>
+    </details>
   );
 }
