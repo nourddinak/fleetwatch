@@ -16,8 +16,10 @@ import (
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
+	"fleetwatch/internal/server/forecast"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
@@ -53,6 +55,8 @@ type Deps struct {
 	Tokens     *tokens.Service
 	Push       *push.Service
 	Status     *statuspage.Service
+	Disk       *disk.Service
+	Forecast   *forecast.Service
 }
 
 type server struct{ Deps }
@@ -98,6 +102,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.Status != nil {
 		s.statusRoutes(mux)
+	}
+	if d.Fleet != nil {
+		s.hostRoutes(mux)
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))

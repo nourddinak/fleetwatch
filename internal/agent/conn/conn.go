@@ -23,6 +23,7 @@ import (
 	agentexec "fleetwatch/internal/agent/exec"
 	"fleetwatch/internal/agent/health"
 	"fleetwatch/internal/agent/host"
+	"fleetwatch/internal/agent/hostcheck"
 	"fleetwatch/internal/agent/inventory"
 	"fleetwatch/internal/agent/logs"
 	"fleetwatch/internal/agent/storage"
@@ -204,6 +205,13 @@ func (r *Runner) session(ctx context.Context) error {
 					stop(ErrRestart) // before Close: the reader would otherwise record "connection closed" first
 					c.Close(websocket.StatusNormalClosure, "updating")
 				}()
+			case proto.TypeDiskScan:
+				go func() { r.sendCurrent(proto.TypeDiskReport, hostcheck.DiskScan(rootCtx)) }()
+			case proto.TypeDiskClean:
+				var req proto.DiskClean
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeDiskCleaned, hostcheck.DiskClean(rootCtx, req)) }()
+				}
 			case proto.TypeRestart:
 				slog.Info("restart requested by server")
 				c.Close(websocket.StatusNormalClosure, "restarting")

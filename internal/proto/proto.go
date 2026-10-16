@@ -306,3 +306,44 @@ type CertInfo struct {
 	Issuer    string `json:"issuer,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
+
+// Disk rescue: what fills a server's disk, and safe cleanups (agent 0.9.31+).
+const (
+	TypeDiskScan    = "disk.scan"    // server → agent: measure (no data)
+	TypeDiskReport  = "disk.report"  // agent → server: DiskReport
+	TypeDiskClean   = "disk.clean"   // server → agent: DiskClean
+	TypeDiskCleaned = "disk.cleaned" // agent → server: DiskCleaned
+)
+
+// DiskItem is one kind of space the agent can give back.
+type DiskItem struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Note  string `json:"note"`
+	Bytes int64  `json:"bytes"`
+	Files int    `json:"files"`
+}
+
+type DiskDir struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+type DiskReport struct {
+	At         int64      `json:"at"`
+	Items      []DiskItem `json:"items"`
+	Top        []DiskDir  `json:"top"` // biggest folders on the root filesystem
+	DurationMs int64      `json:"durationMs"`
+}
+
+type DiskClean struct {
+	RunID  string `json:"runId"`
+	Action string `json:"action"` // a DiskItem ID
+}
+
+type DiskCleaned struct {
+	RunID  string `json:"runId"`
+	Action string `json:"action"`
+	Freed  int64  `json:"freed"`
+	Error  string `json:"error,omitempty"`
+}

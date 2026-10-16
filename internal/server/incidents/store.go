@@ -36,6 +36,9 @@ var Labels = map[string]string{
 	"repeated_errors":   "Repeated Application Error",
 	"ssl_expiring":      "SSL Certificate",
 	"domain_expiring":   "Domain Expiry",
+	"disk_filling":      "Disk Filling Up",
+	"memory_leak":       "Possible Memory Leak",
+	"security":          "Security",
 }
 
 type entry struct {

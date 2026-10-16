@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { type Forecasts } from "../components/DiskRescue";
 import { Link, useNavigate } from "react-router-dom";
 import { Activity, FlaskConical, Pencil, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { useStore } from "../store/store";
@@ -26,6 +27,7 @@ export function AppOverview() {
   const { servers, incidents, upsertApp, toast } = useStore();
   const s = servers.find((x) => x.id === a.serverId);
   const events = useApi<AppEventRow[]>(`/api/apps/${a.id}/events`);
+  const leak = useApi<Forecasts>("/api/forecasts").data?.apps?.[a.id];
   const active = incidents.filter((i) => i.appId === a.id && i.status === "active");
   const live = !!a.pid;
   const useDomain = async () => {
@@ -40,6 +42,11 @@ export function AppOverview() {
   return (
     <div className="space-y-6">
       {s?.status === "disconnected" && <div className="rounded-2xl bg-warn-soft px-5 py-3 text-sm text-warn">The agent on {s.name} is disconnected. Status is unknown and values are the last known state.</div>}
+      {leak && (
+        <div className="rounded-2xl bg-warn-soft px-5 py-3 text-sm text-warn">
+          Possible memory leak: memory has grown steadily from {leak.fromMb} MB to {leak.nowMb} MB since the process started {relTime(leak.since)} (about +{leak.pctPerDay}% a day). A restart frees it for a while; a fix in the code ends it.
+        </div>
+      )}
       {a.status === "crash-loop" && <div className="rounded-2xl bg-crit-soft px-5 py-3 text-sm text-crit">Crash loop detected ({a.restarts} restarts, manager state “{a.rawStatus}”). The process exits right after starting.</div>}
       {a.manager !== "standalone" && !a.processFound && s?.status !== "disconnected" && (
         <div className="rounded-2xl bg-crit-soft px-5 py-3 text-sm text-crit">{a.manager} on {s?.name} does not know <span className="font-mono">{a.processKey}</span>. Check the process name in Settings, or start it on the server.</div>

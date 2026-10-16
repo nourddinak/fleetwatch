@@ -29,8 +29,10 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
+	"fleetwatch/internal/server/forecast"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
@@ -365,12 +367,33 @@ func serve() error {
 			maint.Sweep()
 		}
 	}()
+	diskSvc := disk.New(bus)
+	diskSvc.Send = hub.Send
+	diskSvc.AgentVersion = func(id string) string {
+		if rec, err := hub.Reg.Get(id); err == nil {
+			return rec.AgentVersion
+		}
+		return ""
+	}
+	hub.Handlers[proto.TypeDiskReport] = diskSvc.OnReport
+	hub.Handlers[proto.TypeDiskCleaned] = diskSvc.OnCleaned
+	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
+		ServerIDs: func() []string {
+			recs, _ := hub.Reg.List()
+			ids := make([]string, 0, len(recs))
+			for _, r := range recs {
+				ids = append(ids, r.ID)
+			}
+			return ids
+		}}
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
 	domainChecks.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
 	logStore.OnStored = func(lines []logs.Line) { detector.Logs(lines, time.Now()) }
 	hub.OnMetrics = func(serverID string, m proto.Metrics) {
-		detector.ServerSample(serverID, metrics.FromProto(m), time.Now())
+		sample := metrics.FromProto(m)
+		detector.ServerSample(serverID, sample, time.Now())
+		diskSvc.Watch(serverID, sample.Disk)
 	}
 	// Servers that never reconnect after a restart still get an offline incident.
 	if recs, err := hub.Reg.List(); err == nil {
@@ -458,7 +481,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -472,6 +495,21 @@ func serve() error {
 	go updates.Run(ctx)
 	go domainChecks.Run(ctx)
 	go status.Run(ctx)
+	go func() { // forecasts: shortly after start, then hourly
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Minute):
+			}
+			forecasts.Run()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(58 * time.Minute):
+			}
+		}
+	}()
 	go runJobs(ctx, d, authSvc, appSvc, logStore, detector, notifier, store, appStore)
 
 	errc := make(chan error, 1)

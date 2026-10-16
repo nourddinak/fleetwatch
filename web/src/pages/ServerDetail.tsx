@@ -12,6 +12,7 @@ import { MetricPanel } from "../components/MetricChart";
 import { InstallCommand } from "../components/InstallCommand";
 import { cn } from "../utils/cn";
 import { MaintenanceControl } from "../components/Maintenance";
+import { DiskRescue, fullIn, type Forecasts } from "../components/DiskRescue";
 
 function useServer() {
   const { id } = useParams();
@@ -79,6 +80,7 @@ export function ServerOverview() {
   const s = useServer()!;
   const { apps, incidents } = useStore();
   const events = useApi<ServerEvent[]>(`/api/servers/${s.id}/events`);
+  const fc = useApi<Forecasts>("/api/forecasts").data?.servers?.[s.id];
   const c = serverCounts(s.id, apps, incidents);
   const dc = s.status === "disconnected";
   if (s.status === "pending")
@@ -95,7 +97,7 @@ export function ServerOverview() {
       <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", dc && "opacity-60")}>
         <MetricCard label="CPU" value={s.cpu.toFixed(1)} unit="%" progress={s.cpu} icon={<Cpu size={14} />} tone={levelTone(s.cpu) === "ok" ? undefined : levelTone(s.cpu)} sub={`${s.cpuCores} cores · ${s.arch}`} />
         <MetricCard label="RAM" value={s.ram.toFixed(1)} unit="%" progress={s.ram} icon={<MemoryStick size={14} />} sub={`${((s.ramGb * s.ram) / 100).toFixed(1)} / ${s.ramGb} GB · swap ${s.swap.toFixed(0)}% of ${s.swapGb} GB`} />
-        <MetricCard label="Disk" value={s.disk.toFixed(1)} unit="%" progress={s.disk} icon={<HardDrive size={14} />} tone={levelTone(s.disk, 80, 90) === "ok" ? undefined : levelTone(s.disk, 80, 90)} sub={`${Math.round((s.diskGb * s.disk) / 100)} / ${s.diskGb} GB`} />
+        <MetricCard label="Disk" value={s.disk.toFixed(1)} unit="%" progress={s.disk} icon={<HardDrive size={14} />} tone={levelTone(s.disk, 80, 90) === "ok" ? undefined : levelTone(s.disk, 80, 90)} sub={fc ? `${Math.round((s.diskGb * s.disk) / 100)} / ${s.diskGb} GB · full in ~${fullIn(fc.fullDays)}` : `${Math.round((s.diskGb * s.disk) / 100)} / ${s.diskGb} GB`} />
         <MetricCard label="Load average" value={s.load[0].toFixed(2)} sub={`5m ${s.load[1]} · 15m ${s.load[2]}`} icon={<Activity size={14} />} />
         <MetricCard label="Network" value={`↓${s.netRx.toFixed(1)}`} unit="Mbps" sub={`↑ ${s.netTx.toFixed(1)} Mbps`} icon={<Network size={14} />} />
         <MetricCard label="Uptime" value={dc ? "—" : fmtDur(s.uptimeSec)} icon={<Timer size={14} />} sub={dc ? "unknown while disconnected" : `booted ${dateTime(Date.now() - s.uptimeSec * 1000)}`} />
@@ -211,14 +213,17 @@ export function ServerStorage() {
   const usedMB = ((s.diskGb * s.disk) / 100) * 1024;
   const appsMB = list.reduce((n, a) => n + a.folderMB, 0);
   const max = list[0]?.folderMB ?? 1;
+  const fc = useApi<Forecasts>("/api/forecasts").data?.servers?.[s.id];
   return (
     <div className="grid gap-6 lg:grid-cols-5">
+      <DiskRescue serverId={s.id} disk={s.disk} />
       <Card className="lg:col-span-2">
         <SectionTitle title="Disk usage" sub="Root filesystem /" />
         <div className="text-4xl font-semibold tracking-tight tabular-nums">{s.disk.toFixed(1)}<span className="text-lg text-muted">%</span></div>
         <Bar value={s.disk} className="mt-3 !h-3" />
         <div className="mt-2 flex justify-between text-xs text-muted"><span>{fmtMB(usedMB)} used</span><span>{s.diskGb} GB total</span></div>
-        {s.disk > 85 && <div className="mt-4 rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">Disk is above the 85% threshold. Consider clearing caches or attaching a volume.</div>}
+        {s.disk > 85 && <div className="mt-4 rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">Disk is above the 85% threshold. See below what can be freed, or attach a volume.</div>}
+        {fc && <div className="mt-4 rounded-2xl bg-warn-soft px-4 py-3 text-sm text-warn">At the pace of the last days (+{fc.perDay.toFixed(1)} points a day) this disk is full in about {fullIn(fc.fullDays)}.</div>}
         <dl className="mt-4 divide-y divide-line text-sm">
           <div className="flex justify-between py-2"><dt className="text-muted">Monitored app folders</dt><dd className="font-medium">{fmtMB(appsMB)}</dd></div>
           <div className="flex justify-between py-2"><dt className="text-muted">Everything else</dt><dd className="font-medium">{fmtMB(Math.max(0, usedMB - appsMB))}</dd></div>
