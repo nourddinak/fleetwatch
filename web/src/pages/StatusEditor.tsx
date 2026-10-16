@@ -199,7 +199,6 @@ export function StatusEditor() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preview, setPreview] = useState(false);
   const [logoUrl, setLogoUrl] = useState("");
-  const [fetching, setFetching] = useState(false);
   useEffect(() => {
     if (saved.data) setC(saved.data);
   }, [saved.data]);
@@ -235,17 +234,12 @@ export function StatusEditor() {
     }
     setBusy(false);
   };
-  // The server downloads the image once and stores it like an upload.
-  const fetchLogo = async () => {
-    setFetching(true);
-    try {
-      const { logo } = await api<{ logo: string }>("POST", "/api/status-pages/logo", { url: logoUrl.trim() });
-      set({ logo });
-      setLogoUrl("");
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setFetching(false);
+  // A link is used as it is: visitors' browsers load the image from there.
+  const applyLink = () => {
+    const u = logoUrl.trim();
+    if (!u.startsWith("https://")) return toast("Use an https:// link (an http one would not load on an https page)", "err");
+    set({ logo: u });
+    setLogoUrl("");
   };
   const pickLogo = (f?: File) => {
     if (!f) return;
@@ -329,7 +323,7 @@ export function StatusEditor() {
               <Field label="Intro text" className="sm:col-span-2" hint="Shown under the overall status.">
                 <Textarea rows={2} value={c.description} maxLength={1000} onChange={(e) => set({ description: e.target.value })} />
               </Field>
-              <Field label="Logo" className="sm:col-span-2" hint="PNG, JPEG, WebP or SVG, up to 256 KB. Upload a file or paste an image link; a linked image is copied here, so it keeps working if the original moves.">
+              <Field label="Logo" className="sm:col-span-2" hint={c.logo.startsWith("https://") ? "Linked image: visitors load it from that address." : "Upload a PNG, JPEG, WebP or SVG (up to 256 KB), or paste a link to an image on your site."}>
                 <div className="flex flex-wrap items-center gap-2">
                   {c.logo && <img src={c.logo} alt="" className="h-9 max-w-[90px] rounded object-contain" />}
                   <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-3.5 py-2 text-xs hover:bg-surface2">
@@ -344,10 +338,10 @@ export function StatusEditor() {
                     placeholder="https://example.com/logo.png"
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && logoUrl.trim() && (e.preventDefault(), fetchLogo())}
+                    onKeyDown={(e) => e.key === "Enter" && logoUrl.trim() && (e.preventDefault(), applyLink())}
                     className="min-w-0 flex-1"
                   />
-                  <Button size="sm" variant="secondary" disabled={!logoUrl.trim() || fetching} onClick={fetchLogo}>{fetching && <Spinner size={14} />} Use link</Button>
+                  <Button size="sm" variant="secondary" disabled={!logoUrl.trim()} onClick={applyLink}>Use link</Button>
                 </div>
               </Field>
               <Field label="Brand colour" hint="Used for the banner and the uptime bars.">

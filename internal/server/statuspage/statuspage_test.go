@@ -48,18 +48,22 @@ func TestHistory(t *testing.T) {
 func TestValidate(t *testing.T) {
 	ok := Defaults()
 	ok.Domain = " Status.Example.COM "
+	ok.Logo = "https://cdn.example.com/brand/logo.svg?v=2"
 	ok.Notices = []Notice{{Title: "Upgrade", Status: "maintenance", Start: 1}}
 	if err := ok.Validate(); err != nil || ok.Domain != "status.example.com" || ok.Notices[0].ID == "" {
 		t.Fatalf("%v %+v", err, ok)
 	}
 	bad := map[string]func(c *Config){
-		"accent":   func(c *Config) { c.Accent = "red;background:url(x)" },
-		"theme":    func(c *Config) { c.Theme = "neon" },
-		"link":     func(c *Config) { c.HomeURL = "javascript:alert(1)" },
-		"logo":     func(c *Config) { c.Logo = "data:text/html;base64,PHNjcmlwdD4=" },
-		"big logo": func(c *Config) { c.Logo = "data:image/png;base64," + strings.Repeat("A", 400_000) },
-		"domain":   func(c *Config) { c.Domain = "status.example.com/evil" },
-		"days":     func(c *Config) { c.HistoryDays = 365 },
+		"accent":    func(c *Config) { c.Accent = "red;background:url(x)" },
+		"theme":     func(c *Config) { c.Theme = "neon" },
+		"link":      func(c *Config) { c.HomeURL = "javascript:alert(1)" },
+		"logo":      func(c *Config) { c.Logo = "data:text/html;base64,PHNjcmlwdD4=" },
+		"http logo": func(c *Config) { c.Logo = "http://example.com/logo.png" },
+		"js logo":   func(c *Config) { c.Logo = "javascript:alert(1)" },
+		"odd logo":  func(c *Config) { c.Logo = `https://example.com/a.png" onerror="x` },
+		"big logo":  func(c *Config) { c.Logo = "data:image/png;base64," + strings.Repeat("A", 400_000) },
+		"domain":    func(c *Config) { c.Domain = "status.example.com/evil" },
+		"days":      func(c *Config) { c.HistoryDays = 365 },
 		"kind": func(c *Config) {
 			c.Groups = []Group{{Name: "x", Components: []Component{{Kind: "db", ID: "1", Name: "x"}}}}
 		},

@@ -50,18 +50,6 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))
-	mux.HandleFunc("POST /api/status-pages/logo", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		var in struct{ URL string }
-		if !decode(w, r, &in) {
-			return
-		}
-		logo, err := statuspage.FetchLogo(r.Context(), in.URL)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"logo": logo})
-	}))
 	mux.HandleFunc("GET /api/status-pages/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		c, ok := s.Status.Page(r.PathValue("id"))
 		if !ok {

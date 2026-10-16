@@ -63,7 +63,7 @@ type Config struct {
 	Enabled     bool     `json:"enabled"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
-	Logo        string   `json:"logo"`   // data: URL (png, jpeg, webp, svg)
+	Logo        string   `json:"logo"`   // https:// link, or an uploaded image as a data: URL (png, jpeg, webp, svg)
 	Accent      string   `json:"accent"` // #rrggbb
 	Theme       string   `json:"theme"`  // auto | light | dark
 	HomeURL     string   `json:"homeUrl"`
@@ -126,10 +126,14 @@ func (c *Config) Validate() error {
 			return valid.Error("website link must be an http(s) URL")
 		}
 	}
-	if c.Logo != "" {
+	if strings.HasPrefix(c.Logo, "https://") { // a link: visitors' browsers load it from there
+		if u, err := url.Parse(c.Logo); err != nil || u.Host == "" || len(c.Logo) > 1000 || strings.ContainsAny(c.Logo, " \"'<>") {
+			return valid.Error("logo link must be a valid https:// address")
+		}
+	} else if c.Logo != "" {
 		m := logoRe.FindStringSubmatch(c.Logo)
 		if m == nil {
-			return valid.Error("logo must be a PNG, JPEG, WebP or SVG image")
+			return valid.Error("logo must be an https:// link or a PNG, JPEG, WebP or SVG image")
 		}
 		if base64.StdEncoding.DecodedLen(len(m[2])) > maxLogo {
 			return valid.Error("logo must be at most 256 KB")
