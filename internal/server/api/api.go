@@ -71,6 +71,7 @@ func New(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": d.Version})
 	})
 	s.authRoutes(mux)
+	s.memberRoutes(mux)
 	if d.Fleet != nil {
 		s.serverRoutes(mux)
 		s.agentRoutes(mux)

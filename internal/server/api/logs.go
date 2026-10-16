@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +92,8 @@ func (s *server) putLogSettings(w http.ResponseWriter, r *http.Request, _ auth.S
 
 // logsWS streams newly stored lines for one app (?app=) or server (?server=), or
 // all lines. It sends {"type":"lines","data":[...]} and {"type":"dropped","data":n}.
-func (s *server) logsWS(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) logsWS(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	sc := s.scopeOf(sess)
 	token := cookieToken(r)
 	c, err := websocket.Accept(w, r, nil) // same-origin only
 	if err != nil {
@@ -121,6 +123,12 @@ func (s *server) logsWS(w http.ResponseWriter, r *http.Request, _ auth.Session) 
 				}
 			}
 		case lines := <-sub.C:
+			if sc != nil { // a member limited to some servers sees only their lines
+				lines = slices.DeleteFunc(slices.Clone(lines), func(l logs.Line) bool { return !sc.server(l.ServerID) })
+				if len(lines) == 0 {
+					continue
+				}
+			}
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := wsWriteJSON(wctx, c, map[string]any{"type": "lines", "data": lines})
 			cancel()

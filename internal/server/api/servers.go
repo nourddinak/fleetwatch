@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -300,7 +301,8 @@ func (s *server) putMetricsSettings(w http.ResponseWriter, r *http.Request, _ au
 // browserWS streams live updates. It starts with a snapshot of every server, then
 // forwards bus messages. The session is re-checked every minute so a revoked or
 // expired session stops receiving data.
-func (s *server) browserWS(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) browserWS(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	sc := s.scopeOf(sess)
 	token := cookieToken(r)
 	c, err := websocket.Accept(w, r, nil) // nil options = same-origin only
 	if err != nil {
@@ -315,7 +317,8 @@ func (s *server) browserWS(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	if err != nil {
 		return
 	}
-	if err := wsWriteJSON(ctx, c, map[string]any{"type": "servers", "data": views}); err != nil {
+	first, _ := json.Marshal(map[string]any{"type": "servers", "data": views})
+	if err := c.Write(ctx, websocket.MessageText, sc.liveFilter(first)); err != nil {
 		return
 	}
 	check := time.NewTicker(time.Minute)
@@ -330,6 +333,9 @@ func (s *server) browserWS(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 				return
 			}
 		case msg := <-sub.C:
+			if msg = sc.liveFilter(msg); msg == nil {
+				continue
+			}
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := c.Write(wctx, websocket.MessageText, msg)
 			cancel()

@@ -20,17 +20,21 @@ const NAV = [
   ["metrics", "Metrics"],
   ["notifications", "Notifications"],
   ["incidents", "Incident rules"],
+  ["team", "Team"],
   ["tokens", "API tokens"],
   ["system", "System"],
 ];
 
 export function SettingsLayout() {
+  const { me } = useStore();
+  // Team members only manage their own account; everything else is the owner's.
+  const nav = me && me.role !== "owner" ? NAV.filter(([to]) => to === "account") : NAV;
   return (
     <>
       <PageHeader title="Settings" sub="Account, security, collection, notifications and rules" />
       <div className="grid gap-6 lg:grid-cols-[200px_1fr]">
         <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-24 lg:mx-0 lg:h-fit lg:flex-col lg:px-0">
-          {NAV.map(([to, label]) => (
+          {nav.map(([to, label]) => (
             <NavLink key={to} to={`/settings/${to}`} className={({ isActive }) => cn("whitespace-nowrap rounded-full px-4 py-2 text-sm transition", isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:bg-surface2 hover:text-fg")}>
               {label}
             </NavLink>

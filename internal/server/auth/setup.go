@@ -74,6 +74,6 @@ func (s *Service) Setup(c Client, code, username, password string) (string, erro
 	s.setupCode = ""
 	s.lim.reset(c.IP)
 	audit.Record(s.db, audit.Event{Action: "setup", OK: true, IP: c.IP, UserAgent: c.UserAgent, Target: username, Detail: "admin created in the setup wizard"})
-	token, _, err := s.createSession(c, false)
+	token, _, err := s.createSession(c, false, "")
 	return token, err
 }

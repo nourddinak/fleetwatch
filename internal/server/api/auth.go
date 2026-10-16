@@ -51,6 +51,16 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "Not signed in.")
 			return
 		}
+		if !s.allowed(w, r, sess) {
+			return
+		}
+		// A member limited to some servers only gets their part of every list.
+		if sc := s.scopeOf(sess); sc != nil && r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/ws") {
+			sw := &scopedWriter{ResponseWriter: w}
+			h(sw, r, sess)
+			sw.flush(sc, r.URL.Path == "/api/servers")
+			return
+		}
 		h(w, r, sess)
 	}
 }
@@ -148,6 +158,15 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "mfa_required", "Two-factor code required.")
 		return
 	}
+	if !sess.Owner() {
+		p, err := s.Auth.MemberProfile(sess.MemberID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+		return
+	}
 	p, err := s.Auth.Profile()
 	if err != nil {
 		fail(w, err)
@@ -164,12 +183,16 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *server) updateAccount(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) updateAccount(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ DisplayName, Email string }
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.Auth.UpdateProfile(client(r), in.DisplayName, in.Email); err != nil {
+	update := func() error { return s.Auth.UpdateProfile(client(r), in.DisplayName, in.Email) }
+	if !sess.Owner() {
+		update = func() error { return s.Auth.UpdateMemberProfile(sess.MemberID, in.DisplayName, in.Email) }
+	}
+	if err := update(); err != nil {
 		fail(w, err)
 		return
 	}
@@ -181,7 +204,13 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request, sess aut
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.Auth.ChangePassword(client(r), in.Current, in.Next, sess.ID); err != nil {
+	change := s.Auth.ChangePassword
+	if !sess.Owner() {
+		change = func(c auth.Client, cur, next, keep string) error {
+			return s.Auth.ChangeMemberPassword(c, sess.MemberID, cur, next, keep)
+		}
+	}
+	if err := change(client(r), in.Current, in.Next, sess.ID); err != nil {
 		fail(w, err)
 		return
 	}

@@ -80,15 +80,26 @@ type Session struct {
 	ExpiresAt  int64  `json:"expiresAt"`
 	IP         string `json:"ip"`
 	UserAgent  string `json:"userAgent"`
+	// Who: the owner (MemberID "") or a team member with a role and, optionally, a
+	// limited list of servers (nil = every server).
+	MemberID string   `json:"memberId,omitempty"`
+	Username string   `json:"username,omitempty"`
+	Role     string   `json:"role"`
+	Servers  []string `json:"-"`
 }
 
+// Owner reports whether the session belongs to the owner (the admin account).
+func (s Session) Owner() bool { return s.MemberID == "" }
+
 type Profile struct {
-	Username          string `json:"username"`
-	DisplayName       string `json:"displayName"`
-	Email             string `json:"email"`
-	PasswordChangedAt int64  `json:"passwordChangedAt"`
-	TwoFAEnabled      bool   `json:"twofaEnabled"`
-	RecoveryCodesLeft int    `json:"recoveryCodesLeft"`
+	Role              string   `json:"role"`              // owner | operator | viewer
+	Servers           []string `json:"servers,omitempty"` // a member limited to these servers
+	Username          string   `json:"username"`
+	DisplayName       string   `json:"displayName"`
+	Email             string   `json:"email"`
+	PasswordChangedAt int64    `json:"passwordChangedAt"`
+	TwoFAEnabled      bool     `json:"twofaEnabled"`
+	RecoveryCodesLeft int      `json:"recoveryCodesLeft"`
 }
 
 type Service struct {
@@ -214,15 +225,23 @@ func (s *Service) Login(c Client, username, password string) (token string, pend
 		return "", false, err
 	}
 	if !userOK || !pwOK {
+		if memberID, ok := s.memberLogin(username, password); ok {
+			s.lim.reset(c.IP)
+			token, _, err = s.createSession(c, false, memberID)
+			if err == nil {
+				audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password (team member " + strings.TrimSpace(username) + ")"})
+			}
+			return token, false, err
+		}
 		s.failed(c, "login", "bad credentials")
 		return "", false, ErrInvalidCredentials
 	}
 	if a.totpEnc != nil {
-		token, _, err = s.createSession(c, true)
+		token, _, err = s.createSession(c, true, "")
 		return token, true, err
 	}
 	s.lim.reset(c.IP)
-	token, _, err = s.createSession(c, false)
+	token, _, err = s.createSession(c, false, "")
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password"})
 	}
@@ -250,7 +269,7 @@ func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) 
 		return "", err
 	}
 	s.lim.reset(c.IP)
-	token, _, err := s.createSession(c, false)
+	token, _, err := s.createSession(c, false, "")
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password + " + method})
 	}
@@ -288,7 +307,7 @@ func (s *Service) checkSecondFactor(code string, recovery bool) bool {
 	return n == 1
 }
 
-func (s *Service) createSession(c Client, pending bool) (string, Session, error) {
+func (s *Service) createSession(c Client, pending bool, memberID string) (string, Session, error) {
 	tok := make([]byte, 32)
 	idb := make([]byte, 9)
 	if _, err := rand.Read(tok); err != nil {
@@ -308,8 +327,8 @@ func (s *Service) createSession(c Client, pending bool) (string, Session, error)
 		ua = ua[:300]
 	}
 	sess := Session{ID: hex.EncodeToString(idb), MFAPending: pending, CreatedAt: now.UnixMilli(), LastSeenAt: now.UnixMilli(), ExpiresAt: now.Add(age).UnixMilli(), IP: c.IP, UserAgent: ua}
-	_, err := s.db.Exec(`INSERT INTO sessions (id, token_hash, mfa_pending, created_at, last_seen_at, expires_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sess.ID, hashToken(token), pending, sess.CreatedAt, sess.LastSeenAt, sess.ExpiresAt, sess.IP, sess.UserAgent)
+	_, err := s.db.Exec(`INSERT INTO sessions (id, token_hash, mfa_pending, created_at, last_seen_at, expires_at, ip, user_agent, member_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sess.ID, hashToken(token), pending, sess.CreatedAt, sess.LastSeenAt, sess.ExpiresAt, sess.IP, sess.UserAgent, memberID)
 	return token, sess, err
 }
 
@@ -319,8 +338,8 @@ func (s *Service) lookup(token string) (Session, error) {
 		return Session{}, ErrNoSession
 	}
 	var sess Session
-	err := s.db.QueryRow(`SELECT id, mfa_pending, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE token_hash = ?`, hashToken(token)).
-		Scan(&sess.ID, &sess.MFAPending, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IP, &sess.UserAgent)
+	err := s.db.QueryRow(`SELECT id, mfa_pending, created_at, last_seen_at, expires_at, ip, user_agent, member_id FROM sessions WHERE token_hash = ?`, hashToken(token)).
+		Scan(&sess.ID, &sess.MFAPending, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IP, &sess.UserAgent, &sess.MemberID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrNoSession
 	}
@@ -332,6 +351,15 @@ func (s *Service) lookup(token string) (Session, error) {
 	if now >= sess.ExpiresAt || (!sess.MFAPending && now-sess.LastSeenAt >= idle) {
 		s.db.Exec(`DELETE FROM sessions WHERE id = ?`, sess.ID)
 		return Session{}, ErrNoSession
+	}
+	sess.Role = RoleOwner
+	if sess.MemberID != "" { // role and servers are read on every request, so changes apply at once
+		m, err := s.GetMember(sess.MemberID)
+		if err != nil || m.Disabled {
+			s.db.Exec(`DELETE FROM sessions WHERE id = ?`, sess.ID)
+			return Session{}, ErrNoSession
+		}
+		sess.Role, sess.Servers, sess.Username = m.Role, m.Servers, m.Username
 	}
 	return sess, nil
 }
@@ -357,8 +385,9 @@ func (s *Service) Logout(c Client, token string) {
 }
 
 func (s *Service) ListSessions() ([]Session, error) {
-	rows, err := s.db.Query(`SELECT id, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions
-		WHERE mfa_pending = 0 AND expires_at > ? ORDER BY last_seen_at DESC`, s.Now().UnixMilli())
+	rows, err := s.db.Query(`SELECT s.id, s.created_at, s.last_seen_at, s.expires_at, s.ip, s.user_agent, s.member_id, COALESCE(m.username, '')
+		FROM sessions s LEFT JOIN members m ON m.id = s.member_id
+		WHERE s.mfa_pending = 0 AND s.expires_at > ? ORDER BY s.last_seen_at DESC`, s.Now().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +395,7 @@ func (s *Service) ListSessions() ([]Session, error) {
 	out := []Session{}
 	for rows.Next() {
 		var x Session
-		if err := rows.Scan(&x.ID, &x.CreatedAt, &x.LastSeenAt, &x.ExpiresAt, &x.IP, &x.UserAgent); err != nil {
+		if err := rows.Scan(&x.ID, &x.CreatedAt, &x.LastSeenAt, &x.ExpiresAt, &x.IP, &x.UserAgent, &x.MemberID, &x.Username); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -408,7 +437,7 @@ func (s *Service) Profile() (Profile, error) {
 	err := s.db.QueryRow(`SELECT username, display_name, email, password_changed_at, totp_secret_enc,
 		(SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL) FROM admin WHERE id = 1`).
 		Scan(&p.Username, &p.DisplayName, &p.Email, &p.PasswordChangedAt, &totp, &p.RecoveryCodesLeft)
-	p.TwoFAEnabled = totp != nil
+	p.TwoFAEnabled, p.Role = totp != nil, RoleOwner
 	return p, err
 }
 

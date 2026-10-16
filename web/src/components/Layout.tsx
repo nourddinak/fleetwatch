@@ -80,6 +80,7 @@ function Shell() {
 
   const active = incidents.filter((i) => i.status === "active").length;
   const unread = notifications.filter((n) => !n.read).length;
+  const owner = !me || me.role === "owner";
   const nodes = [
     { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
     { to: "/servers", label: "Servers", icon: Server },
@@ -87,7 +88,7 @@ function Shell() {
     { to: "/logs", label: "Logs", icon: ScrollText },
     { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
     { to: "/domains", label: "Domains", icon: Globe },
-    { to: "/status-page", label: "Status pages", icon: Radio },
+    ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),
     { to: "/security", label: "Security", icon: ShieldCheck },
     { to: "/discoveries", label: "Discoveries", icon: Radar, badge: discoveries.length },
     { to: "/metrics", label: "Metrics", icon: Activity },
@@ -172,7 +173,7 @@ function Shell() {
                   <div className="fade-in absolute right-0 top-12 z-40 w-56 rounded-2xl border border-line bg-surface p-1.5 shadow-xl">
                     <div className="px-3 py-2">
                       <div className="text-sm font-medium">{me?.displayName || me?.username}</div>
-                      <div className="text-xs text-muted">@{me?.username}</div>
+                      <div className="text-xs text-muted">@{me?.username}{me && me.role !== "owner" ? ` · ${me.role}` : ""}</div>
                     </div>
                     <Link to="/settings/account" className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-surface2" onClick={() => setUserMenu(false)}>
                       <Settings size={15} /> Account settings

@@ -27,6 +27,7 @@ import (
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/logs"
+	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/push"
@@ -69,10 +70,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 		cmdSvc.Result(id, res)
 	}
 	incStore := incidents.NewStore(d, bus)
+	maint, _ := maintenance.New(d, bus)
 	detector := incidents.NewDetector(incStore, d, hub.Connected, func(string) string { return "" })
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box), Status: testStatus(d, incStore, hub, appSvc)}))
+		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box), Status: testStatus(d, incStore, hub, appSvc), Maint: maint}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }
