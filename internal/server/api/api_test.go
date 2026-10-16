@@ -74,7 +74,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	detector := incidents.NewDetector(incStore, d, hub.Connected, func(string) string { return "" })
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box), Status: testStatus(d, incStore, hub, appSvc), Maint: maint, OnCall: testOnCall(d, incStore, svc)}))
+		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box), Status: testStatus(d, incStore, hub, appSvc), Maint: maint, OnCall: testOnCall(d, incStore, svc), Mobile: testPhones(d, svc)}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }

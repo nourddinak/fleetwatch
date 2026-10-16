@@ -8,6 +8,7 @@ import { Badge, Button, Card, ErrorState, Field, Gate, Input, KV, LoadingState, 
 import { cn } from "../utils/cn";
 import { UpdateCard } from "../components/PlatformUpdate";
 import { PushCard } from "../components/PushCard";
+import { MobileCard } from "../components/MobileCard";
 
 const NAV = [
   ["account", "Account"],
@@ -100,7 +101,12 @@ export function AccountSettings() {
   };
   return (
     <div className="space-y-6">
-      {me.role !== "owner" && <PushCard personal enabled onChange={() => {}} />}
+      {me.role !== "owner" && (
+        <>
+          <MobileCard />
+          <PushCard personal enabled onChange={() => {}} />
+        </>
+      )}
       <Card>
         <SectionTitle title="Profile" />
         <div className="grid gap-4 sm:grid-cols-2">
@@ -697,7 +703,10 @@ export function NotificationSettings() {
     <div className="space-y-6">
       {chans.data.map((ch) =>
         ch.provider === "push" ? (
-          <PushCard key="push" enabled={ch.enabled} onChange={chans.reload} />
+          <div key="push" className="space-y-6">
+            <MobileCard />
+            <PushCard enabled={ch.enabled} onChange={chans.reload} />
+          </div>
         ) : (
           <ChannelCard key={ch.provider + JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />
         ),

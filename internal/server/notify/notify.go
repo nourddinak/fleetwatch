@@ -104,7 +104,9 @@ type Service struct {
 	Bus *live.Bus
 	// Overrides returns the server's notify override and whether the app allows
 	// notifications. Optional.
-	Overrides  func(serverID, appID string) (serverOverride string, appAllows bool)
+	Overrides func(serverID, appID string) (serverOverride string, appAllows bool)
+	// Mirror gets every alert that passed the rules, for the phone app.
+	Mirror     func(msg Message, serverID, appID string)
 	ServerName func(serverID string) string
 	AppName    func(appID string) string
 	PublicURL  string
@@ -322,6 +324,9 @@ func (s *Service) Incident(ev incidents.Event) {
 	if ev.Kind == "resolved" {
 		event = x.Type + " resolved"
 	}
+	if s.Mirror != nil {
+		s.Mirror(msg, x.ServerID, appID)
+	}
 	s.enqueue(job{event: event, msg: msg, serverID: x.ServerID, appID: appID, incident: x.ID})
 }
 
@@ -335,6 +340,9 @@ func (s *Service) Notice(event string, msg Message, serverID, appID string) {
 	}
 	if s.PublicURL != "" && msg.Link == "" {
 		msg.Link = strings.TrimRight(s.PublicURL, "/") + "/#/incidents"
+	}
+	if s.Mirror != nil {
+		s.Mirror(msg, serverID, appID)
 	}
 	s.enqueue(job{event: event, msg: msg, serverID: serverID, appID: appID})
 }

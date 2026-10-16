@@ -53,6 +53,9 @@ func (s *server) memberRoutes(mux *http.ServeMux) {
 			failMember(w, err)
 			return
 		}
+		if s.Mobile != nil {
+			s.Mobile.RemoveMember(r.PathValue("id")) // their phones stop getting alerts
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 }

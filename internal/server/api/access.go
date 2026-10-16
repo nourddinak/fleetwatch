@@ -23,7 +23,8 @@ var ownerOnly = []string{"/api/tokens", "/api/sessions", "/api/audit", "/api/mem
 
 // Writes any signed-in member may make (their own account, sign-out).
 var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account/password|PUT /api/account|POST /api/notifications/read|` +
-	`POST /api/push/(subscribe|unsubscribe|test)|DELETE /api/push/devices/[^/]+)$`)
+	`POST /api/push/(subscribe|unsubscribe|test)|DELETE /api/push/devices/[^/]+|` +
+	`POST /api/phones/pairing|(PATCH|DELETE) /api/phones/[^/]+|POST /api/phones/[^/]+/test)$`)
 
 // Writes operators may also make: operate apps and handle incidents, not configure.
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +

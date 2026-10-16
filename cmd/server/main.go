@@ -39,6 +39,7 @@ import (
 	"fleetwatch/internal/server/logs"
 	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
+	"fleetwatch/internal/server/mobile"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/push"
@@ -274,6 +275,34 @@ func serve() error {
 		v, err := appSvc.Get(appID)
 		return override, err != nil || v.Flags.Notifications
 	}
+	// Phones running the Fleetwatch Notifications app: every alert that passes the
+	// notification rules, limited to the servers each person can see.
+	phones := mobile.New(d)
+	phones.Scope = func(memberID string) ([]string, bool) {
+		if memberID == "" {
+			return nil, true
+		}
+		m, err := authSvc.GetMember(memberID)
+		if err != nil || m.Disabled {
+			return nil, false
+		}
+		return m.Servers, true
+	}
+	notifier.Mirror = func(msg notify.Message, serverID, appID string) {
+		kind := "notice"
+		switch msg.Details.Event {
+		case "incident.opened":
+			kind = "incident"
+		case "incident.resolved":
+			kind = "resolved"
+		}
+		phones.Alert(mobile.Message{Kind: kind, Title: msg.Title, Body: msg.Body, Severity: msg.Severity, IncidentID: msg.Details.IncidentID, ServerID: serverID, URL: msg.Link})
+	}
+	go func() {
+		for range time.Tick(time.Hour) {
+			phones.Prune()
+		}
+	}()
 	onCall := oncall.New(d, nil)
 	onCall.Incidents, onCall.Muted = incStore, maint.Active
 	onCall.PublicURL = func() string { return os.Getenv("OPS_PUBLIC_URL") }
@@ -338,20 +367,28 @@ func serve() error {
 		if p.ID == oncall.Owner {
 			memberID = ""
 		}
+		// The phone app first (it rings even with the browser closed), then browser
+		// push and email. The page counts as delivered if any of them got through.
+		reached := phones.ToPerson(memberID, mobile.Message{Kind: "oncall", Title: "On call: " + x.Title,
+			Body: x.Type + " on " + serverName(x.ServerID) + "." + why, Severity: "critical", IncidentID: x.ID, ServerID: x.ServerID, URL: ackURL}) > 0
 		var errs []error
 		if err := pushSvc.SendTo(ctx, memberID, push.Message{Title: "On call: " + x.Title, Body: x.Type + " on " + serverName(x.ServerID) + "." + why,
-			URL: ackURL, Tag: "oncall-" + x.ID, Severity: "critical"}); err != nil {
+			URL: ackURL, Tag: "oncall-" + x.ID, Severity: "critical"}); err == nil {
+			reached = true
+		} else {
 			errs = append(errs, err)
 		}
 		if p.Email != "" && status.Mail.Ready() {
 			text := fmt.Sprintf("%s\n%s on %s.%s\n\nI'm on it (stops paging): %s\nDashboard: %s/#/incidents\n",
 				x.Title, x.Type, serverName(x.ServerID), why, ackURL, strings.TrimRight(os.Getenv("OPS_PUBLIC_URL"), "/"))
-			if err := status.Mail.Send(ctx, statuspage.Mail{To: []string{p.Email}, Subject: "[On call] " + x.Title, Text: text}); err != nil {
+			if err := status.Mail.Send(ctx, statuspage.Mail{To: []string{p.Email}, Subject: "[On call] " + x.Title, Text: text}); err == nil {
+				reached = true
+			} else {
 				errs = append(errs, err)
 			}
 		}
-		if len(errs) == 2 || (len(errs) == 1 && (p.Email == "" || !status.Mail.Ready())) {
-			return errors.Join(errs...)
+		if !reached {
+			return errors.Join(append(errs, errors.New("no phone, browser or email reaches "+p.Name))...)
 		}
 		return nil
 	}
@@ -552,7 +589,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

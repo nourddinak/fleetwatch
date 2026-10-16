@@ -100,8 +100,8 @@ export function PushCard({ enabled, onChange, personal }: { enabled: boolean; on
   return (
     <Card>
       <SectionTitle
-        title="Push notifications"
-        sub={personal ? "On-call pages on your phone. Turn it on from each phone that should ring." : "Alerts straight to your phone from this dashboard: no ntfy, Telegram or Discord needed. Turn it on from each phone that should get them."}
+        title="Browser push"
+        sub={personal ? "On-call pages on your phone. Turn it on from each phone that should ring." : "Without the app: alerts through the browser (installed as a home-screen app on the phone). The Mobile notifications app above is more reliable in the background."}
         action={personal ? undefined : <Toggle checked={enabled} disabled={list.length === 0 || !!busy} onChange={setEnabled} />}
       />
       {!isPhone ? (

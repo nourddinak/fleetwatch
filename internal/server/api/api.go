@@ -25,6 +25,7 @@ import (
 	"fleetwatch/internal/server/logs"
 	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
+	"fleetwatch/internal/server/mobile"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/push"
@@ -61,6 +62,7 @@ type Deps struct {
 	Forecast   *forecast.Service
 	Security   *security.Service
 	OnCall     *oncall.Service
+	Mobile     *mobile.Service
 }
 
 type server struct{ Deps }
@@ -117,6 +119,9 @@ func New(d Deps) http.Handler {
 	if d.OnCall != nil {
 		s.onCallRoutes(mux)
 	}
+	if d.Mobile != nil {
+		s.phoneRoutes(mux)
+	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))
@@ -169,7 +174,8 @@ func sameOriginWrites(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			// Unsubscribe links carry their own secret and are posted by mail apps.
-			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" {
+			// The phone app uses its own bearer token, never cookies.
+			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") {
 				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
 				return
 			}

@@ -13,3 +13,14 @@ internal/server/agentbin/bin/ops-agent-*
 .claude/
 PLAN.md
 prototyp/
+
+# Android app signing key and its passwords: never commit (back it up!)
+.secrets/
+*.jks
+*.keystore
+mobile/android/app/build/
+mobile/android/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/src/main/assets/public/
+mobile/release/
