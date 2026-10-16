@@ -28,6 +28,7 @@ import (
 	"fleetwatch/internal/server/anomaly"
 	"fleetwatch/internal/server/api"
 	"fleetwatch/internal/server/apps"
+	"fleetwatch/internal/server/audit"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
@@ -216,6 +217,11 @@ func serve() error {
 		slog.Warn("no admin account yet: open the dashboard and enter this one-time setup code", "setup_code", code)
 	}
 
+	if p, err := authSvc.Profile(); err == nil {
+		if n, err := audit.Backfill(d, cmp.Or(p.DisplayName, p.Username)); err == nil && n > 0 {
+			slog.Info("named who did past actions", "events", n)
+		}
+	}
 	bus := live.NewBus()
 	store := metrics.NewStore(d, metrics.ServerKind)
 	appStore := metrics.NewStore(d, metrics.AppKind)

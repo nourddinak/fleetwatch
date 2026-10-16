@@ -104,6 +104,23 @@ func (s *server) activityOf(r audit.Row) Activity {
 		a.Text = "changed the " + strings.ReplaceAll(rest, "_", " ") + " settings"
 	case verb == "statuspage":
 		a.Text = map[string]string{"notice": "posted a status page notice", "save": "edited a status page"}[rest]
+	case r.Action == "oncall.save":
+		a.Text = "changed the on-call schedule"
+		if strings.HasPrefix(r.Detail, "enabled=false") {
+			a.Text = "turned on-call paging off"
+		}
+	case r.Action == "security.expected_port":
+		a.Text = "marked port " + r.Detail + " on " + srv(r.Target) + " as meant to be public"
+	case r.Action == "security.key_label":
+		a.Text = "named an SSH key “" + r.Detail + "”"
+	case r.Action == "notify.channel":
+		a.Text = "changed the " + r.Target + " notifications"
+	case r.Action == "token.create" || r.Action == "token.revoke":
+		a.Text = map[string]string{"token.create": "made", "token.revoke": "revoked"}[r.Action] + " the API token " + r.Detail
+	case r.Action == "discovery.reset_ignored":
+		a.Text = "brought back ignored discoveries"
+	case r.Action == "statuspage.delete":
+		a.Text = "deleted a status page"
 	case r.Action == "runbook.save":
 		a.Text = "updated the runbook for " + incidents.Labels[r.Target]
 	case r.Action == "postmortem.save":

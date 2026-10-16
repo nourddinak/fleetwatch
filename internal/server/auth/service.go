@@ -276,7 +276,9 @@ func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) 
 	}
 	s.lim.reset(c.IP)
 	if sess.MemberID != "" {
-		method += " (team member)"
+		if m, err := s.GetMember(sess.MemberID); err == nil {
+			method += " (team member " + m.Username + ")"
+		}
 	}
 	token, _, err := s.createSession(c, false, sess.MemberID)
 	if err == nil {
