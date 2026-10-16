@@ -104,7 +104,7 @@ cd web; npm run dev          # UI on Vite, proxies /api and /ws to an ops-server
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `go vet ./...`, `go test ./...` and `npx tsc --noEmit` (in `web/`) before opening a PR.
+Issues and pull requests are welcome: fork the repository, make your change on a branch and open a pull request. Every change is reviewed before it is merged; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Security issues:** report them privately through GitHub's "Report a vulnerability" button on this repository, not in public issues.
 
