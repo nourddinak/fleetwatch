@@ -134,6 +134,7 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 			Server   string `json:"server"`
 			FirstAt  int64  `json:"firstAt"`
 			LastAt   int64  `json:"lastAt"`
+			By       string `json:"by,omitempty"` // who acknowledged or muted it
 		}
 		out := []item{}
 		if s.Incidents != nil {
@@ -146,7 +147,7 @@ func (s *server) phoneRoutes(mux *http.ServeMux) {
 				if rec, err := s.Fleet.Reg.Get(x.ServerID); err == nil {
 					name = rec.Name
 				}
-				out = append(out, item{x.ID, x.Title, x.Type, x.Severity, x.Status, name, x.FirstAt, x.LastAt})
+				out = append(out, item{x.ID, x.Title, x.Type, x.Severity, x.Status, name, x.FirstAt, x.LastAt, x.ActedBy()})
 			}
 		}
 		writeJSON(w, http.StatusOK, out)

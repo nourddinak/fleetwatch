@@ -229,6 +229,12 @@ func TestAdminActions(t *testing.T) {
 			t.Fatalf("%s: %+v %v", a, y, err)
 		}
 	}
+	if y, _ := e.s.Get(x.ID); y.ActedBy() != "admin" {
+		t.Fatalf("acted by %q", y.ActedBy())
+	}
+	if by := (Incident{Timeline: []entry{{Text: "Acknowledged by Sam (phone)"}, {Text: "Updated: RAM"}}}).ActedBy(); by != "Sam" {
+		t.Fatalf("acted by %q", by)
+	}
 	if _, err := e.s.Act(x.ID, "explode", "", ""); err == nil {
 		t.Fatal("unknown action accepted")
 	}

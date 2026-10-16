@@ -98,6 +98,19 @@ func NewStore(d *sql.DB, bus *live.Bus) *Store { return &Store{db: d, Bus: bus, 
 const cols = `id, type, key, severity, status, resolved_by, title, COALESCE(server_id, ''), app_id, occurrences, first_at, last_at,
 	COALESCE(resolved_at, 0), COALESCE(muted_until, 0), resolution, samples, timeline`
 
+// ActedBy is who last acknowledged or muted the incident, from its timeline ("" if nobody).
+func (x Incident) ActedBy() string {
+	for i := len(x.Timeline) - 1; i >= 0; i-- {
+		for _, p := range []string{"Acknowledged by ", "Muted by "} {
+			if rest, ok := strings.CutPrefix(x.Timeline[i].Text, p); ok {
+				name, _, _ := strings.Cut(rest, " for 24 hours")
+				return strings.TrimSuffix(name, " (phone)")
+			}
+		}
+	}
+	return ""
+}
+
 func scan(sc interface{ Scan(...any) error }) (Incident, error) {
 	var x Incident
 	var app sql.NullString
