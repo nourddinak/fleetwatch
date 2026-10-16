@@ -198,6 +198,8 @@ export function StatusEditor() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preview, setPreview] = useState(false);
+  const [logoUrl, setLogoUrl] = useState("");
+  const [fetching, setFetching] = useState(false);
   useEffect(() => {
     if (saved.data) setC(saved.data);
   }, [saved.data]);
@@ -232,6 +234,18 @@ export function StatusEditor() {
       toast((e as ApiError).message, "err");
     }
     setBusy(false);
+  };
+  // The server downloads the image once and stores it like an upload.
+  const fetchLogo = async () => {
+    setFetching(true);
+    try {
+      const { logo } = await api<{ logo: string }>("POST", "/api/status-pages/logo", { url: logoUrl.trim() });
+      set({ logo });
+      setLogoUrl("");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setFetching(false);
   };
   const pickLogo = (f?: File) => {
     if (!f) return;
@@ -322,14 +336,25 @@ sudo systemctl reload caddy`}</CodeBlock>
               <Field label="Intro text" className="sm:col-span-2" hint="Shown under the overall status.">
                 <Textarea rows={2} value={c.description} maxLength={1000} onChange={(e) => set({ description: e.target.value })} />
               </Field>
-              <Field label="Logo" hint="PNG, JPEG, WebP or SVG, up to 256 KB.">
-                <div className="flex items-center gap-2">
+              <Field label="Logo" className="sm:col-span-2" hint="PNG, JPEG, WebP or SVG, up to 256 KB. Upload a file or paste an image link; a linked image is copied here, so it keeps working if the original moves.">
+                <div className="flex flex-wrap items-center gap-2">
                   {c.logo && <img src={c.logo} alt="" className="h-9 max-w-[90px] rounded object-contain" />}
                   <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-3.5 py-2 text-xs hover:bg-surface2">
                     <Upload size={13} /> {c.logo ? "Change" : "Upload"}
                     <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={(e) => pickLogo(e.target.files?.[0])} />
                   </label>
                   {c.logo && <IconButton aria-label="Remove logo" onClick={() => set({ logo: "" })}><X size={14} /></IconButton>}
+                  <span className="text-xs text-muted">or</span>
+                  <Input
+                    type="url"
+                    aria-label="Logo image link"
+                    placeholder="https://example.com/logo.png"
+                    value={logoUrl}
+                    onChange={(e) => setLogoUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && logoUrl.trim() && (e.preventDefault(), fetchLogo())}
+                    className="min-w-0 flex-1"
+                  />
+                  <Button size="sm" variant="secondary" disabled={!logoUrl.trim() || fetching} onClick={fetchLogo}>{fetching && <Spinner size={14} />} Use link</Button>
                 </div>
               </Field>
               <Field label="Brand colour" hint="Used for the banner and the uptime bars.">
