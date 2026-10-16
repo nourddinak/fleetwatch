@@ -23,9 +23,6 @@ jobs:
       # The server embeds the UI, so it must be built before Go compiles.
       - run: npm ci && npx tsc --noEmit -p . && npm run build
         working-directory: web
-      # The phone app's screens.
-      - run: npm ci && npx tsc -b
-        working-directory: mobile
       - run: test -z "$(gofmt -l cmd internal web deploy)"
       - run: go vet ./...
       - run: go test ./...

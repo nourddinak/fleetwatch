@@ -18,9 +18,6 @@ prototyp/
 .secrets/
 *.jks
 *.keystore
-mobile/android/app/build/
-mobile/android/build/
-mobile/android/.gradle/
-mobile/android/local.properties
-mobile/android/app/src/main/assets/public/
-mobile/release/
+
+# The phone app lives only on this machine (not in the public repo)
+mobile/
