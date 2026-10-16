@@ -26,6 +26,7 @@ import (
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
+	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/valid"
 )
@@ -51,6 +52,7 @@ type Deps struct {
 	Domains    *domains.Checker
 	Tokens     *tokens.Service
 	Push       *push.Service
+	Status     *statuspage.Service
 }
 
 type server struct{ Deps }
@@ -94,6 +96,9 @@ func New(d Deps) http.Handler {
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
 		}))
 	}
+	if d.Status != nil {
+		s.statusRoutes(mux)
+	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))
@@ -107,7 +112,11 @@ func New(d Deps) http.Handler {
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	})
 	mux.Handle("/", static(d.UI))
-	return securityHeaders(sameOriginWrites(mux))
+	var h http.Handler = mux
+	if d.Status != nil {
+		h = s.statusHost(h)
+	}
+	return securityHeaders(sameOriginWrites(h))
 }
 
 func static(ui fs.FS) http.Handler {

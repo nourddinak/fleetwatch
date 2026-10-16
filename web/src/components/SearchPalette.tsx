@@ -22,6 +22,8 @@ export const PAGES = [
   { to: "/applications", label: "Applications" },
   { to: "/logs", label: "Logs" },
   { to: "/incidents", label: "Incidents" },
+  { to: "/domains", label: "Domains" },
+  { to: "/status-page", label: "Status page" },
   { to: "/discoveries", label: "Discoveries" },
   { to: "/metrics", label: "Metrics" },
   { to: "/notifications", label: "Notifications" },

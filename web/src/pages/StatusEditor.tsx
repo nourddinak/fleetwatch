@@ -1,0 +1,353 @@
+import { useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, ExternalLink, Eye, Plus, Trash2, Upload, X } from "lucide-react";
+import { api, useApi, type ApiError } from "../api/client";
+import { useStore } from "../store/store";
+import { Badge, Button, Card, CodeBlock, CopyButton, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
+import { StatusView, type PublicStatus } from "./StatusPage";
+
+interface Component {
+  kind: "app" | "server";
+  id: string;
+  name: string;
+  description: string;
+}
+interface Group {
+  name: string;
+  components: Component[];
+}
+interface Notice {
+  id: string;
+  title: string;
+  body: string;
+  status: "info" | "maintenance" | "degraded" | "outage" | "resolved";
+  start: number;
+  end: number;
+  createdAt: number;
+}
+interface Config {
+  enabled: boolean;
+  title: string;
+  description: string;
+  logo: string;
+  accent: string;
+  theme: "auto" | "light" | "dark";
+  homeUrl: string;
+  homeLabel: string;
+  footer: string;
+  poweredBy: boolean;
+  domain: string;
+  historyDays: number;
+  showUptime: boolean;
+  groups: Group[];
+  notices: Notice[];
+  updatedAt?: number;
+}
+
+const NOTICE_TONE = { info: "info", maintenance: "info", degraded: "warn", outage: "crit", resolved: "ok" } as const;
+// datetime-local works in local time without a zone.
+const toLocal = (ms: number) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "");
+const fromLocal = (s: string) => (s ? new Date(s).getTime() : 0);
+
+export function StatusEditor() {
+  const { servers, apps, getServer, toast } = useStore();
+  const saved = useApi<Config>("/api/status-page");
+  const [c, setC] = useState<Config | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [preview, setPreview] = useState(false);
+  useEffect(() => {
+    if (saved.data) setC(saved.data);
+  }, [saved.data]);
+
+  if (saved.error) return <ErrorState message={saved.error} onRetry={saved.reload} />;
+  if (!c || !saved.data) return <LoadingState />;
+  const dirty = JSON.stringify(c) !== JSON.stringify(saved.data);
+  const set = (p: Partial<Config>) => setC({ ...c, ...p });
+  const setGroup = (gi: number, g: Group | null) => set({ groups: g ? c.groups.map((x, i) => (i === gi ? g : x)) : c.groups.filter((_, i) => i !== gi) });
+  const move = <T,>(list: T[], i: number, d: number) => {
+    const out = [...list];
+    [out[i], out[i + d]] = [out[i + d], out[i]];
+    return out;
+  };
+  const used = new Set(c.groups.flatMap((g) => g.components.map((x) => `${x.kind}:${x.id}`)));
+  const addComponent = (gi: number) => {
+    const app = apps.find((a) => !used.has(`app:${a.id}`));
+    const srv = servers.find((s) => !used.has(`server:${s.id}`));
+    const x: Component | null = app ? { kind: "app", id: app.id, name: app.name, description: "" } : srv ? { kind: "server", id: srv.id, name: srv.name, description: "" } : null;
+    if (!x) return toast("Every app and server is already on the page", "err");
+    setGroup(gi, { ...c.groups[gi], components: [...c.groups[gi].components, x] });
+  };
+
+  const save = async (next = c) => {
+    setBusy(true);
+    try {
+      const out = await api<Config>("PUT", "/api/status-page", next);
+      saved.setData(out);
+      setC(out);
+      toast("Status page saved");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  const pickLogo = (f?: File) => {
+    if (!f) return;
+    if (f.size > 256 * 1024) return toast("Logo must be at most 256 KB", "err");
+    const r = new FileReader();
+    r.onload = () => set({ logo: String(r.result) });
+    r.readAsDataURL(f);
+  };
+  const saveNotice = (n: Notice) => {
+    const exists = c.notices.some((x) => x.id === n.id);
+    set({ notices: exists ? c.notices.map((x) => (x.id === n.id ? n : x)) : [n, ...c.notices] });
+    setNotice(null);
+  };
+  const publicUrl = `${location.origin}/status`;
+
+  const sample: PublicStatus = {
+    ...c,
+    overall: "operational",
+    notices: c.notices.filter((n) => n.status !== "resolved").map((n) => ({ ...n, end: n.end || undefined })),
+    groups: c.groups.map((g) => ({
+      name: g.name,
+      components: g.components.map((x) => ({
+        name: x.name,
+        description: x.description,
+        status: "operational",
+        uptime: c.showUptime ? 99.95 : undefined,
+        days: c.showUptime ? Array.from({ length: c.historyDays }, (_, i) => ({ date: new Date(Date.now() - (c.historyDays - 1 - i) * 86_400_000).toISOString().slice(0, 10), status: i % 37 === 20 ? ("degraded" as const) : ("operational" as const) })) : undefined,
+      })),
+    })),
+    updatedAt: Date.now(),
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Status page"
+        sub="A public page your users can check when something is down. Only the names and texts you set here are shown, never hostnames, IPs or incident details."
+        actions={
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setPreview(true)}><Eye size={14} /> Preview</Button>
+            {saved.data.enabled && (
+              <a href="/status" target="_blank" rel="noreferrer">
+                <Button size="sm" variant="secondary"><ExternalLink size={14} /> Open</Button>
+              </a>
+            )}
+            <Button size="sm" disabled={!dirty || busy} onClick={() => save()}>{busy && <Spinner size={14} />} Save</Button>
+          </>
+        }
+      />
+      <Gate>
+        <div className="grid gap-6 pb-20 xl:grid-cols-2">
+          <Card>
+            <SectionTitle title="Publish" />
+            <ToggleRow label="Status page is public" desc="Anyone with the address can see it, without signing in." checked={c.enabled} onChange={(v) => set({ enabled: v })} />
+            <Field label="Address" className="mt-2">
+              <div className="flex items-center gap-2">
+                <Input readOnly value={publicUrl} />
+                <CopyButton text={publicUrl} />
+              </div>
+            </Field>
+            <Field label="Own domain (optional)" className="mt-4" hint="That name then shows only the status page; the dashboard is not reachable through it.">
+              <Input value={c.domain} placeholder="status.example.com" onChange={(e) => set({ domain: e.target.value })} />
+            </Field>
+            {c.domain && (
+              <div className="mt-3 space-y-2 text-xs text-muted">
+                <p>Point the name's DNS at this server, then on this server run:</p>
+                <CodeBlock>{`sudo ops-server caddy-config ${c.domain.trim().toLowerCase()} | sudo tee /etc/caddy/fleetwatch-status.caddy
+echo 'import /etc/caddy/fleetwatch-status.caddy' | sudo tee -a /etc/caddy/Caddyfile
+sudo systemctl reload caddy`}</CodeBlock>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionTitle title="Look" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Title" className="sm:col-span-2">
+                <Input value={c.title} maxLength={80} onChange={(e) => set({ title: e.target.value })} />
+              </Field>
+              <Field label="Intro text" className="sm:col-span-2" hint="Shown under the overall status.">
+                <Textarea rows={2} value={c.description} maxLength={1000} onChange={(e) => set({ description: e.target.value })} />
+              </Field>
+              <Field label="Logo" hint="PNG, JPEG, WebP or SVG, up to 256 KB.">
+                <div className="flex items-center gap-2">
+                  {c.logo && <img src={c.logo} alt="" className="h-9 max-w-[90px] rounded object-contain" />}
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-3.5 py-2 text-xs hover:bg-surface2">
+                    <Upload size={13} /> {c.logo ? "Change" : "Upload"}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={(e) => pickLogo(e.target.files?.[0])} />
+                  </label>
+                  {c.logo && <IconButton aria-label="Remove logo" onClick={() => set({ logo: "" })}><X size={14} /></IconButton>}
+                </div>
+              </Field>
+              <Field label="Brand colour" hint="Used for the banner and the uptime bars.">
+                <div className="flex items-center gap-2">
+                  <input type="color" value={c.accent} onChange={(e) => set({ accent: e.target.value })} className="h-10 w-12 cursor-pointer rounded-lg border border-line bg-transparent" aria-label="Brand colour" />
+                  <Input value={c.accent} maxLength={7} onChange={(e) => set({ accent: e.target.value })} />
+                </div>
+              </Field>
+              <Field label="Theme">
+                <Segmented value={c.theme} onChange={(v) => set({ theme: v })} options={[{ value: "auto", label: "Visitor's choice" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} />
+              </Field>
+              <Field label="History">
+                <Segmented value={String(c.historyDays)} onChange={(v) => set({ historyDays: Number(v) })} options={["30", "60", "90"].map((d) => ({ value: d, label: `${d} days` }))} />
+              </Field>
+              <Field label="Website link">
+                <Input value={c.homeUrl} placeholder="https://example.com" onChange={(e) => set({ homeUrl: e.target.value })} />
+              </Field>
+              <Field label="Link text">
+                <Input value={c.homeLabel} placeholder="Website" maxLength={40} onChange={(e) => set({ homeLabel: e.target.value })} />
+              </Field>
+              <Field label="Footer" className="sm:col-span-2" hint="Support contact, terms, anything.">
+                <Textarea rows={2} value={c.footer} maxLength={500} onChange={(e) => set({ footer: e.target.value })} />
+              </Field>
+            </div>
+            <ToggleRow label="Show uptime history" desc="Daily bars and the uptime percentage for each component." checked={c.showUptime} onChange={(v) => set({ showUptime: v })} />
+            <ToggleRow label='Show "Powered by Fleetwatch"' checked={c.poweredBy} onChange={(v) => set({ poweredBy: v })} />
+          </Card>
+
+          <Card className="xl:col-span-2">
+            <SectionTitle
+              title="Components"
+              sub="What visitors see, in groups. Pick an app or a server and give it a public name."
+              action={<Button size="sm" variant="secondary" onClick={() => set({ groups: [...c.groups, { name: c.groups.length ? "" : "Services", components: [] }] })}><Plus size={14} /> Group</Button>}
+            />
+            {c.groups.length === 0 && <p className="py-6 text-center text-sm text-muted">No components yet. Add a group, then add apps or servers to it.</p>}
+            <div className="space-y-4">
+              {c.groups.map((g, gi) => (
+                <div key={gi} className="rounded-2xl border border-line p-4">
+                  <div className="flex items-center gap-2">
+                    <Input value={g.name} placeholder="Group name (optional)" maxLength={60} onChange={(e) => setGroup(gi, { ...g, name: e.target.value })} />
+                    <IconButton aria-label="Move group up" disabled={gi === 0} onClick={() => set({ groups: move(c.groups, gi, -1) })}><ArrowUp size={14} /></IconButton>
+                    <IconButton aria-label="Move group down" disabled={gi === c.groups.length - 1} onClick={() => set({ groups: move(c.groups, gi, 1) })}><ArrowDown size={14} /></IconButton>
+                    <IconButton aria-label="Remove group" onClick={() => setGroup(gi, null)}><Trash2 size={14} /></IconButton>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {g.components.map((x, ci) => {
+                      const upd = (p: Partial<Component> | null) =>
+                        setGroup(gi, { ...g, components: p ? g.components.map((y, i) => (i === ci ? { ...y, ...p } : y)) : g.components.filter((_, i) => i !== ci) });
+                      return (
+                        <div key={ci} className="grid gap-2 rounded-xl bg-surface2 p-3 md:grid-cols-[1fr_1fr_1.4fr_auto]">
+                          <Select
+                            aria-label="App or server"
+                            value={`${x.kind}:${x.id}`}
+                            onChange={(e) => {
+                              const [kind, id] = e.target.value.split(/:(.*)/s) as [Component["kind"], string];
+                              const name = kind === "app" ? apps.find((a) => a.id === id)?.name : servers.find((s) => s.id === id)?.name;
+                              upd({ kind, id, name: x.name && x.name !== (x.kind === "app" ? apps.find((a) => a.id === x.id)?.name : getServer(x.id)?.name) ? x.name : name ?? x.name });
+                            }}
+                          >
+                            {!apps.some((a) => a.id === x.id) && !servers.some((s) => s.id === x.id) && <option value={`${x.kind}:${x.id}`}>(deleted {x.kind})</option>}
+                            <optgroup label="Applications">
+                              {apps.map((a) => (
+                                <option key={a.id} value={`app:${a.id}`} disabled={used.has(`app:${a.id}`) && !(x.kind === "app" && x.id === a.id)}>
+                                  {a.name} · {getServer(a.serverId)?.name ?? "?"}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Whole servers">
+                              {servers.map((s) => (
+                                <option key={s.id} value={`server:${s.id}`} disabled={used.has(`server:${s.id}`) && !(x.kind === "server" && x.id === s.id)}>{s.name}</option>
+                              ))}
+                            </optgroup>
+                          </Select>
+                          <Input aria-label="Public name" placeholder="Public name" value={x.name} maxLength={60} onChange={(e) => upd({ name: e.target.value })} />
+                          <Input aria-label="Description" placeholder="Description (optional)" value={x.description} maxLength={200} onChange={(e) => upd({ description: e.target.value })} />
+                          <div className="flex items-center gap-1">
+                            <IconButton aria-label="Move up" disabled={ci === 0} onClick={() => setGroup(gi, { ...g, components: move(g.components, ci, -1) })}><ArrowUp size={14} /></IconButton>
+                            <IconButton aria-label="Move down" disabled={ci === g.components.length - 1} onClick={() => setGroup(gi, { ...g, components: move(g.components, ci, 1) })}><ArrowDown size={14} /></IconButton>
+                            <IconButton aria-label="Remove" onClick={() => upd(null)}><Trash2 size={14} /></IconButton>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Button size="sm" variant="ghost" className="mt-2" onClick={() => addComponent(gi)}><Plus size={14} /> Add component</Button>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="xl:col-span-2">
+            <SectionTitle
+              title="Notices"
+              sub="Announcements at the top of the page: planned maintenance, an ongoing problem and its updates. Resolved notices stay visible for a day."
+              action={<Button size="sm" variant="secondary" onClick={() => setNotice({ id: "", title: "", body: "", status: "info", start: Date.now(), end: 0, createdAt: Date.now() })}><Plus size={14} /> Notice</Button>}
+            />
+            {c.notices.length === 0 && <p className="py-6 text-center text-sm text-muted">No notices.</p>}
+            <div className="divide-y divide-line">
+              {c.notices.map((n) => (
+                <div key={n.id || n.createdAt} className="flex flex-wrap items-center gap-3 py-3">
+                  <Badge tone={NOTICE_TONE[n.status]} className="capitalize">{n.status}</Badge>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{n.title}</div>
+                    <div className="text-xs text-muted">{new Date(n.start).toLocaleString()}{n.end ? ` – ${new Date(n.end).toLocaleString()}` : ""}</div>
+                  </div>
+                  {n.status !== "resolved" && <Button size="sm" variant="ghost" onClick={() => saveNotice({ ...n, status: "resolved", end: n.end && n.end < Date.now() ? n.end : Date.now() })}>Resolve</Button>}
+                  <Button size="sm" variant="ghost" onClick={() => setNotice(n)}>Edit</Button>
+                  <IconButton aria-label="Delete notice" onClick={() => set({ notices: c.notices.filter((x) => x !== n) })}><Trash2 size={14} /></IconButton>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+        {dirty && (
+          <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4">
+            <div className="flex items-center gap-3 rounded-full border border-line bg-surface px-4 py-2 text-sm shadow-lg">
+              Unsaved changes
+              <Button size="sm" variant="ghost" onClick={() => setC(saved.data)}>Discard</Button>
+              <Button size="sm" disabled={busy} onClick={() => save()}>{busy && <Spinner size={14} />} Save</Button>
+            </div>
+          </div>
+        )}
+      </Gate>
+
+      {notice && <NoticeDialog notice={notice} onClose={() => setNotice(null)} onSave={saveNotice} />}
+      <Modal open={preview} onClose={() => setPreview(false)} title="Preview (sample history)" wide>
+        <div className="-m-2 max-h-[70vh] overflow-y-auto rounded-2xl bg-bg">
+          <StatusView data={sample} />
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function NoticeDialog({ notice, onClose, onSave }: { notice: Notice; onClose: () => void; onSave: (n: Notice) => void }) {
+  const [n, setN] = useState(notice);
+  const ok = n.title.trim() !== "" && n.start > 0 && (!n.end || n.end >= n.start);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={notice.id || notice.title ? "Edit notice" : "New notice"}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={!ok} onClick={() => onSave({ ...n, id: n.id || `ntc_${Date.now().toString(36)}` })}>Done</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Title">
+          <Input value={n.title} maxLength={120} placeholder="Scheduled maintenance" onChange={(e) => setN({ ...n, title: e.target.value })} />
+        </Field>
+        <Field label="Status">
+          <Segmented value={n.status} onChange={(v) => setN({ ...n, status: v })} options={(["info", "maintenance", "degraded", "outage", "resolved"] as const).map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))} />
+        </Field>
+        <Field label="Details">
+          <Textarea rows={4} value={n.body} maxLength={2000} onChange={(e) => setN({ ...n, body: e.target.value })} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="From">
+            <Input type="datetime-local" value={toLocal(n.start)} onChange={(e) => setN({ ...n, start: fromLocal(e.target.value) })} />
+          </Field>
+          <Field label="Until (optional)" hint="Empty: until you resolve or delete it.">
+            <Input type="datetime-local" value={toLocal(n.end)} onChange={(e) => setN({ ...n, end: fromLocal(e.target.value) })} />
+          </Field>
+        </div>
+        <p className="text-xs text-muted">Save the page afterwards to publish it.</p>
+      </div>
+    </Modal>
+  );
+}

@@ -35,7 +35,7 @@ import (
 )
 
 var ui = fstest.MapFS{
-	"index.html":      {Data: []byte("<html>ui</html>")},
+	"index.html":      {Data: []byte(`<html><title>Fleetwatch</title><div id="root"></div>ui</html>`)},
 	"assets/app-1.js": {Data: []byte("js")},
 }
 
@@ -72,7 +72,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	detector := incidents.NewDetector(incStore, d, hub.Connected, func(string) string { return "" })
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box)}))
+		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Push: push.New(d, box), Status: testStatus(d, incStore, hub, appSvc)}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }
@@ -135,7 +135,7 @@ func TestStaticAndHeaders(t *testing.T) {
 		path, wantBody, wantCache string
 		wantStatus                int
 	}{
-		{"/", "<html>ui</html>", "no-cache", 200},
+		{"/", "ui</html>", "no-cache", 200},
 		{"/assets/app-1.js", "js", "immutable", 200},
 		{"/api/health", "test", "no-store", 200},
 		{"/api/nope", "not found", "no-store", 404},

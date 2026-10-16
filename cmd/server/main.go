@@ -40,6 +40,7 @@ import (
 	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/web"
 )
@@ -394,13 +395,43 @@ func serve() error {
 			}
 		}()
 	}
+	status := statuspage.New(d, incStore)
+	status.AppState = func(id string) (string, string, int64, bool) {
+		v, err := appSvc.Get(id)
+		if err != nil {
+			return "", "", 0, false
+		}
+		state := "operational" // also "unknown": static sites have no process to watch
+		switch {
+		case maint.Active(v.ServerID, v.ID):
+			state = "maintenance"
+		case !hub.Connected(v.ServerID), v.HealthStatus == "failed", v.Status == "offline", v.Status == "stopped", v.Status == "crash-loop":
+			state = "outage"
+		case v.Status == "warning" || v.Status == "starting":
+			state = "degraded"
+		}
+		return state, v.ServerID, v.DiscoveredAt, true
+	}
+	status.ServerState = func(id string) (string, int64, bool) {
+		rec, err := hub.Reg.Get(id)
+		if err != nil {
+			return "", 0, false
+		}
+		switch {
+		case maint.Active(id, ""):
+			return "maintenance", rec.CreatedAt, true
+		case hub.Connected(id):
+			return "operational", rec.CreatedAt, true
+		}
+		return "outage", rec.CreatedAt, true
+	}
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

@@ -12,6 +12,7 @@ Self-hosted monitoring and control for the apps on your own VPSs. One dashboard 
 - **Domains:** SSL certificate (public and on the server) and domain registration expiry, with alerts 14 days ahead.
 - **API tokens and Prometheus:** read-only tokens for scripts and Grafana, `/metrics` for Prometheus.
 - **Maintenance mode:** pause alerts for a server or app while you deploy; a summary is sent if something is still broken afterwards.
+- **Public status page:** a page your users can check when something is down (`/status`, or its own domain), with your logo, colours, texts, chosen apps and servers, 30-90 days of uptime history, and notices for planned maintenance or ongoing problems.
 - **Safe actions:** start, stop, restart and reload, plus commands you define per app. There is no browser shell.
 - **Security:** argon2id passwords, TOTP 2FA, an audit log and encrypted secrets.
 
