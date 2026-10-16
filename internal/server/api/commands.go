@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/apps"
@@ -150,6 +151,9 @@ func (s *server) runCommand(w http.ResponseWriter, r *http.Request, _ auth.Sessi
 		return
 	}
 	s.audit(r, "command.run", run.AppID, run.Name+": "+run.Preview)
+	if s.Detector != nil {
+		s.Detector.Intended(run.AppID, time.Now())
+	}
 	writeJSON(w, http.StatusAccepted, run)
 }
 

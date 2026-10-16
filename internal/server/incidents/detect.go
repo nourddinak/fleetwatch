@@ -67,7 +67,13 @@ type appState struct {
 	restarts int
 	restartT []time.Time // when the restart counter went up
 	hadPorts bool
+	noPorts  time.Time // since when a running app has had no listening port
+	intended time.Time // last start/stop/restart someone asked for from the dashboard
 }
+
+// portGrace is how long a running app may go without its port before it is an
+// incident: restarts and slow starts (builds, migrations, warm-up) take a while.
+const portGrace = 3 * time.Minute
 
 type serverState struct {
 	cpuSince, ramSince time.Time
@@ -242,7 +248,7 @@ func (d *Detector) Apps(serverID string, views []apps.View, now time.Time) {
 		}
 		prev := st.status
 		st.status = v.Status
-		if v.Restarts > st.restarts {
+		if v.Restarts > st.restarts && now.Sub(st.intended) > 2*time.Minute { // not the restarts people asked for
 			for i := 0; i < min(v.Restarts-st.restarts, 100); i++ {
 				st.restartT = append(st.restartT, now)
 			}
@@ -257,12 +263,31 @@ func (d *Detector) Apps(serverID string, views []apps.View, now time.Time) {
 		if v.Status == "online" && len(v.Ports) > 0 {
 			st.hadPorts = true
 		}
+		portless := v.Status == "online" && v.ProcessFound && hadPorts && len(v.Ports) == 0
+		if !portless {
+			st.noPorts = time.Time{}
+		} else if st.noPorts.IsZero() {
+			st.noPorts = now
+		}
+		// Only when the port has been missing for a while, from a process that has been
+		// up for a while: never right after a restart.
+		portGone := portless && now.Sub(st.noPorts) >= portGrace && (v.UptimeSec == 0 || v.UptimeSec >= int64(portGrace/time.Second))
 		d.mu.Unlock()
 
 		d.appDown(serverID, v, prev, first)
 		d.appRestarts(serverID, v, recentRestarts, r)
-		d.appPorts(serverID, v, hadPorts)
+		d.appPorts(serverID, v, portGone)
 		d.appHealth(serverID, v, r)
+	}
+}
+
+// Intended records that someone started, stopped or restarted the app on purpose, so the
+// restart it causes is not counted as a crash.
+func (d *Detector) Intended(appID string, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st := d.apps[appID]; st != nil {
+		st.intended = now
 	}
 }
 
@@ -331,12 +356,12 @@ func (d *Detector) appRestarts(serverID string, v apps.View, recent int, r Rules
 	}
 }
 
-func (d *Detector) appPorts(serverID string, v apps.View, hadPorts bool) {
+func (d *Detector) appPorts(serverID string, v apps.View, gone bool) {
 	k := key("port_unavailable", v.ID)
 	switch {
-	case v.Status == "online" && v.ProcessFound && hadPorts && len(v.Ports) == 0:
+	case gone:
 		d.Store.Ensure(Signal{Type: "port_unavailable", Key: k, Severity: "warning", Title: v.Name + " is running but no longer listening on its port",
-			ServerID: serverID, AppID: v.ID, Sample: "The process is up, but no listening socket was found in the last scan"})
+			ServerID: serverID, AppID: v.ID, Sample: "The process has been up for minutes, but has had no listening socket for 3 minutes or more"})
 	case len(v.Ports) > 0:
 		d.Store.Clear(k, "Listening again on "+portList(v.Ports))
 	}

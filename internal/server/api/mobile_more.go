@@ -135,6 +135,9 @@ func (s *server) mobileMoreRoutes(mux *http.ServeMux) {
 			fail(w, err)
 			return
 		}
+		if s.Detector != nil {
+			s.Detector.Intended(run.AppID, time.Now())
+		}
 		audit.Record(s.DB, audit.Event{Action: "command.run", OK: true, IP: clientIP(r), UserAgent: "phone: " + d.Name, Target: run.AppID, Detail: run.Name + ": " + run.Preview, Actor: me.Name})
 		s.Bus.Publish("activity", s.activityOf(audit.Row{TS: time.Now().UnixMilli(), Action: "command.run", OK: true, Target: run.AppID, Detail: run.Name + ": " + run.Preview, Actor: me.Name}))
 		writeJSON(w, http.StatusAccepted, run)

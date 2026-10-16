@@ -116,7 +116,20 @@ func TestRestartsPortsHealth(t *testing.T) {
 
 	noPorts := view("online", "online", 5)
 	noPorts.Ports = nil
+	// Right after a restart the port is not open yet: no incident, even for a while.
+	noPorts.UptimeSec = 5
 	e.d.Apps("s1", []apps.View{noPorts}, now)
+	noPorts.UptimeSec = 60
+	e.d.Apps("s1", []apps.View{noPorts}, now.Add(time.Minute))
+	if _, ok := e.open(t)["port_unavailable"]; ok {
+		t.Fatal("port incident during a restart")
+	}
+	noPorts.UptimeSec = 400
+	e.d.Apps("s1", []apps.View{noPorts}, now.Add(2*time.Minute))
+	if _, ok := e.open(t)["port_unavailable"]; ok {
+		t.Fatal("port incident before the grace period")
+	}
+	e.d.Apps("s1", []apps.View{noPorts}, now.Add(3*time.Minute))
 	if _, ok := e.open(t)["port_unavailable"]; !ok {
 		t.Fatal("port loss not detected")
 	}
@@ -302,5 +315,19 @@ func TestCommentsRunbooksPostmortem(t *testing.T) {
 	SaveRunbook(e.s.db, "high_ram", "")
 	if _, ok := Runbooks(e.s.db)["high_ram"]; ok {
 		t.Fatal("runbook not removed")
+	}
+}
+
+func TestIntendedRestartsNotCounted(t *testing.T) {
+	e := setup(t)
+	now := time.Now()
+	e.d.Apps("s1", []apps.View{view("online", "online", 0)}, now)
+	for i := 1; i <= 6; i++ { // someone restarts it from the dashboard six times
+		at := now.Add(time.Duration(i) * time.Minute)
+		e.d.Intended("a1", at)
+		e.d.Apps("s1", []apps.View{view("online", "online", i)}, at.Add(5*time.Second))
+	}
+	if _, ok := e.open(t)["repeated_restarts"]; ok {
+		t.Fatal("restarts asked for counted as a crash loop")
 	}
 }
