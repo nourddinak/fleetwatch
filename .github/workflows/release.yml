@@ -26,3 +26,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" bin/ops-server-linux-amd64 bin/ops-server-linux-arm64 bin/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
+      # Keep the release list short: only the newest 5 releases stay (their git tags remain).
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --exclude-drafts --json tagName,createdAt \
+            -q 'sort_by(.createdAt) | reverse | .[5:][] | .tagName' |
+            while read -r tag; do gh release delete "$tag" -y; done
