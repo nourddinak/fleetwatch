@@ -10,11 +10,14 @@ import (
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/incidents"
+	"fleetwatch/internal/server/secret"
 	"fleetwatch/internal/server/statuspage"
 )
 
 func testStatus(d *sql.DB, inc *incidents.Store, hub *fleet.Hub, appSvc *apps.Service) *statuspage.Service {
 	s := statuspage.New(d, inc)
+	box, _ := secret.New(make([]byte, 32))
+	s.Mail = statuspage.NewMailer(d, box)
 	s.AppState = func(id string) (string, string, int64, bool) {
 		v, err := appSvc.Get(id)
 		return "operational", v.ServerID, v.DiscoveredAt, err == nil
@@ -161,5 +164,75 @@ func TestStatusPages(t *testing.T) {
 	}
 	if st, _ := c.do("PUT", "/api/status-pages/"+shopID, page("Shop", "shop", "", true)); st != 404 {
 		t.Errorf("saving a deleted page: %d", st)
+	}
+}
+
+func TestPrivatePagesAndBadge(t *testing.T) {
+	srv := newTestServer(t)
+	c := newClient(t, srv)
+	c.do("POST", "/api/auth/login", creds)
+	page := func(title, slug, access, password string) map[string]any {
+		return map[string]any{"enabled": true, "title": title, "slug": slug, "accent": "#ff0000", "theme": "dark", "historyDays": 30,
+			"access": access, "password": password, "groups": []any{}, "notices": []any{}}
+	}
+	if st, out := c.do("POST", "/api/status-pages", page("Open", "", "public", "")); st != 201 {
+		t.Fatalf("create: %d %v", st, out)
+	}
+	st, out := c.do("POST", "/api/status-pages", page("Clients", "clients", "password", "hunter22"))
+	if st != 201 || out["passwordHash"] != nil || out["hasPassword"] != true {
+		t.Fatalf("password page: %d %v", st, out)
+	}
+	if st, _ := c.do("POST", "/api/status-pages", page("Team", "team", "team", "")); st != 201 {
+		t.Fatal("team page")
+	}
+
+	anon := newClient(t, srv)
+	if st, out := anon.do("GET", "/api/public/status/clients", nil); st != 401 || out["code"] != "locked" || out["title"] != "Clients" || out["groups"] != nil {
+		t.Fatalf("locked page: %d %v", st, out)
+	}
+	if st, _ := anon.do("POST", "/api/public/unlock", map[string]string{"page": "clients", "password": "wrong"}); st != 401 {
+		t.Fatal("wrong password accepted")
+	}
+	if st, _ := anon.do("POST", "/api/public/unlock", map[string]string{"page": "clients", "password": "hunter22"}); st != 204 {
+		t.Fatal("unlock failed")
+	}
+	if st, out := anon.do("GET", "/api/public/status/clients", nil); st != 200 || out["title"] != "Clients" {
+		t.Fatalf("unlocked page: %d %v", st, out)
+	}
+	if st, out := anon.do("GET", "/api/public/status/team", nil); st != 401 || out["code"] != "team" {
+		t.Fatalf("team page for a visitor: %d %v", st, out)
+	}
+	if st, _ := c.do("GET", "/api/public/status/team", nil); st != 200 {
+		t.Fatal("a signed-in user cannot see the team page")
+	}
+
+	badge := func(q string) (int, string) {
+		res, err := srv.Client().Get(srv.URL + "/api/public/badge.svg" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, res.Header.Get("Content-Type") + " " + string(b)
+	}
+	if st, b := badge("?label=API"); st != 200 || !strings.HasPrefix(b, "image/svg+xml") || !strings.Contains(b, ">API<") {
+		t.Fatalf("badge: %d %s", st, b)
+	}
+	if st, _ := badge("?page=clients"); st != 404 {
+		t.Fatal("a private page's badge is public")
+	}
+	// Mail apps post the one-click unsubscribe without an Origin header.
+	req, _ := http.NewRequest("POST", srv.URL+"/api/public/subscribe/remove?t=nothing", nil)
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("one-click unsubscribe refused: %d", res.StatusCode)
+	}
+	// Tokens cannot read subscribers or email settings.
+	if st, _ := anon.do("GET", "/api/settings/smtp", nil); st != 401 {
+		t.Fatal("SMTP settings readable without sign-in")
 	}
 }

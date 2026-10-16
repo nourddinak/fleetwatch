@@ -1,55 +1,24 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowUp, ExternalLink, Eye, Plus, Radio, Trash2, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, Eye, Mail, Plus, Radio, Trash2, Upload, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
 import { StatusView, type PublicStatus } from "./StatusPage";
+import type { Component, Config, Group } from "./statusTypes";
+import { AccessTab, CodeTab, EmailSettings, NoticesTab, ShareTab, SubscribersTab } from "./StatusEditorTabs";
 
-interface Component {
-  kind: "app" | "server";
-  id: string;
-  name: string;
-  description: string;
-}
-interface Group {
-  name: string;
-  components: Component[];
-}
-interface Notice {
-  id: string;
-  title: string;
-  body: string;
-  status: "info" | "maintenance" | "degraded" | "outage" | "resolved";
-  start: number;
-  end: number;
-  createdAt: number;
-}
-interface Config {
-  id: string;
-  slug: string;
-  enabled: boolean;
-  title: string;
-  description: string;
-  logo: string;
-  accent: string;
-  theme: "auto" | "light" | "dark";
-  homeUrl: string;
-  homeLabel: string;
-  footer: string;
-  poweredBy: boolean;
-  domain: string;
-  historyDays: number;
-  showUptime: boolean;
-  groups: Group[];
-  notices: Notice[];
-  updatedAt?: number;
-}
+type Tab = "page" | "components" | "notices" | "subscribers" | "access" | "share" | "code";
+const TABS: { value: Tab; label: string }[] = [
+  { value: "page", label: "Page" },
+  { value: "components", label: "Components" },
+  { value: "notices", label: "Notices" },
+  { value: "subscribers", label: "Subscribers" },
+  { value: "access", label: "Access" },
+  { value: "share", label: "Badge & reports" },
+  { value: "code", label: "Custom code" },
+];
 
-const NOTICE_TONE = { info: "info", maintenance: "info", degraded: "warn", outage: "crit", resolved: "ok" } as const;
-// datetime-local works in local time without a zone.
-const toLocal = (ms: number) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "");
-const fromLocal = (s: string) => (s ? new Date(s).getTime() : 0);
 
 const pageUrl = (slug: string, domain?: string) => (domain ? `https://${domain}` : `${location.origin}/status${slug ? "/" + slug : ""}`);
 
@@ -61,6 +30,8 @@ interface Summary {
   domain: string;
   components: number;
   notices: number;
+  drafts: number;
+  access: "public" | "password" | "team";
   updatedAt: number;
 }
 
@@ -75,6 +46,7 @@ export function StatusPages() {
   const [from, setFrom] = useState("");
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState<Summary | null>(null);
+  const [mail, setMail] = useState(false);
   const hasMain = list.data?.some((p) => p.slug === "") ?? false;
 
   const open = () => {
@@ -98,7 +70,7 @@ export function StatusPages() {
     const name = kind === "app" ? apps.find((a) => a.id === id)?.name : servers.find((s) => s.id === id)?.name;
     try {
       const out = await api<Config>("POST", "/api/status-pages", {
-        title, slug, enabled: false, accent: "#16a34a", theme: "auto", poweredBy: true, historyDays: 90, showUptime: true,
+        title, slug, enabled: false, accent: "#16a34a", theme: "auto", poweredBy: true, historyDays: 90, showUptime: true, access: "public", autoNotices: "off",
         groups: from && name ? [{ name: "", components: [{ kind, id, name, description: "" }] }] : [],
         notices: [],
       });
@@ -124,7 +96,12 @@ export function StatusPages() {
       <PageHeader
         title="Status pages"
         sub="Public pages your users can check when something is down. Make one for everything, one per app or customer, or both; each has its own address, look and contents."
-        actions={<Button size="sm" onClick={open}><Plus size={14} /> New page</Button>}
+        actions={
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setMail(true)}><Mail size={14} /> Email sending</Button>
+            <Button size="sm" onClick={open}><Plus size={14} /> New page</Button>
+          </>
+        }
       />
       <Gate>
         {list.error ? (
@@ -139,7 +116,10 @@ export function StatusPages() {
               <Card key={p.id} className="flex flex-col gap-3">
                 <div className="flex items-start justify-between gap-2">
                   <Link to={`/status-page/${p.id}`} className="min-w-0 truncate font-semibold hover:underline">{p.title}</Link>
-                  {p.enabled ? <Badge tone="ok" dot>Public</Badge> : <Badge>Off</Badge>}
+                  <span className="flex shrink-0 gap-1">
+                    {p.drafts > 0 && <Badge tone="warn">{p.drafts} draft{p.drafts === 1 ? "" : "s"}</Badge>}
+                    {p.enabled ? <Badge tone="ok" dot>{p.access === "password" ? "Password" : p.access === "team" ? "Team only" : "Public"}</Badge> : <Badge>Off</Badge>}
+                  </span>
                 </div>
                 <div className="truncate text-xs text-muted">{pageUrl(p.slug, p.domain)}{p.slug === "" && !p.domain ? " · main page" : ""}</div>
                 <div className="text-xs text-muted">{p.components} component{p.components === 1 ? "" : "s"} · {p.notices} notice{p.notices === 1 ? "" : "s"}</div>
@@ -185,6 +165,9 @@ export function StatusPages() {
           <p className="text-xs text-muted">New pages start turned off, so you can set them up first.</p>
         </div>
       </Modal>
+      <Modal open={mail} onClose={() => setMail(false)} title="Email sending" wide>
+        <EmailSettings />
+      </Modal>
       <ConfirmDialog open={!!del} title="Delete status page?" message={`"${del?.title}" and its notices are deleted, and its address stops working.`} confirmLabel="Delete" danger onConfirm={() => del && remove(del)} onCancel={() => setDel(null)} />
     </>
   );
@@ -196,11 +179,12 @@ export function StatusEditor() {
   const saved = useApi<Config>(`/api/status-pages/${id}`);
   const [c, setC] = useState<Config | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice | null>(null);
   const [preview, setPreview] = useState(false);
   const [logoUrl, setLogoUrl] = useState("");
+  const [tab, setTab] = useState<Tab>("page");
+  // Load each page once; later notice changes merge in without losing unsaved edits.
   useEffect(() => {
-    if (saved.data) setC(saved.data);
+    if (saved.data) setC((x) => (x && x.id === saved.data!.id ? x : saved.data));
   }, [saved.data]);
 
   if (saved.error) return <ErrorState message={saved.error} onRetry={saved.reload} />;
@@ -248,10 +232,9 @@ export function StatusEditor() {
     r.onload = () => set({ logo: String(r.result) });
     r.readAsDataURL(f);
   };
-  const saveNotice = (n: Notice) => {
-    const exists = c.notices.some((x) => x.id === n.id);
-    set({ notices: exists ? c.notices.map((x) => (x.id === n.id ? n : x)) : [n, ...c.notices] });
-    setNotice(null);
+  const onNotices = (notices: Config["notices"]) => {
+    saved.setData((d) => (d ? { ...d, notices } : d));
+    setC((x) => (x ? { ...x, notices } : x));
   };
   const publicUrl = pageUrl(saved.data.slug, saved.data.domain);
   const path = `/status${saved.data.slug ? "/" + saved.data.slug : ""}`;
@@ -260,7 +243,8 @@ export function StatusEditor() {
   const sample: PublicStatus = {
     ...c,
     overall: "operational",
-    notices: c.notices.filter((n) => n.status !== "resolved").map((n) => ({ ...n, end: n.end || undefined })),
+    subscribe: [...(c.subscribe ? ["email"] : []), ...(c.subscribeHooks ? ["webhook"] : [])],
+    notices: c.notices.filter((n) => n.status !== "resolved" && !n.draft).map((n) => ({ ...n, end: n.end || undefined, updates: [...n.updates].reverse() })),
     groups: c.groups.map((g) => ({
       name: g.name,
       components: g.components.map((x) => ({
@@ -293,7 +277,17 @@ export function StatusEditor() {
         }
       />
       <Gate>
-        <div className="grid gap-6 pb-20 xl:grid-cols-2">
+        <div className="mb-5 overflow-x-auto">
+          <Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ ...t, label: t.value === "notices" && c.notices.some((n) => n.draft) ? `${t.label} •` : t.label }))} />
+        </div>
+        <div className="pb-20">
+        {tab === "notices" && <NoticesTab c={c} set={set} onNotices={onNotices} />}
+        {tab === "subscribers" && <SubscribersTab c={c} set={set} />}
+        {tab === "access" && <AccessTab c={c} set={set} />}
+        {tab === "share" && <ShareTab c={c} set={set} pageUrl={publicUrl} savedPublic={saved.data.enabled && saved.data.access === "public"} />}
+        {tab === "code" && <CodeTab c={c} set={set} />}
+        {tab === "page" && (
+        <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <SectionTitle title="Publish" />
             <ToggleRow label="Status page is public" desc="Anyone with the address can see it, without signing in." checked={c.enabled} onChange={(v) => set({ enabled: v })} />
@@ -368,10 +362,14 @@ export function StatusEditor() {
               </Field>
             </div>
             <ToggleRow label="Show uptime history" desc="Daily bars and the uptime percentage for each component." checked={c.showUptime} onChange={(v) => set({ showUptime: v })} />
+            <ToggleRow label="Show response times" desc="A 24-hour chart for apps that have a health check." checked={c.showResponseTime} onChange={(v) => set({ showResponseTime: v })} />
             <ToggleRow label='Show "Powered by Fleetwatch"' checked={c.poweredBy} onChange={(v) => set({ poweredBy: v })} />
           </Card>
+        </div>
+        )}
+        {tab === "components" && (
 
-          <Card className="xl:col-span-2">
+          <Card>
             <SectionTitle
               title="Components"
               sub="What visitors see, in groups. Pick an app or a server and give it a public name."
@@ -433,28 +431,7 @@ export function StatusEditor() {
             </div>
           </Card>
 
-          <Card className="xl:col-span-2">
-            <SectionTitle
-              title="Notices"
-              sub="Announcements at the top of the page: planned maintenance, an ongoing problem and its updates. Resolved notices stay visible for a day."
-              action={<Button size="sm" variant="secondary" onClick={() => setNotice({ id: "", title: "", body: "", status: "info", start: Date.now(), end: 0, createdAt: Date.now() })}><Plus size={14} /> Notice</Button>}
-            />
-            {c.notices.length === 0 && <p className="py-6 text-center text-sm text-muted">No notices.</p>}
-            <div className="divide-y divide-line">
-              {c.notices.map((n) => (
-                <div key={n.id || n.createdAt} className="flex flex-wrap items-center gap-3 py-3">
-                  <Badge tone={NOTICE_TONE[n.status]} className="capitalize">{n.status}</Badge>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{n.title}</div>
-                    <div className="text-xs text-muted">{new Date(n.start).toLocaleString()}{n.end ? ` – ${new Date(n.end).toLocaleString()}` : ""}</div>
-                  </div>
-                  {n.status !== "resolved" && <Button size="sm" variant="ghost" onClick={() => saveNotice({ ...n, status: "resolved", end: n.end && n.end < Date.now() ? n.end : Date.now() })}>Resolve</Button>}
-                  <Button size="sm" variant="ghost" onClick={() => setNotice(n)}>Edit</Button>
-                  <IconButton aria-label="Delete notice" onClick={() => set({ notices: c.notices.filter((x) => x !== n) })}><Trash2 size={14} /></IconButton>
-                </div>
-              ))}
-            </div>
-          </Card>
+        )}
         </div>
         {dirty && (
           <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4">
@@ -467,54 +444,15 @@ export function StatusEditor() {
         )}
       </Gate>
 
-      {notice && <NoticeDialog notice={notice} onClose={() => setNotice(null)} onSave={saveNotice} />}
       <Modal open={preview} onClose={() => setPreview(false)} title="Preview (sample history)" wide>
         <div className="-m-2 max-h-[70vh] overflow-y-auto rounded-2xl bg-bg">
-          <StatusView data={sample} />
+          <StatusView data={sample} preview />
         </div>
       </Modal>
     </>
   );
 }
 
-function NoticeDialog({ notice, onClose, onSave }: { notice: Notice; onClose: () => void; onSave: (n: Notice) => void }) {
-  const [n, setN] = useState(notice);
-  const ok = n.title.trim() !== "" && n.start > 0 && (!n.end || n.end >= n.start);
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={notice.id || notice.title ? "Edit notice" : "New notice"}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={!ok} onClick={() => onSave({ ...n, id: n.id || `ntc_${Date.now().toString(36)}` })}>Done</Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <Field label="Title">
-          <Input value={n.title} maxLength={120} placeholder="Scheduled maintenance" onChange={(e) => setN({ ...n, title: e.target.value })} />
-        </Field>
-        <Field label="Status">
-          <Segmented value={n.status} onChange={(v) => setN({ ...n, status: v })} options={(["info", "maintenance", "degraded", "outage", "resolved"] as const).map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))} />
-        </Field>
-        <Field label="Details">
-          <Textarea rows={4} value={n.body} maxLength={2000} onChange={(e) => setN({ ...n, body: e.target.value })} />
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="From">
-            <Input type="datetime-local" value={toLocal(n.start)} onChange={(e) => setN({ ...n, start: fromLocal(e.target.value) })} />
-          </Field>
-          <Field label="Until (optional)" hint="Empty: until you resolve or delete it.">
-            <Input type="datetime-local" value={toLocal(n.end)} onChange={(e) => setN({ ...n, end: fromLocal(e.target.value) })} />
-          </Field>
-        </div>
-        <p className="text-xs text-muted">Save the page afterwards to publish it.</p>
-      </div>
-    </Modal>
-  );
-}
 
 interface Setup {
   domain: string;

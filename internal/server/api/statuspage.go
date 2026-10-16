@@ -2,12 +2,15 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"html"
 	"io/fs"
 	"net"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/statuspage"
@@ -20,9 +23,80 @@ type pageSummary struct {
 	Title      string `json:"title"`
 	Enabled    bool   `json:"enabled"`
 	Domain     string `json:"domain"`
+	Access     string `json:"access"`
 	Components int    `json:"components"`
 	Notices    int    `json:"notices"`
+	Drafts     int    `json:"drafts"`
 	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+// limiter allows n requests per address per window (public sign-ups, passwords).
+type limiter struct {
+	mu     sync.Mutex
+	n      int
+	window time.Duration
+	hits   map[string][]time.Time
+}
+
+func newLimiter(n int, window time.Duration) *limiter {
+	return &limiter{n: n, window: window, hits: map[string][]time.Time{}}
+}
+
+func (l *limiter) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if len(l.hits) > 10000 { // forget everyone rather than grow without bound
+		l.hits = map[string][]time.Time{}
+	}
+	var keep []time.Time
+	for _, t := range l.hits[key] {
+		if now.Sub(t) < l.window {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= l.n {
+		l.hits[key] = keep
+		return false
+	}
+	l.hits[key] = append(keep, now)
+	return true
+}
+
+var (
+	unlockLimit    = newLimiter(10, 10*time.Minute)
+	subscribeLimit = newLimiter(5, 10*time.Minute)
+)
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if isTLS(r) {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+// pageAccess lets a visitor see a private page, or answers 401 with just enough
+// for the page to show its sign-in screen in its own colours.
+func (s *server) pageAccess(w http.ResponseWriter, r *http.Request, c statuspage.Config) bool {
+	locked := func(code, msg string) bool {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"code": code, "error": msg, "title": c.Title, "logo": c.Logo, "accent": c.Accent, "theme": c.Theme})
+		return false
+	}
+	if c.Access != "password" && c.Access != "team" {
+		return true
+	}
+	// Signed-in dashboard users see every page, password or not.
+	if sess, err := s.Auth.Authenticate(cookieToken(r)); err == nil && !sess.MFAPending {
+		return true
+	}
+	if c.Access == "password" {
+		if ck, err := r.Cookie(statuspage.CookieName(c)); err == nil && s.Status.Unlocked(c, ck.Value) {
+			return true
+		}
+		return locked("locked", "This page needs a password.")
+	}
+	return locked("team", "Only signed-in members of this team can see this page.")
 }
 
 func (s *server) statusRoutes(mux *http.ServeMux) {
@@ -33,21 +107,37 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusNotFound, "not_found", "There is no status page here.")
 			return
 		}
-		w.Header().Set("Access-Control-Allow-Origin", "*") // embeddable in the admin's own sites
+		if !s.pageAccess(w, r, c) {
+			return
+		}
+		if c.Access == "" || c.Access == "public" {
+			w.Header().Set("Access-Control-Allow-Origin", "*") // embeddable in the admin's own sites
+		}
 		writeJSON(w, http.StatusOK, s.Status.Public(c))
 	}
 	mux.HandleFunc("GET /api/public/status", public)
 	s.statusSetupRoutes(mux)
 	mux.HandleFunc("GET /api/public/status/{slug}", public)
+	s.statusPublicExtras(mux)
+	s.statusAdminExtras(mux)
 
 	mux.HandleFunc("GET /api/status-pages", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		out := []pageSummary{}
 		for _, c := range s.Status.Pages() {
-			n := 0
+			n, drafts := 0, 0
 			for _, g := range c.Groups {
 				n += len(g.Components)
 			}
-			out = append(out, pageSummary{c.ID, c.Slug, c.Title, c.Enabled, c.Domain, n, len(c.Notices), c.UpdatedAt})
+			for _, x := range c.Notices {
+				if x.Draft {
+					drafts++
+				}
+			}
+			access := c.Access
+			if access == "" {
+				access = "public"
+			}
+			out = append(out, pageSummary{c.ID, c.Slug, c.Title, c.Enabled, c.Domain, access, n, len(c.Notices), drafts, c.UpdatedAt})
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))
@@ -57,7 +147,7 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusNotFound, "not_found", "Status page not found.")
 			return
 		}
-		writeJSON(w, http.StatusOK, c)
+		writeJSON(w, http.StatusOK, c.Redacted())
 	}))
 	save := func(w http.ResponseWriter, r *http.Request, id string) {
 		var c statuspage.Config
@@ -78,12 +168,12 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 		if saved.Enabled {
 			state = "on"
 		}
-		s.audit(r, "statuspage.save", saved.ID, saved.Title+" ("+state+")")
+		s.audit(r, "statuspage.save", saved.ID, saved.Title+" ("+state+", "+saved.Access+")")
 		status := http.StatusOK
 		if id == "" {
 			status = http.StatusCreated
 		}
-		writeJSON(w, status, saved)
+		writeJSON(w, status, saved.Redacted())
 	}
 	mux.HandleFunc("POST /api/status-pages", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { save(w, r, "") }))
 	mux.HandleFunc("PUT /api/status-pages/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
@@ -103,6 +193,259 @@ func (s *server) statusRoutes(mux *http.ServeMux) {
 	}))
 }
 
+// statusPublicExtras: badge, unlocking password pages, and subscriptions.
+func (s *server) statusPublicExtras(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/public/badge.svg", func(w http.ResponseWriter, r *http.Request) {
+		c, ok := s.Status.Find(requestHost(r), r.URL.Query().Get("page"))
+		if !ok || (c.Access != "" && c.Access != "public") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=120")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write(statuspage.Badge(s.Status.Public(c).Overall, r.URL.Query().Get("label")))
+	})
+	mux.HandleFunc("POST /api/public/unlock", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Page, Password string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if !unlockLimit.allow(clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "locked", "Too many tries. Wait a few minutes.")
+			return
+		}
+		c, ok := s.Status.Find(requestHost(r), in.Page)
+		if !ok || c.Access != "password" {
+			writeError(w, http.StatusNotFound, "not_found", "There is no status page here.")
+			return
+		}
+		if !s.Status.CheckPassword(c, in.Password) {
+			writeError(w, http.StatusUnauthorized, "wrong_password", "Wrong password.")
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: statuspage.CookieName(c), Value: s.Status.UnlockToken(c), Path: "/", MaxAge: 30 * 24 * 3600,
+			HttpOnly: true, Secure: isTLS(r), SameSite: http.SameSiteLaxMode})
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /api/public/subscribe", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Page, Kind, Target string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if !subscribeLimit.allow(clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "locked", "Too many sign-ups from here. Try again later.")
+			return
+		}
+		c, ok := s.Status.Find(requestHost(r), in.Page)
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "There is no status page here.")
+			return
+		}
+		if !s.pageAccess(w, r, c) {
+			return
+		}
+		if err := s.Status.Subscribe(r.Context(), c, in.Kind, in.Target, requestOrigin(r)); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /api/public/subscribe/confirm", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Status.Confirm(r.URL.Query().Get("t"))
+		if err != nil {
+			smallPage(w, http.StatusNotFound, "Link not valid", "This link is not valid any more. Sign up again on the status page.", "")
+			return
+		}
+		smallPage(w, http.StatusOK, "Subscribed", "You will get updates about "+c.Title+".", statuspage.PageURL(c, requestOrigin(r)))
+	})
+	// GET asks first (mail scanners open links); POST unsubscribes, also as the
+	// one-click List-Unsubscribe-Post of mail apps.
+	mux.HandleFunc("GET /api/public/subscribe/remove", func(w http.ResponseWriter, r *http.Request) {
+		t := r.URL.Query().Get("t")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe</title>%s`+
+			`<main><h1>Stop updates?</h1><p>You will not get emails or webhook calls from this status page any more.</p>`+
+			`<form method="post" action="/api/public/subscribe/remove?t=%s"><button>Unsubscribe</button></form></main>`, smallCSS, html.EscapeString(t))
+	})
+	mux.HandleFunc("POST /api/public/subscribe/remove", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Status.Unsubscribe(r.URL.Query().Get("t"))
+		if err != nil {
+			smallPage(w, http.StatusOK, "Already unsubscribed", "This subscription does not exist any more.", "")
+			return
+		}
+		smallPage(w, http.StatusOK, "Unsubscribed", "You will not get updates about "+c.Title+" any more.", "")
+	})
+}
+
+const smallCSS = `<style>body{font:16px system-ui,sans-serif;background:#f4f3ee;color:#111;display:grid;place-items:center;min-height:100vh;margin:0}` +
+	`main{background:#fff;border-radius:16px;padding:32px;max-width:420px;margin:16px}h1{font-size:20px;margin:0 0 8px}` +
+	`button,a.b{display:inline-block;margin-top:16px;background:#111;color:#fff;border:0;border-radius:999px;padding:10px 18px;font:inherit;text-decoration:none;cursor:pointer}</style>`
+
+func smallPage(w http.ResponseWriter, status int, title, msg, link string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	extra := ""
+	if link != "" {
+		extra = `<a class="b" href="` + html.EscapeString(link) + `">Open the status page</a>`
+	}
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title>%s<main><h1>%s</h1><p>%s</p>%s</main>`,
+		html.EscapeString(title), smallCSS, html.EscapeString(title), html.EscapeString(msg), extra)
+}
+
+// statusAdminExtras: notices, subscribers, reports and email settings.
+func (s *server) statusAdminExtras(mux *http.ServeMux) {
+	failNotice := func(w http.ResponseWriter, err error) {
+		switch {
+		case errors.Is(err, statuspage.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "Status page not found.")
+		case errors.Is(err, statuspage.ErrNoNotice):
+			writeError(w, http.StatusNotFound, "not_found", "Notice not found.")
+		case errors.Is(err, statuspage.ErrNoSubscriber):
+			writeError(w, http.StatusNotFound, "not_found", "Subscriber not found.")
+		default:
+			fail(w, err)
+		}
+	}
+	type noticeIn struct {
+		statuspage.Notice
+		Notify bool `json:"notify"`
+	}
+	mux.HandleFunc("POST /api/status-pages/{id}/notices", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in noticeIn
+		if !decode(w, r, &in) {
+			return
+		}
+		in.Auto, in.Maint, in.Updates = "", "", nil
+		n, err := s.Status.AddNotice(r.PathValue("id"), in.Notice, in.Notify)
+		if err != nil {
+			failNotice(w, err)
+			return
+		}
+		s.audit(r, "statuspage.notice", r.PathValue("id"), n.Title)
+		writeJSON(w, http.StatusCreated, n)
+	}))
+	mux.HandleFunc("PUT /api/status-pages/{id}/notices/{nid}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in noticeIn
+		if !decode(w, r, &in) {
+			return
+		}
+		in.ID = r.PathValue("nid")
+		n, err := s.Status.EditNotice(r.PathValue("id"), in.Notice, in.Notify)
+		if err != nil {
+			failNotice(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, n)
+	}))
+	mux.HandleFunc("POST /api/status-pages/{id}/notices/{nid}/updates", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct {
+			Stage, Body string
+			Notify      bool
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		n, err := s.Status.PostUpdate(r.PathValue("id"), r.PathValue("nid"), statuspage.NoticeUpdate{Stage: in.Stage, Body: in.Body}, in.Notify)
+		if err != nil {
+			failNotice(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, n)
+	}))
+	mux.HandleFunc("DELETE /api/status-pages/{id}/notices/{nid}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Status.DeleteNotice(r.PathValue("id"), r.PathValue("nid")); err != nil {
+			failNotice(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.HandleFunc("GET /api/status-pages/{id}/subscribers", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		list, err := s.Status.Subscribers(r.PathValue("id"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	}))
+	mux.HandleFunc("DELETE /api/status-pages/{id}/subscribers/{sid}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Status.RemoveSubscriber(r.PathValue("id"), r.PathValue("sid")); err != nil {
+			failNotice(w, err)
+			return
+		}
+		s.audit(r, "statuspage.subscriber.remove", r.PathValue("id"), r.PathValue("sid"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("POST /api/status-pages/{id}/subscribers/{sid}/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Status.SendTest(r.PathValue("id"), r.PathValue("sid")); err != nil {
+			failNotice(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "sending"})
+	}))
+
+	mux.HandleFunc("GET /api/status-pages/{id}/report", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		month := r.URL.Query().Get("month")
+		rep, err := s.Status.Report(r.PathValue("id"), month)
+		if err != nil {
+			failNotice(w, err)
+			return
+		}
+		if r.URL.Query().Get("format") == "csv" {
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="uptime-`+month+`.csv"`)
+			w.Write(rep.CSV())
+			return
+		}
+		writeJSON(w, http.StatusOK, rep)
+	}))
+	mux.HandleFunc("POST /api/status-pages/{id}/report/email", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Month, To string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.Status.EmailReport(r.Context(), r.PathValue("id"), in.Month, in.To); err != nil {
+			failNotice(w, err)
+			return
+		}
+		s.audit(r, "statuspage.report.email", r.PathValue("id"), in.Month+" to "+in.To)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+	}))
+
+	mux.HandleFunc("GET /api/settings/smtp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, s.Status.Mail.Config())
+	}))
+	mux.HandleFunc("PUT /api/settings/smtp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in statuspage.SMTPConfig
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := s.Status.Mail.Save(in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "settings.smtp", "", out.Host)
+		writeJSON(w, http.StatusOK, out)
+	}))
+	mux.HandleFunc("POST /api/settings/smtp/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ To string }
+		if !decode(w, r, &in) {
+			return
+		}
+		err := s.Status.Mail.Send(r.Context(), statuspage.Mail{To: []string{strings.TrimSpace(in.To)}, Subject: "Fleetwatch test email",
+			Text: "Email sending works. Status page subscribers and reports will be sent this way.\n"})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "smtp_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+	}))
+}
+
 var titleRe = regexp.MustCompile(`<title>[^<]*</title>`)
 
 // statusHTML is index.html marked so the UI renders that public status page.
@@ -114,7 +457,11 @@ func (s *server) statusHTML(w http.ResponseWriter, c statuspage.Config, ok bool)
 	}
 	// The slug is validated (a-z, 0-9, dashes), so it is safe in an attribute.
 	page := strings.Replace(string(b), `<div id="root">`, `<div id="root" data-page="status" data-slug="`+c.Slug+`">`, 1)
-	page = titleRe.ReplaceAllLiteralString(page, "<title>"+html.EscapeString(c.Title)+"</title>")
+	title := "<title>" + html.EscapeString(c.Title) + "</title>"
+	if c.Access == "password" || c.Access == "team" {
+		title += `<meta name="robots" content="noindex" />` // private pages stay out of search engines
+	}
+	page = titleRe.ReplaceAllLiteralString(page, title)
 	page = strings.Replace(page, `<link rel="manifest" href="/manifest.json" />`, "", 1) // not the dashboard app
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -148,7 +495,7 @@ func (s *server) statusHost(next http.Handler) http.Handler {
 			}
 			c, ok := s.Status.Find(host, strings.TrimSuffix(slug, "/"))
 			s.statusHTML(w, c, ok)
-		case !own, strings.HasPrefix(p, "/assets/"), p == "/api/public/status", strings.HasPrefix(p, "/api/public/status/"), p == "/api/health",
+		case !own, strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/api/public/"), p == "/api/health",
 			p == "/icon-192.png", p == "/apple-touch-icon.png":
 			next.ServeHTTP(w, r)
 		default:

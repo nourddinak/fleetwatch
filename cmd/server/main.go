@@ -270,8 +270,61 @@ func serve() error {
 		return override, err != nil || v.Flags.Notifications
 	}
 	incStore.Notify = notifier.Incident
+	status := statuspage.New(d, incStore)
+	status.DataDir, status.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
+	status.AppState = func(id string) (string, string, int64, bool) {
+		v, err := appSvc.Get(id)
+		if err != nil {
+			return "", "", 0, false
+		}
+		state := "operational" // also "unknown": static sites have no process to watch
+		switch {
+		case maint.Active(v.ServerID, v.ID):
+			state = "maintenance"
+		case !hub.Connected(v.ServerID), v.HealthStatus == "failed", v.Status == "offline", v.Status == "stopped", v.Status == "crash-loop":
+			state = "outage"
+		case v.Status == "warning" || v.Status == "starting":
+			state = "degraded"
+		}
+		return state, v.ServerID, v.DiscoveredAt, true
+	}
+	status.ServerState = func(id string) (string, int64, bool) {
+		rec, err := hub.Reg.Get(id)
+		if err != nil {
+			return "", 0, false
+		}
+		switch {
+		case maint.Active(id, ""):
+			return "maintenance", rec.CreatedAt, true
+		case hub.Connected(id):
+			return "operational", rec.CreatedAt, true
+		}
+		return "outage", rec.CreatedAt, true
+	}
+	status.Mail = statuspage.NewMailer(d, box)
+	status.Latency = func(appID string) []proto.HealthResult {
+		list, _ := appSvc.HealthHistory(appID, 3000)
+		return list
+	}
+	status.OnDraft = func(page statuspage.Config, n statuspage.Notice) {
+		link := ""
+		if u := os.Getenv("OPS_PUBLIC_URL"); u != "" {
+			link = strings.TrimRight(u, "/") + "/#/status-page/" + page.ID
+		}
+		notifier.Notice("Status page draft", notify.Message{Title: "Draft notice waiting on " + page.Title + ": " + n.Title,
+			Body: "An outage started. Publish the draft notice on the status page, or delete it.", Severity: "warning", Link: link}, "", "")
+	}
+	serverOf := func(appID string) string {
+		if v, err := appSvc.Get(appID); err == nil {
+			return v.ServerID
+		}
+		return ""
+	}
+	// The maintenance switch also posts (and later closes) a notice on the status pages.
+	maint.OnStart = func(kind, id string, until int64) { status.MaintenanceChanged(kind, id, until, serverOf) }
 	// When a window ends, report what is still broken in one message.
 	maint.OnEnd = func(kind, id string) {
+		status.MaintenanceChanged(kind, id, 0, serverOf)
 		f := incidents.Filter{Status: "open"}
 		det := notify.Details{Event: "maintenance.ended"}
 		name := ""
@@ -399,37 +452,6 @@ func serve() error {
 			}
 		}()
 	}
-	status := statuspage.New(d, incStore)
-	status.DataDir, status.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
-	status.AppState = func(id string) (string, string, int64, bool) {
-		v, err := appSvc.Get(id)
-		if err != nil {
-			return "", "", 0, false
-		}
-		state := "operational" // also "unknown": static sites have no process to watch
-		switch {
-		case maint.Active(v.ServerID, v.ID):
-			state = "maintenance"
-		case !hub.Connected(v.ServerID), v.HealthStatus == "failed", v.Status == "offline", v.Status == "stopped", v.Status == "crash-loop":
-			state = "outage"
-		case v.Status == "warning" || v.Status == "starting":
-			state = "degraded"
-		}
-		return state, v.ServerID, v.DiscoveredAt, true
-	}
-	status.ServerState = func(id string) (string, int64, bool) {
-		rec, err := hub.Reg.Get(id)
-		if err != nil {
-			return "", 0, false
-		}
-		switch {
-		case maint.Active(id, ""):
-			return "maintenance", rec.CreatedAt, true
-		case hub.Connected(id):
-			return "operational", rec.CreatedAt, true
-		}
-		return "outage", rec.CreatedAt, true
-	}
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{
@@ -449,6 +471,7 @@ func serve() error {
 	go notifier.Run(ctx)
 	go updates.Run(ctx)
 	go domainChecks.Run(ctx)
+	go status.Run(ctx)
 	go runJobs(ctx, d, authSvc, appSvc, logStore, detector, notifier, store, appStore)
 
 	errc := make(chan error, 1)

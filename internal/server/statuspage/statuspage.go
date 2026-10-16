@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"fleetwatch/internal/proto"
+	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/settings"
 	"fleetwatch/internal/server/valid"
@@ -46,15 +48,34 @@ type Group struct {
 	Components []Component `json:"components"`
 }
 
-// Notice is an announcement written by the admin ("Scheduled maintenance tonight").
+// Notice is an announcement ("Scheduled maintenance tonight"), written by the admin or
+// created automatically for an outage or a maintenance window.
 type Notice struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Status    string `json:"status"` // info | maintenance | degraded | outage | resolved
-	Start     int64  `json:"start"`  // unix ms
-	End       int64  `json:"end"`    // unix ms, 0 = until removed or resolved
-	CreatedAt int64  `json:"createdAt"`
+	ID        string         `json:"id"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Status    string         `json:"status"` // impact: info | maintenance | degraded | outage | resolved
+	Start     int64          `json:"start"`  // unix ms
+	End       int64          `json:"end"`    // unix ms, 0 = until removed or resolved
+	CreatedAt int64          `json:"createdAt"`
+	Updates   []NoticeUpdate `json:"updates"`         // timeline, oldest first
+	Draft     bool           `json:"draft"`           // not public until published
+	Auto      string         `json:"auto,omitempty"`  // "app:<id>": opened automatically for that component's outage
+	Maint     string         `json:"maint,omitempty"` // "app:<id>" / "server:<id>": opened by the maintenance switch
+}
+
+// NoticeUpdate is one step in a notice's timeline.
+type NoticeUpdate struct {
+	At    int64  `json:"at"`
+	Stage string `json:"stage"` // investigating | identified | monitoring | resolved | update
+	Body  string `json:"body"`
+}
+
+// ReportConfig sends the monthly uptime report by email.
+type ReportConfig struct {
+	Monthly  bool   `json:"monthly"`
+	To       string `json:"to"`       // comma-separated addresses
+	LastSent string `json:"lastSent"` // YYYY-MM of the last report sent
 }
 
 // Config is everything the admin can customize.
@@ -75,13 +96,32 @@ type Config struct {
 	HistoryDays int      `json:"historyDays"`
 	ShowUptime  bool     `json:"showUptime"`
 	Groups      []Group  `json:"groups"`
-	Notices     []Notice `json:"notices"`
+	Notices     []Notice `json:"notices"` // changed through the notice calls, not by saving the page
 	UpdatedAt   int64    `json:"updatedAt"`
+
+	ShowResponseTime bool         `json:"showResponseTime"` // 24-hour response time of apps with a health check
+	Subscribe        bool         `json:"subscribe"`        // visitors may subscribe by email
+	SubscribeHooks   bool         `json:"subscribeHooks"`   // ... and by webhook
+	AutoNotices      string       `json:"autoNotices"`      // off | draft | publish: a notice when a component goes down
+	SkipMaintNotices bool         `json:"skipMaintNotices"` // no notice when the maintenance switch is turned on
+	Access           string       `json:"access"`           // public | password | team (signed-in dashboard users)
+	PasswordHash     string       `json:"passwordHash,omitempty"`
+	Password         string       `json:"password,omitempty"` // write-only: sets a new password
+	HasPassword      bool         `json:"hasPassword"`        // read-only
+	CustomCSS        string       `json:"customCss"`
+	HeaderHTML       string       `json:"headerHtml"`
+	Report           ReportConfig `json:"report"`
+}
+
+// Redacted is the page as the editor gets it: without the password hash.
+func (c Config) Redacted() Config {
+	c.HasPassword, c.PasswordHash, c.Password = c.PasswordHash != "", "", ""
+	return c
 }
 
 func Defaults() Config {
 	return Config{Title: "Service status", Accent: "#16a34a", Theme: "auto", PoweredBy: true, HistoryDays: 90, ShowUptime: true,
-		Groups: []Group{}, Notices: []Notice{}}
+		Groups: []Group{}, Notices: []Notice{}, AutoNotices: "off", Access: "public"}
 }
 
 var (
@@ -90,7 +130,28 @@ var (
 	hostRe   = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	logoRe   = regexp.MustCompile(`^data:image/(png|jpeg|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)$`)
 	notices  = map[string]bool{"info": true, "maintenance": true, "degraded": true, "outage": true, "resolved": true}
+	stages   = map[string]bool{"investigating": true, "identified": true, "monitoring": true, "resolved": true, "update": true}
 )
+
+// validateNotice normalizes one notice.
+func validateNotice(n *Notice) error {
+	n.Title = strings.TrimSpace(n.Title)
+	if n.Title == "" || len(n.Title) > 120 || len(n.Body) > 2000 || !notices[n.Status] || n.Start <= 0 || (n.End != 0 && n.End < n.Start) {
+		return valid.Error("each notice needs a title (up to 120 characters), a status and a valid time range")
+	}
+	if len(n.Updates) > 50 {
+		return valid.Error("a notice can have at most 50 updates")
+	}
+	for _, u := range n.Updates {
+		if !stages[u.Stage] || len(u.Body) > 2000 || u.At <= 0 {
+			return valid.Error("each update needs a stage and at most 2000 characters")
+		}
+	}
+	if n.Updates == nil {
+		n.Updates = []NoticeUpdate{}
+	}
+	return nil
+}
 
 func text(name, v string, max int) error {
 	if len(v) > max {
@@ -186,13 +247,42 @@ func (c *Config) Validate() error {
 	}
 	for i := range c.Notices {
 		n := &c.Notices[i]
-		n.Title = strings.TrimSpace(n.Title)
-		if n.Title == "" || len(n.Title) > 120 || len(n.Body) > 2000 || !notices[n.Status] || n.Start <= 0 || (n.End != 0 && n.End < n.Start) {
-			return valid.Error("each notice needs a title (up to 120 characters), a status and a valid time range")
+		if err := validateNotice(n); err != nil {
+			return err
 		}
 		if n.ID == "" {
 			n.ID = fmt.Sprintf("ntc_%d_%d", n.CreatedAt, i)
 		}
+	}
+	switch c.AutoNotices {
+	case "":
+		c.AutoNotices = "off"
+	case "off", "draft", "publish":
+	default:
+		return valid.Error("automatic notices must be off, draft or publish")
+	}
+	switch c.Access {
+	case "":
+		c.Access = "public"
+	case "public", "password", "team":
+	default:
+		return valid.Error("access must be public, password or team")
+	}
+	if c.Password != "" && (len(c.Password) < 6 || len(c.Password) > 128) {
+		return valid.Error("the page password must be 6 to 128 characters")
+	}
+	for _, e := range []error{text("custom CSS", c.CustomCSS, 20000), text("header HTML", c.HeaderHTML, 10000)} {
+		if e != nil {
+			return e
+		}
+	}
+	if c.Report.To = strings.TrimSpace(c.Report.To); c.Report.To != "" {
+		if _, err := parseAddresses(c.Report.To); err != nil {
+			return err
+		}
+	}
+	if c.Report.Monthly && c.Report.To == "" {
+		return valid.Error("enter who gets the monthly report")
 	}
 	if c.Groups == nil {
 		c.Groups = []Group{}
@@ -219,10 +309,19 @@ type Service struct {
 	// DataDir and HelperPath enable the automatic Caddy setup for page domains (see
 	// caddy.go); empty DataDir turns it off.
 	DataDir, HelperPath string
+	// Latency returns an app's recent health check results, newest first.
+	Latency func(appID string) []proto.HealthResult
+	// Mail sends subscriber emails and reports; OnDraft tells the admin a draft
+	// notice is waiting (dashboard notification channels).
+	Mail    *Mailer
+	OnDraft func(page Config, n Notice)
 
 	mu    sync.Mutex
 	pages []Config
 	cache map[string]cached
+	key   []byte // signs the cookies of unlocked password pages
+	seen  map[string]map[string]*seenState
+	queue chan event
 }
 
 type cached struct {
@@ -231,7 +330,8 @@ type cached struct {
 }
 
 func New(d *sql.DB, inc *incidents.Store) *Service {
-	s := &Service{db: d, Incidents: inc, Now: time.Now, cache: map[string]cached{}}
+	s := &Service{db: d, Incidents: inc, Now: time.Now, cache: map[string]cached{}, seen: map[string]map[string]*seenState{}, queue: make(chan event, 256)}
+	s.key = loadKey(d)
 	var pages *[]Config
 	settings.Load(d, settingsKey, &pages)
 	if pages == nil {
@@ -247,6 +347,20 @@ func New(d *sql.DB, inc *incidents.Store) *Service {
 		}
 	}
 	s.pages = *pages
+	for i := range s.pages { // pages saved by older versions lack the newer settings
+		c := &s.pages[i]
+		if c.Access == "" {
+			c.Access = "public"
+		}
+		if c.AutoNotices == "" {
+			c.AutoNotices = "off"
+		}
+		for j := range c.Notices {
+			if c.Notices[j].Updates == nil {
+				c.Notices[j].Updates = []NoticeUpdate{}
+			}
+		}
+	}
 	return s
 }
 
@@ -303,6 +417,24 @@ func (s *Service) Save(c Config) (Config, error) {
 		c.ID = newID()
 	} else if at < 0 {
 		return c, ErrNotFound
+	}
+	if at >= 0 {
+		old := s.pages[at]
+		c.Notices, c.Report.LastSent = old.Notices, old.Report.LastSent // notices change through their own calls
+		c.PasswordHash = old.PasswordHash
+	} else {
+		c.PasswordHash = ""
+	}
+	if c.Password != "" {
+		h, err := auth.HashPassword(c.Password)
+		if err != nil {
+			return c, err
+		}
+		c.PasswordHash = h
+	}
+	c.Password, c.HasPassword = "", false
+	if c.Access == "password" && c.PasswordHash == "" {
+		return c, valid.Error("set a password for this page")
 	}
 	c.UpdatedAt = s.Now().UnixMilli()
 	before := s.domains()
@@ -389,11 +521,12 @@ type Day struct {
 }
 
 type PublicComponent struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Status      string   `json:"status"`
-	Uptime      *float64 `json:"uptime,omitempty"` // percent over the history window
-	Days        []Day    `json:"days,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	Uptime      *float64       `json:"uptime,omitempty"` // percent over the history window
+	Days        []Day          `json:"days,omitempty"`
+	Latency     []LatencyPoint `json:"latency,omitempty"` // last 24 hours
 }
 
 type PublicGroup struct {
@@ -402,11 +535,18 @@ type PublicGroup struct {
 }
 
 type PublicNotice struct {
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Status string `json:"status"`
-	Start  int64  `json:"start"`
-	End    int64  `json:"end,omitempty"`
+	Title   string         `json:"title"`
+	Body    string         `json:"body"`
+	Status  string         `json:"status"`
+	Start   int64          `json:"start"`
+	End     int64          `json:"end,omitempty"`
+	Updates []NoticeUpdate `json:"updates"` // newest first
+}
+
+// LatencyPoint is the average response time of one half hour.
+type LatencyPoint struct {
+	T  int64 `json:"t"`
+	Ms int   `json:"ms"`
 }
 
 // Public is exactly what anonymous visitors receive.
@@ -425,6 +565,9 @@ type Public struct {
 	Notices     []PublicNotice `json:"notices"`
 	Groups      []PublicGroup  `json:"groups"`
 	UpdatedAt   int64          `json:"updatedAt"`
+	Subscribe   []string       `json:"subscribe"` // ways to subscribe: email, webhook
+	CustomCSS   string         `json:"customCss,omitempty"`
+	HeaderHTML  string         `json:"headerHtml,omitempty"`
 }
 
 // Public returns a page's public data, rebuilt at most every 30 seconds.
@@ -449,17 +592,29 @@ func (s *Service) build(c Config) *Public {
 	now := s.Now()
 	p := &Public{Title: c.Title, Description: c.Description, Logo: c.Logo, Accent: c.Accent, Theme: c.Theme, HomeURL: c.HomeURL,
 		HomeLabel: c.HomeLabel, Footer: c.Footer, PoweredBy: c.PoweredBy, HistoryDays: c.HistoryDays, Notices: []PublicNotice{},
-		Groups: []PublicGroup{}, UpdatedAt: now.UnixMilli()}
+		Groups: []PublicGroup{}, UpdatedAt: now.UnixMilli(), Subscribe: []string{}, CustomCSS: c.CustomCSS, HeaderHTML: c.HeaderHTML}
+	if c.Subscribe && s.Mail != nil && s.Mail.Ready() {
+		p.Subscribe = append(p.Subscribe, "email")
+	}
+	if c.SubscribeHooks {
+		p.Subscribe = append(p.Subscribe, "webhook")
+	}
 	ms := now.UnixMilli()
 	noticeDown, noticeSlow, noticeMaint := false, false, false
 	for _, n := range c.Notices {
+		if n.Draft {
+			continue
+		}
 		active := n.Start <= ms && (n.End == 0 || n.End > ms) && n.Status != "resolved"
 		recent := (n.Status == "resolved" || (n.End != 0 && n.End <= ms)) && ms-max(n.End, n.CreatedAt) < day.Milliseconds()
 		upcoming := n.Status == "maintenance" && n.Start > ms && n.Start-ms < 7*day.Milliseconds()
 		if !active && !recent && !upcoming {
 			continue
 		}
-		pn := PublicNotice{Title: n.Title, Body: n.Body, Status: n.Status, Start: n.Start, End: n.End}
+		pn := PublicNotice{Title: n.Title, Body: n.Body, Status: n.Status, Start: n.Start, End: n.End, Updates: []NoticeUpdate{}}
+		for i := len(n.Updates) - 1; i >= 0; i-- {
+			pn.Updates = append(pn.Updates, n.Updates[i])
+		}
 		if !active && !upcoming {
 			pn.Status = "resolved"
 		}
@@ -506,33 +661,15 @@ func (s *Service) build(c Config) *Public {
 }
 
 func (s *Service) component(x Component, c Config, now time.Time) PublicComponent {
-	pc := PublicComponent{Name: x.Name, Description: x.Description, Status: "unknown"}
-	var created int64
-	var related []incidents.Incident
-	switch x.Kind {
-	case "app":
-		state, serverID, cr, ok := s.AppState(x.ID)
-		if !ok {
-			return pc
-		}
-		pc.Status, created = state, cr
-		related = s.incidents(incidents.Filter{AppID: x.ID})
-		for _, i := range s.incidents(incidents.Filter{ServerID: serverID, Type: "server_offline"}) {
-			related = append(related, i) // the whole server being down takes its apps down
-		}
-	case "server":
-		state, cr, ok := s.ServerState(x.ID)
-		if !ok {
-			return pc
-		}
-		pc.Status, created = state, cr
-		for _, i := range s.incidents(incidents.Filter{ServerID: x.ID}) {
-			if i.AppID == nil {
-				related = append(related, i)
-			}
-		}
+	pc := PublicComponent{Name: x.Name, Description: x.Description, Status: s.stateOf(x)}
+	if pc.Status == "unknown" {
+		return pc // deleted since it was added to the page
+	}
+	if c.ShowResponseTime && x.Kind == "app" && s.Latency != nil {
+		pc.Latency = latency(s.Latency(x.ID), now)
 	}
 	if c.ShowUptime {
+		related, created := s.related(x)
 		pc.Days, pc.Uptime = History(related, created, now, c.HistoryDays)
 	}
 	return pc

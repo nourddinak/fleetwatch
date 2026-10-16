@@ -150,7 +150,8 @@ func sameOriginWrites(next http.Handler) http.Handler {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
-			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) {
+			// Unsubscribe links carry their own secret and are posted by mail apps.
+			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" {
 				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
 				return
 			}

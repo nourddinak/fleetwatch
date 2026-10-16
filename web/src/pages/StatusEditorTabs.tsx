@@ -1,0 +1,495 @@
+import { useState } from "react";
+import { Mail, Plus, Send, Trash2 } from "lucide-react";
+import { api, useApi, type ApiError } from "../api/client";
+import { useStore } from "../store/store";
+import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, Field, IconButton, Input, Modal, SectionTitle, Segmented, Select, Spinner, Table, Td, Textarea, ToggleRow, Tr } from "../components/ui";
+import { relTime } from "../mock/util";
+import { STAGE_LABEL, type Config, type Notice, type Stage } from "./statusTypes";
+
+type Set = (p: Partial<Config>) => void;
+
+const NOTICE_TONE = { info: "info", maintenance: "info", degraded: "warn", outage: "crit", resolved: "ok" } as const;
+const IMPACTS = ["info", "maintenance", "degraded", "outage"] as const;
+const IMPACT_LABEL = { info: "Information", maintenance: "Maintenance", degraded: "Degraded", outage: "Outage", resolved: "Resolved" };
+// datetime-local works in local time without a zone.
+const toLocal = (ms: number) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "");
+const fromLocal = (s: string) => (s ? new Date(s).getTime() : 0);
+
+/* ---------------- notices ---------------- */
+
+type NoticeForm = { mode: "new" | "edit"; n: Notice; notify: boolean } | { mode: "update"; n: Notice; stage: Stage; body: string; notify: boolean };
+
+export function NoticesTab({ c, set, onNotices }: { c: Config; set: Set; onNotices: (list: Notice[]) => void }) {
+  const { toast } = useStore();
+  const [form, setForm] = useState<NoticeForm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [del, setDel] = useState<Notice | null>(null);
+  const refresh = async () => onNotices((await api<Config>("GET", `/api/status-pages/${c.id}`)).notices);
+  const run = async (f: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    try {
+      await f();
+      await refresh();
+      setForm(null);
+      toast(done);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  const submit = () => {
+    if (!form) return;
+    const base = `/api/status-pages/${c.id}/notices`;
+    if (form.mode === "update") return run(() => api("POST", `${base}/${form.n.id}/updates`, { stage: form.stage, body: form.body, notify: form.notify }), "Update posted");
+    if (form.mode === "new") return run(() => api("POST", base, { ...form.n, notify: form.notify }), form.n.draft ? "Draft saved" : "Notice posted");
+    return run(() => api("PUT", `${base}/${form.n.id}`, { ...form.n, notify: form.notify }), "Notice saved");
+  };
+  const publish = (n: Notice) => run(() => api("PUT", `/api/status-pages/${c.id}/notices/${n.id}`, { ...n, draft: false, notify: true }), "Published");
+  const remove = (n: Notice) => run(() => api("DELETE", `/api/status-pages/${c.id}/notices/${n.id}`), "Notice deleted");
+  const blank = (): Notice => ({ id: "", title: "", body: "", status: "outage", start: Date.now(), end: 0, createdAt: 0, updates: [], draft: false });
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <SectionTitle title="Automatic notices" sub="Saved with the page." />
+        <Field label="When a component goes down">
+          <Segmented
+            value={c.autoNotices}
+            onChange={(v) => set({ autoNotices: v })}
+            options={[
+              { value: "off", label: "Do nothing" },
+              { value: "draft", label: "Draft a notice, I publish it" },
+              { value: "publish", label: "Publish a notice right away" },
+            ]}
+          />
+        </Field>
+        <p className="mt-2 text-xs text-muted">
+          {c.autoNotices === "draft"
+            ? "A draft appears here and your notification channels tell you; nothing is public until you press Publish. An unpublished draft disappears when the component works again."
+            : c.autoNotices === "publish"
+              ? "A notice goes up after about a minute of outage and is resolved when the component works again. Subscribers are told both times."
+              : "Subscribers still hear when something goes down or comes back."}
+        </p>
+        <ToggleRow label="Post a notice when maintenance mode is turned on" desc="For the apps and servers on this page; it closes when maintenance ends." checked={!c.skipMaintNotices} onChange={(v) => set({ skipMaintNotices: !v })} />
+      </Card>
+
+      <Card>
+        <SectionTitle
+          title="Notices"
+          sub="Shown at the top of the page with their timeline. Changes here take effect right away."
+          action={<Button size="sm" variant="secondary" onClick={() => setForm({ mode: "new", n: blank(), notify: true })}><Plus size={14} /> Notice</Button>}
+        />
+        {c.notices.length === 0 && <p className="py-6 text-center text-sm text-muted">No notices.</p>}
+        <div className="divide-y divide-line">
+          {c.notices.map((n) => (
+            <div key={n.id} className="py-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={NOTICE_TONE[n.status]}>{IMPACT_LABEL[n.status]}</Badge>
+                {n.draft && <Badge tone="warn">Draft</Badge>}
+                {n.auto && <Badge>automatic</Badge>}
+                {n.maint && <Badge>maintenance switch</Badge>}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.title}</span>
+                {n.draft && <Button size="sm" disabled={busy} onClick={() => publish(n)}>Publish</Button>}
+                {n.status !== "resolved" && (
+                  <Button size="sm" variant="secondary" onClick={() => setForm({ mode: "update", n, stage: n.updates.length ? "monitoring" : "investigating", body: "", notify: !n.draft })}>
+                    Post update
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setForm({ mode: "edit", n, notify: false })}>Edit</Button>
+                <IconButton aria-label="Delete notice" onClick={() => setDel(n)}><Trash2 size={14} /></IconButton>
+              </div>
+              <div className="mt-1 text-xs text-muted">{new Date(n.start).toLocaleString()}{n.end ? ` – ${new Date(n.end).toLocaleString()}` : ""}</div>
+              {(n.body || n.updates.length > 0) && (
+                <ol className="mt-3 space-y-2 border-l border-line pl-4">
+                  {[...n.updates].reverse().map((u, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="font-medium">{STAGE_LABEL[u.stage]}</span> <span className="text-xs text-muted">{new Date(u.at).toLocaleString()}</span>
+                      <div className="whitespace-pre-wrap text-muted">{u.body}</div>
+                    </li>
+                  ))}
+                  {n.body && <li className="whitespace-pre-wrap text-sm text-muted">{n.body}</li>}
+                </ol>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {form && (
+        <Modal
+          open
+          onClose={() => setForm(null)}
+          title={form.mode === "new" ? "New notice" : form.mode === "edit" ? "Edit notice" : `Update: ${form.n.title}`}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
+              <Button disabled={busy || (form.mode === "update" ? !form.body.trim() : !form.n.title.trim() || (!!form.n.end && form.n.end < form.n.start))} onClick={submit}>
+                {busy && <Spinner size={14} />} {form.mode === "update" ? "Post update" : form.mode === "new" && !form.n.draft ? "Post" : "Save"}
+              </Button>
+            </>
+          }
+        >
+          {form.mode === "update" ? (
+            <div className="space-y-4">
+              <Field label="Stage">
+                <Segmented value={form.stage} onChange={(v) => setForm({ ...form, stage: v })} options={(Object.keys(STAGE_LABEL) as Stage[]).map((s) => ({ value: s, label: STAGE_LABEL[s] }))} />
+              </Field>
+              <Field label="What is new" hint={form.stage === "resolved" ? "Resolving closes the notice; it stays visible for a day." : undefined}>
+                <Textarea rows={4} maxLength={2000} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="We found the cause and are rolling out a fix." />
+              </Field>
+              {!form.n.draft && <ToggleRow label="Tell subscribers" checked={form.notify} onChange={(v) => setForm({ ...form, notify: v })} />}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <Field label="Title">
+                <Input value={form.n.title} maxLength={120} placeholder="Checkout is slow" onChange={(e) => setForm({ ...form, n: { ...form.n, title: e.target.value } })} />
+              </Field>
+              <Field label="Impact">
+                <Segmented value={form.n.status === "resolved" ? "info" : form.n.status} onChange={(v) => setForm({ ...form, n: { ...form.n, status: v } })} options={IMPACTS.map((s) => ({ value: s, label: IMPACT_LABEL[s] }))} />
+              </Field>
+              {form.mode === "new" && (
+                <Field label="First message" hint="It starts the notice's timeline; add updates later.">
+                  <Textarea rows={3} maxLength={2000} value={form.n.body} onChange={(e) => setForm({ ...form, n: { ...form.n, body: e.target.value } })} />
+                </Field>
+              )}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="From" hint="A future time makes it scheduled maintenance.">
+                  <Input type="datetime-local" value={toLocal(form.n.start)} onChange={(e) => setForm({ ...form, n: { ...form.n, start: fromLocal(e.target.value) } })} />
+                </Field>
+                <Field label="Until (optional)" hint="Empty: until resolved.">
+                  <Input type="datetime-local" value={toLocal(form.n.end)} onChange={(e) => setForm({ ...form, n: { ...form.n, end: fromLocal(e.target.value) } })} />
+                </Field>
+              </div>
+              {form.mode === "new" && <ToggleRow label="Save as a draft" desc="Not public until you publish it." checked={form.n.draft} onChange={(v) => setForm({ ...form, n: { ...form.n, draft: v } })} />}
+              {form.mode === "new" && !form.n.draft && <ToggleRow label="Tell subscribers" checked={form.notify} onChange={(v) => setForm({ ...form, notify: v })} />}
+            </div>
+          )}
+        </Modal>
+      )}
+      <ConfirmDialog open={!!del} title="Delete notice?" message={`"${del?.title}" disappears from the page. Subscribers are not told.`} confirmLabel="Delete" danger onConfirm={() => del && (remove(del), setDel(null))} onCancel={() => setDel(null)} />
+    </div>
+  );
+}
+
+/* ---------------- subscribers ---------------- */
+
+interface Subscriber {
+  id: string;
+  kind: "email" | "webhook";
+  target: string;
+  confirmed: boolean;
+  createdAt: number;
+  lastSentAt: number;
+  lastError: string;
+}
+
+export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
+  const { toast } = useStore();
+  const list = useApi<Subscriber[]>(`/api/status-pages/${c.id}/subscribers`);
+  const smtp = useApi<SMTP>("/api/settings/smtp");
+  const [mail, setMail] = useState(false);
+  const mailReady = !!smtp.data?.host && !!smtp.data.from;
+  const act = async (f: () => Promise<unknown>, done: string) => {
+    try {
+      await f();
+      toast(done);
+      list.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <SectionTitle title="Let visitors subscribe" sub="A “Get updates” button on the page. Subscribers hear when something goes down or comes back, and about your notices. Saved with the page." />
+        <ToggleRow label="By email" desc={mailReady ? "They confirm by email first; every message has an unsubscribe link." : "Set up email sending first."} checked={c.subscribe} onChange={(v) => set({ subscribe: v })}>
+          <Button size="sm" variant="ghost" onClick={() => setMail(true)}><Mail size={14} /> {mailReady ? "Email settings" : "Set up email"}</Button>
+        </ToggleRow>
+        <ToggleRow label="By webhook" desc="For other systems: a JSON POST to their https:// URL. Addresses inside your own network are refused." checked={c.subscribeHooks} onChange={(v) => set({ subscribeHooks: v })} />
+      </Card>
+      <Card pad={false}>
+        <div className="p-5 pb-0">
+          <SectionTitle title={`Subscribers${list.data ? ` (${list.data.length})` : ""}`} />
+        </div>
+        {!list.data ? (
+          <div className="p-5"><Spinner /></div>
+        ) : list.data.length === 0 ? (
+          <p className="p-5 pt-0 text-sm text-muted">Nobody yet.</p>
+        ) : (
+          <Table head={["Subscriber", "State", "Last message", ""]}>
+            {list.data.map((x) => (
+              <Tr key={x.id}>
+                <Td>
+                  <div className="max-w-[320px] truncate font-medium" title={x.target}>{x.target}</div>
+                  <div className="text-xs text-muted">{x.kind} · since {new Date(x.createdAt).toLocaleDateString()}</div>
+                </Td>
+                <Td>{x.confirmed ? <Badge tone="ok">active</Badge> : <Badge tone="warn">not confirmed</Badge>}</Td>
+                <Td className="text-xs">
+                  {x.lastSentAt ? relTime(x.lastSentAt) : <span className="text-muted">none yet</span>}
+                  {x.lastError && <div className="max-w-[260px] truncate text-crit" title={x.lastError}>{x.lastError}</div>}
+                </Td>
+                <Td className="whitespace-nowrap text-right">
+                  {x.confirmed && <IconButton aria-label="Send a test message" title="Send a test message" onClick={() => act(() => api("POST", `/api/status-pages/${c.id}/subscribers/${x.id}/test`), "Test message sent")}><Send size={14} /></IconButton>}
+                  <IconButton aria-label="Remove subscriber" onClick={() => act(() => api("DELETE", `/api/status-pages/${c.id}/subscribers/${x.id}`), "Subscriber removed")}><Trash2 size={14} /></IconButton>
+                </Td>
+              </Tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+      <Modal open={mail} onClose={() => (setMail(false), smtp.reload())} title="Email sending" wide>
+        <EmailSettings onSaved={smtp.reload} />
+      </Modal>
+    </div>
+  );
+}
+
+/* ---------------- email (SMTP) ---------------- */
+
+interface SMTP {
+  host: string;
+  port: number;
+  security: "starttls" | "tls" | "none";
+  username: string;
+  password?: string;
+  hasPassword: boolean;
+  from: string;
+  fromName: string;
+}
+
+const PRESETS: { name: string; host: string; port: number; security: SMTP["security"]; note: string }[] = [
+  { name: "Gmail", host: "smtp.gmail.com", port: 587, security: "starttls", note: "Use an app password (Google account → Security → App passwords)." },
+  { name: "Brevo", host: "smtp-relay.brevo.com", port: 587, security: "starttls", note: "Username and SMTP key from Brevo → SMTP & API." },
+  { name: "Resend", host: "smtp.resend.com", port: 465, security: "tls", note: "Username “resend”, password: your API key." },
+  { name: "Mailgun", host: "smtp.mailgun.org", port: 587, security: "starttls", note: "SMTP credentials from your Mailgun domain." },
+];
+
+export function EmailSettings({ onSaved }: { onSaved?: () => void }) {
+  const { toast, me } = useStore();
+  const saved = useApi<SMTP>("/api/settings/smtp");
+  const [f, setF] = useState<SMTP | null>(null);
+  const [to, setTo] = useState(me?.email ?? "");
+  const [busy, setBusy] = useState("");
+  const v = f ?? saved.data;
+  if (!v) return <Spinner />;
+  const upd = (p: Partial<SMTP>) => setF({ ...v, ...p });
+  const save = async () => {
+    setBusy("save");
+    try {
+      const out = await api<SMTP>("PUT", "/api/settings/smtp", v);
+      saved.setData(out);
+      setF(null);
+      onSaved?.();
+      toast("Email settings saved");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy("");
+  };
+  const test = async () => {
+    setBusy("test");
+    try {
+      await api("POST", "/api/settings/smtp/test", { to });
+      toast(`Test email sent to ${to}`);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy("");
+  };
+  const preset = PRESETS.find((p) => p.host === v.host);
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted">Status page emails (confirmations, updates, reports) go out through any email provider's SMTP. The password is stored encrypted.</p>
+      <div className="flex flex-wrap gap-2">
+        {PRESETS.map((p) => (
+          <Button key={p.name} size="sm" variant={v.host === p.host ? "primary" : "secondary"} onClick={() => upd({ host: p.host, port: p.port, security: p.security })}>{p.name}</Button>
+        ))}
+      </div>
+      {preset && <p className="text-xs text-muted">{preset.note}</p>}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="SMTP server" className="sm:col-span-2">
+          <Input value={v.host} placeholder="smtp.example.com" onChange={(e) => upd({ host: e.target.value })} />
+        </Field>
+        <Field label="Port">
+          <Input type="number" value={v.port || ""} placeholder="587" onChange={(e) => upd({ port: Number(e.target.value) })} />
+        </Field>
+        <Field label="Security">
+          <Select value={v.security || "starttls"} onChange={(e) => upd({ security: e.target.value as SMTP["security"] })}>
+            <option value="starttls">STARTTLS (port 587)</option>
+            <option value="tls">TLS (port 465)</option>
+            <option value="none">None (local relay only)</option>
+          </Select>
+        </Field>
+        <Field label="Username">
+          <Input value={v.username} autoComplete="off" onChange={(e) => upd({ username: e.target.value })} />
+        </Field>
+        <Field label="Password" hint={v.hasPassword && !v.password ? "Saved. Type to replace it." : undefined}>
+          <Input type="password" value={v.password ?? ""} autoComplete="new-password" placeholder={v.hasPassword ? "••••••••" : ""} onChange={(e) => upd({ password: e.target.value })} />
+        </Field>
+        <Field label="Sender address" className="sm:col-span-2">
+          <Input value={v.from} placeholder="status@example.com" onChange={(e) => upd({ from: e.target.value })} />
+        </Field>
+        <Field label="Sender name">
+          <Input value={v.fromName} placeholder="Acme Status" onChange={(e) => upd({ fromName: e.target.value })} />
+        </Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
+        <Button disabled={!f || !!busy} onClick={save}>{busy === "save" && <Spinner size={14} />} Save</Button>
+        <span className="ml-auto text-xs text-muted">Send a test to</span>
+        <Input className="max-w-[220px]" value={to} placeholder="you@example.com" onChange={(e) => setTo(e.target.value)} />
+        <Button variant="secondary" disabled={!!f || !to || !!busy || !saved.data?.host} onClick={test}>{busy === "test" && <Spinner size={14} />} Send test</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- access ---------------- */
+
+export function AccessTab({ c, set }: { c: Config; set: Set }) {
+  return (
+    <Card>
+      <SectionTitle title="Who can see this page" sub="Saved with the page." />
+      <Segmented
+        value={c.access}
+        onChange={(v) => set({ access: v })}
+        options={[
+          { value: "public", label: "Everyone" },
+          { value: "password", label: "Anyone with the password" },
+          { value: "team", label: "Only signed-in team members" },
+        ]}
+      />
+      {c.access === "password" && (
+        <Field label={c.hasPassword ? "New password (optional)" : "Password"} className="mt-4 max-w-sm" hint={c.hasPassword ? "A password is set. A new one signs everyone out of the page." : "At least 6 characters. Share it with your customer or team."}>
+          <Input type="password" autoComplete="new-password" value={c.password ?? ""} onChange={(e) => set({ password: e.target.value })} />
+        </Field>
+      )}
+      <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-muted">
+        {c.access === "public" && <li>Shown to anyone with the link; the badge and the JSON data are public too.</li>}
+        {c.access === "password" && <li>Visitors enter the password once per browser (remembered for 30 days).</li>}
+        {c.access === "team" && <li>Only people signed in to this dashboard. On the page's own domain sign-in does not carry over, so team pages are meant for the dashboard address.</li>}
+        {c.access !== "public" && <li>Private pages are hidden from search engines, and their badge is turned off.</li>}
+      </ul>
+    </Card>
+  );
+}
+
+/* ---------------- share & reports ---------------- */
+
+interface Report {
+  page: string;
+  month: string;
+  rows: { group: string; name: string; uptime: number | null; downMinutes: number; outages: number }[];
+}
+
+export function ShareTab({ c, set, pageUrl, savedPublic }: { c: Config; set: Set; pageUrl: string; savedPublic: boolean }) {
+  const { toast, me } = useStore();
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - i);
+    return d.toISOString().slice(0, 7);
+  });
+  const [month, setMonth] = useState(months[1]);
+  const report = useApi<Report>(`/api/status-pages/${c.id}/report?month=${month}`);
+  const [to, setTo] = useState(c.report.to || me?.email || "");
+  const [sending, setSending] = useState(false);
+  const origin = c.domain ? `https://${c.domain}` : location.origin;
+  const badge = `${origin}/api/public/badge.svg${c.slug && !c.domain ? `?page=${c.slug}` : ""}`;
+  const json = `${origin}/api/public/status${c.slug && !c.domain ? `/${c.slug}` : ""}`;
+  const email = async () => {
+    setSending(true);
+    try {
+      await api("POST", `/api/status-pages/${c.id}/report/email`, { month, to });
+      toast("Report sent");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setSending(false);
+  };
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Card>
+        <SectionTitle title="Badge" sub="A live status image for your website or a GitHub README." />
+        {savedPublic ? (
+          <div className="space-y-3">
+            <img src={`/api/public/badge.svg${c.slug ? `?page=${c.slug}` : ""}`} alt="Status badge" className="h-5" />
+            <Field label="Markdown (GitHub README)">
+              <CodeBlock>{`[![Status](${badge})](${pageUrl})`}</CodeBlock>
+            </Field>
+            <Field label="HTML (your website)">
+              <CodeBlock>{`<a href="${pageUrl}"><img src="${badge}" alt="Status"></a>`}</CodeBlock>
+            </Field>
+            <p className="text-xs text-muted">
+              Change the left text with <span className="font-mono">label=</span>, e.g. <span className="font-mono">{badge}{badge.includes("?") ? "&" : "?"}label=API</span>.
+            </p>
+            <Field label="Live data (JSON, for your own widget)">
+              <div className="flex items-center gap-2"><Input readOnly value={json} /><CopyButton text={json} /></div>
+            </Field>
+          </div>
+        ) : (
+          <p className="text-sm text-muted">Available once the page is saved, turned on and visible to everyone.</p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle title="Uptime report" sub="Monthly uptime of every component (UTC)." />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select className="max-w-[160px]" value={month} onChange={(e) => setMonth(e.target.value)}>
+            {months.map((m) => <option key={m} value={m}>{m}{m === months[0] ? " (so far)" : ""}</option>)}
+          </Select>
+          <a href={`/api/status-pages/${c.id}/report?month=${month}&format=csv`} download><Button size="sm" variant="secondary">Download CSV</Button></a>
+        </div>
+        <div className="mt-3">
+          {!report.data ? (
+            report.error ? <p className="text-sm text-crit">{report.error}</p> : <Spinner />
+          ) : report.data.rows.length === 0 ? (
+            <p className="text-sm text-muted">No components on this page.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-line">
+                {report.data.rows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5">{r.group ? <span className="text-muted">{r.group} / </span> : null}{r.name}</td>
+                    <td className="py-1.5 text-right font-mono">{r.uptime === null ? "–" : `${r.uptime.toFixed(3)}%`}</td>
+                    <td className="py-1.5 text-right text-xs text-muted">{r.downMinutes} min · {r.outages} outage{r.outages === 1 ? "" : "s"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+          <Input className="min-w-0 flex-1" value={to} placeholder="boss@example.com, team@example.com" onChange={(e) => setTo(e.target.value)} />
+          <Button size="sm" variant="secondary" disabled={!to.trim() || sending} onClick={email}>{sending ? <Spinner size={14} /> : <Mail size={14} />} Email it</Button>
+        </div>
+        <ToggleRow label="Email last month's report on the 1st of every month" desc={c.report.lastSent ? `Last sent: ${c.report.lastSent}` : "Saved with the page."} checked={c.report.monthly} onChange={(v) => set({ report: { ...c.report, monthly: v, to: c.report.to || to } })} />
+        {c.report.monthly && (
+          <Field label="Send to">
+            <Input value={c.report.to} placeholder="boss@example.com" onChange={(e) => set({ report: { ...c.report, to: e.target.value } })} />
+          </Field>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------- custom code ---------------- */
+
+export function CodeTab({ c, set }: { c: Config; set: Set }) {
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Card>
+        <SectionTitle title="Custom CSS" sub="Saved with the page. Styles only this page." />
+        <Textarea rows={14} className="font-mono text-xs" spellCheck={false} maxLength={20000} value={c.customCss} placeholder={`.sp-banner { border-radius: 4px; }\n.sp-component { padding: 20px 24px; }`} onChange={(e) => set({ customCss: e.target.value })} />
+        <p className="mt-2 text-xs text-muted">
+          Hooks: <span className="font-mono">.sp-page .sp-header .sp-custom-header .sp-banner .sp-notice .sp-group .sp-component .sp-bars .sp-latency .sp-subscribe .sp-footer</span>. The brand colour is <span className="font-mono">var(--sp)</span>.
+        </p>
+      </Card>
+      <Card>
+        <SectionTitle title="Custom header HTML" sub="Shown above the status, e.g. your navigation or an announcement." />
+        <Textarea rows={14} className="font-mono text-xs" spellCheck={false} maxLength={10000} value={c.headerHtml} placeholder={`<nav><a href="https://example.com">Home</a> · <a href="https://example.com/support">Support</a></nav>`} onChange={(e) => set({ headerHtml: e.target.value })} />
+        <p className="mt-2 text-xs text-muted">Plain HTML: scripts, frames, forms and event handlers are removed, so it cannot run code on your visitors' browsers.</p>
+      </Card>
+    </div>
+  );
+}

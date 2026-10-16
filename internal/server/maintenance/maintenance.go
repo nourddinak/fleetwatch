@@ -33,6 +33,8 @@ type Service struct {
 	Now func() time.Time
 	// OnEnd is called (outside the lock) when a window ends, by expiry or by hand.
 	OnEnd func(kind, id string)
+	// OnStart is called (outside the lock) when a window starts or changes length.
+	OnStart func(kind, id string, until int64)
 
 	mu     sync.Mutex
 	active map[string]map[string]int64 // kind → id → until
@@ -92,6 +94,9 @@ func (s *Service) Set(kind, id string, minutes int) (int64, error) {
 	s.publish()
 	if was && until == 0 && s.OnEnd != nil {
 		s.OnEnd(kind, id)
+	}
+	if until > 0 && s.OnStart != nil {
+		s.OnStart(kind, id, until)
 	}
 	return until, nil
 }

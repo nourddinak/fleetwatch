@@ -14,7 +14,7 @@ import (
 
 // tokenDenied are read endpoints an API token may not use: they reveal or manage
 // access itself.
-var tokenDenied = []string{"/api/sessions", "/api/tokens", "/api/audit", "/api/auth", "/ws"}
+var tokenDenied = []string{"/api/sessions", "/api/tokens", "/api/audit", "/api/auth", "/ws", "/api/status-pages", "/api/settings/smtp"}
 
 // tokenAuthed lets a read-only API token through to GET endpoints.
 func (s *server) tokenAuthed(w http.ResponseWriter, r *http.Request, token string, h authedHandler) {
