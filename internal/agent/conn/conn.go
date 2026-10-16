@@ -40,20 +40,21 @@ var (
 )
 
 type Runner struct {
-	Cfg       config.Config
-	Version   string
-	StatePath string       // log offsets and journal cursor
-	interval  atomic.Int64 // metrics, seconds
-	invEvery  atomic.Int64 // inventory, seconds
-	roots     atomic.Pointer[[]string]
-	sampler   host.Sampler
-	collector *inventory.Collector
-	logs      *logs.Manager
-	exec      *agentexec.Runner
-	health    *health.Scheduler
-	storage   *storage.Scanner
-	scanNow   chan struct{}
-	cur       atomic.Pointer[websocket.Conn] // live connection, nil while disconnected
+	Cfg         config.Config
+	Version     string
+	StatePath   string       // log offsets and journal cursor
+	interval    atomic.Int64 // metrics, seconds
+	invEvery    atomic.Int64 // inventory, seconds
+	roots       atomic.Pointer[[]string]
+	sampler     host.Sampler
+	collector   *inventory.Collector
+	logs        *logs.Manager
+	exec        *agentexec.Runner
+	health      *health.Scheduler
+	storage     *storage.Scanner
+	scanNow     chan struct{}
+	cur         atomic.Pointer[websocket.Conn] // live connection, nil while disconnected
+	loginsSince atomic.Int64                   // newest SSH login sent (unix ms)
 }
 
 // Run connects and reconnects until ctx ends or the server requests a restart.
@@ -131,6 +132,7 @@ func (r *Runner) session(ctx context.Context) error {
 	go r.inventoryLoop(ctx, c, r.scanNow)
 	go r.logLoop(ctx, c)
 	go r.resultLoop(ctx, c)
+	go r.loginLoop(ctx)
 
 	// Reader: handles server frames (and answers pings, which needs an active reader).
 	go func() {
@@ -205,6 +207,11 @@ func (r *Runner) session(ctx context.Context) error {
 					stop(ErrRestart) // before Close: the reader would otherwise record "connection closed" first
 					c.Close(websocket.StatusNormalClosure, "updating")
 				}()
+			case proto.TypeSecurityScan:
+				var req proto.SecurityScan
+				if json.Unmarshal(env.Data, &req) == nil {
+					go func() { r.sendCurrent(proto.TypeSecurityReport, hostcheck.SecurityScan(rootCtx, req)) }()
+				}
 			case proto.TypeDiskScan:
 				go func() { r.sendCurrent(proto.TypeDiskReport, hostcheck.DiskScan(rootCtx)) }()
 			case proto.TypeDiskClean:
@@ -363,4 +370,24 @@ func Enroll(ctx context.Context, serverURL, token string) (proto.EnrollResponse,
 		return out, errors.New("enrollment: unexpected server response")
 	}
 	return out, nil
+}
+
+// loginLoop reports new successful SSH logins every few minutes. After a start it
+// sends the last week; the server ignores logins it already has.
+func (r *Runner) loginLoop(ctx context.Context) {
+	if r.loginsSince.Load() == 0 {
+		r.loginsSince.Store(time.Now().Add(-7 * 24 * time.Hour).UnixMilli())
+	}
+	for {
+		since := r.loginsSince.Load()
+		list := hostcheck.Logins(ctx, time.UnixMilli(since+1))
+		if len(list) > 0 && r.sendCurrent(proto.TypeSSHLogins, list) == nil {
+			r.loginsSince.Store(list[len(list)-1].TS)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Minute):
+		}
+	}
 }

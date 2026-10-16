@@ -24,6 +24,7 @@ export const PAGES = [
   { to: "/incidents", label: "Incidents" },
   { to: "/domains", label: "Domains" },
   { to: "/status-page", label: "Status pages" },
+  { to: "/security", label: "Security" },
   { to: "/discoveries", label: "Discoveries" },
   { to: "/metrics", label: "Metrics" },
   { to: "/notifications", label: "Notifications" },

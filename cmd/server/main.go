@@ -42,6 +42,7 @@ import (
 	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/security"
 	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/web"
@@ -377,15 +378,35 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeDiskReport] = diskSvc.OnReport
 	hub.Handlers[proto.TypeDiskCleaned] = diskSvc.OnCleaned
-	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
-		ServerIDs: func() []string {
-			recs, _ := hub.Reg.List()
-			ids := make([]string, 0, len(recs))
-			for _, r := range recs {
-				ids = append(ids, r.ID)
+	serverIDs := func() []string {
+		recs, _ := hub.Reg.List()
+		ids := make([]string, 0, len(recs))
+		for _, r := range recs {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+	sec := security.New(d)
+	sec.Send, sec.ServerIDs, sec.AgentVersion, sec.Connected, sec.Name = hub.Send, serverIDs, diskSvc.AgentVersion, hub.Connected, serverName
+	sec.Ports, sec.Domains = appSvc.ServerPorts, appSvc.Domains
+	sec.AppPaths = func(serverID string) []string {
+		var paths []string
+		if views, err := appSvc.List(serverID); err == nil {
+			for _, v := range views {
+				if v.Path != "" {
+					paths = append(paths, v.Path)
+				}
 			}
-			return ids
-		}}
+		}
+		return paths
+	}
+	sec.Notify = func(title, body, severity string) {
+		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
+	}
+	hub.Handlers[proto.TypeSecurityReport] = sec.OnReport
+	hub.Handlers[proto.TypeSSHLogins] = sec.OnLogins
+	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
+		ServerIDs: serverIDs}
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
 	domainChecks.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
@@ -481,7 +502,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -495,6 +516,7 @@ func serve() error {
 	go updates.Run(ctx)
 	go domainChecks.Run(ctx)
 	go status.Run(ctx)
+	go sec.Run(ctx)
 	go func() { // forecasts: shortly after start, then hourly
 		for {
 			select {

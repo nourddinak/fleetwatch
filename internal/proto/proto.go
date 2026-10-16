@@ -347,3 +347,36 @@ type DiskCleaned struct {
 	Freed  int64  `json:"freed"`
 	Error  string `json:"error,omitempty"`
 }
+
+// Security: host checks and SSH logins (agent 0.9.32+).
+const (
+	TypeSecurityScan   = "security.scan"   // server → agent: SecurityScan
+	TypeSecurityReport = "security.report" // agent → server: SecurityReport
+	TypeSSHLogins      = "ssh.logins"      // agent → server: []SSHLogin, new successful logins
+)
+
+type SecurityScan struct {
+	AppPaths []string `json:"appPaths"` // folders to check for readable .env files
+}
+
+// Finding is one security issue with a plain-language fix.
+type Finding struct {
+	ID       string `json:"id"`
+	Severity string `json:"severity"` // info | warning | critical
+	Title    string `json:"title"`
+	Detail   string `json:"detail,omitempty"`
+	Fix      string `json:"fix,omitempty"`
+}
+
+type SecurityReport struct {
+	At       int64     `json:"at"`
+	Findings []Finding `json:"findings"`
+}
+
+type SSHLogin struct {
+	TS     int64  `json:"ts"`
+	User   string `json:"user"`
+	IP     string `json:"ip"`
+	Method string `json:"method"` // publickey | password | keyboard-interactive
+	Key    string `json:"key,omitempty"`
+}
