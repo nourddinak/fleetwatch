@@ -11,6 +11,9 @@ Self-hosted monitoring and control for the apps on your own VPSs. One dashboard 
 - **Alerts** as push notifications to your phone or desktop (installable app), or through ntfy, Telegram, Discord or a custom webhook (signed JSON).
 - **Domains:** SSL certificate (public and on the server) and domain registration expiry, with alerts 14 days ahead.
 - **API tokens and Prometheus:** read-only tokens for scripts and Grafana, `/metrics` for Prometheus.
+- **Disk rescue and forecasts:** see what fills a disk and clean the safe parts (journal, old logs, package and Docker caches) with one click; get warned days before a disk is full or when an app's memory keeps growing.
+- **Security:** twice-daily checks for SSH password login, waiting security updates, failed login bursts, ports open to the internet, readable .env files and sites leaking .git or .env, each with a fix; SSH logins with their country, and alerts for new countries and keys.
+- **Team and on-call:** operators and viewers with their own sign-in, optionally limited to some servers; a weekly on-call rotation with overrides that pages the person on call (push and email) and escalates when nobody acknowledges.
 - **Maintenance mode:** pause alerts for a server or app while you deploy; a summary is sent if something is still broken afterwards.
 - **Public status pages:** pages your users can check when something is down: one for everything, one per app or customer, or both (`/status`, `/status/<name>`, or their own domains), each with your logo, colours, texts, chosen apps and servers, 30-90 days of uptime history and response times, notices with update timelines (also opened automatically for outages and maintenance), email and webhook subscribers, password or team-only access, a status badge, monthly uptime reports and custom CSS/HTML.
 - **Safe actions:** start, stop, restart and reload, plus commands you define per app. There is no browser shell.

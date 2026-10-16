@@ -293,7 +293,11 @@ func (s *Store) ClearStale(typ string, cutoff time.Time, reason string) {
 }
 
 // Act applies an admin action: acknowledge, mute (24 h), resolve or reopen.
-func (s *Store) Act(id, action, note string) (Incident, error) {
+// Act changes an incident's status; by is who did it ("admin", a member, an on-call person).
+func (s *Store) Act(id, action, note, by string) (Incident, error) {
+	if by == "" {
+		by = "admin"
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	x, err := s.Get(id)
@@ -311,22 +315,22 @@ func (s *Store) Act(id, action, note string) (Incident, error) {
 			return x, valid.Error("incident is already resolved")
 		}
 		x.Status = "acknowledged"
-		x.Timeline = addTimeline(x.Timeline, now, "Acknowledged by admin")
+		x.Timeline = addTimeline(x.Timeline, now, "Acknowledged by "+by)
 	case "mute":
 		if x.Status == "resolved" {
 			return x, valid.Error("incident is already resolved")
 		}
 		x.Status, x.MutedUntil = "muted", now+24*3600_000
-		x.Timeline = addTimeline(x.Timeline, now, "Muted by admin for 24 hours (no notifications)")
+		x.Timeline = addTimeline(x.Timeline, now, "Muted by "+by+" for 24 hours (no notifications)")
 	case "resolve":
 		if x.Status == "resolved" {
 			return x, valid.Error("incident is already resolved")
 		}
 		if note == "" {
-			note = "Marked resolved by admin"
+			note = "Marked resolved by " + by
 		}
-		x.Status, x.ResolvedBy, x.ResolvedAt, x.Resolution = "resolved", "admin", now, note
-		x.Timeline = addTimeline(x.Timeline, now, "Resolved by admin: "+note)
+		x.Status, x.ResolvedBy, x.ResolvedAt, x.Resolution = "resolved", by, now, note
+		x.Timeline = addTimeline(x.Timeline, now, "Resolved by "+by+": "+note)
 	case "reopen":
 		if x.Status != "resolved" {
 			return x, valid.Error("incident is not resolved")
@@ -335,7 +339,7 @@ func (s *Store) Act(id, action, note string) (Incident, error) {
 			return x, valid.Error("a newer incident for the same problem is already open")
 		}
 		x.Status, x.ResolvedBy, x.ResolvedAt, x.Resolution = "active", "", 0, ""
-		x.Timeline = addTimeline(x.Timeline, now, "Reopened by admin")
+		x.Timeline = addTimeline(x.Timeline, now, "Reopened by "+by)
 	default:
 		return x, valid.Error("unknown action")
 	}

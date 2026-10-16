@@ -31,7 +31,7 @@ const isIOS = typeof navigator !== "undefined" && (/iPhone|iPad|iPod/.test(navig
 const isPhone = typeof navigator !== "undefined" && (isIOS || /Android|Mobile/i.test(navigator.userAgent));
 
 /** Settings → Notifications: push notifications to this browser / installed app. */
-export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
+export function PushCard({ enabled, onChange, personal }: { enabled: boolean; onChange: () => void; personal?: boolean }) {
   const { toast } = useStore();
   const devices = useApi<Device[]>("/api/push/devices");
   const [mine, setMine] = useState<PushSubscription | null>(null);
@@ -62,7 +62,7 @@ export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: ()
       const { publicKey } = await api<{ publicKey: string }>("GET", "/api/push/key");
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
       await api("POST", "/api/push/subscribe", sub.toJSON());
-      if (!enabled) await api("PUT", "/api/notifications/channels/push", { enabled: true, fields: {} });
+      if (!enabled && !personal) await api("PUT", "/api/notifications/channels/push", { enabled: true, fields: {} });
       setMine(sub);
       devices.reload();
       onChange();
@@ -80,7 +80,7 @@ export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: ()
     });
   const test = () =>
     run("test", async () => {
-      const h = await api<{ result: string; error?: string }>("POST", "/api/notifications/channels/push/test");
+      const h = await api<{ result: string; error?: string }>("POST", personal ? "/api/push/test" : "/api/notifications/channels/push/test");
       setRes(h.result === "delivered" ? { ok: true, msg: "Sent. It should appear in a few seconds." } : { ok: false, msg: h.error ?? "Failed" });
     });
   const setEnabled = (v: boolean) =>
@@ -101,8 +101,8 @@ export function PushCard({ enabled, onChange }: { enabled: boolean; onChange: ()
     <Card>
       <SectionTitle
         title="Push notifications"
-        sub="Alerts straight to your phone from this dashboard: no ntfy, Telegram or Discord needed. Turn it on from each phone that should get them."
-        action={<Toggle checked={enabled} disabled={list.length === 0 || !!busy} onChange={setEnabled} />}
+        sub={personal ? "On-call pages on your phone. Turn it on from each phone that should ring." : "Alerts straight to your phone from this dashboard: no ntfy, Telegram or Discord needed. Turn it on from each phone that should get them."}
+        action={personal ? undefined : <Toggle checked={enabled} disabled={list.length === 0 || !!busy} onChange={setEnabled} />}
       />
       {!isPhone ? (
         <p className="rounded-2xl bg-surface2 px-4 py-3 text-sm text-muted">

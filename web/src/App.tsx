@@ -81,6 +81,7 @@ const SessionSettings = page(() => import("./pages/Settings"), "SessionSettings"
 const SettingsIndex = page(() => import("./pages/Settings"), "SettingsIndex");
 const SettingsLayout = page(() => import("./pages/Settings"), "SettingsLayout");
 const SystemSettings = page(() => import("./pages/Settings"), "SystemSettings");
+const OnCallSettings = page(() => import("./pages/OnCall"), "OnCallSettings");
 const TeamSettings = page(() => import("./pages/Team"), "TeamSettings");
 const TokenSettings = page(() => import("./pages/Tokens"), "TokenSettings");
 const TwoFASettings = page(() => import("./pages/Settings"), "TwoFASettings");
@@ -141,6 +142,7 @@ export default function App() {
               <Route path="notifications" element={<NotificationSettings />} />
               <Route path="incidents" element={<IncidentRulesSettings />} />
               <Route path="team" element={<TeamSettings />} />
+              <Route path="oncall" element={<OnCallSettings />} />
               <Route path="tokens" element={<TokenSettings />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>

@@ -118,7 +118,7 @@ func decodedLen(v string) int {
 }
 
 // Subscribe stores (or refreshes) a browser subscription.
-func (s *Service) Subscribe(endpoint, p256dh, auth, device string) (Device, error) {
+func (s *Service) Subscribe(endpoint, p256dh, auth, device, memberID string) (Device, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" || len(endpoint) > 1024 {
 		return Device{}, valid.Error("push endpoint must be an https URL")
@@ -132,20 +132,21 @@ func (s *Service) Subscribe(endpoint, p256dh, auth, device string) (Device, erro
 	b := make([]byte, 6)
 	rand.Read(b)
 	d := Device{ID: "dev_" + base64.RawURLEncoding.EncodeToString(b), Device: device, CreatedAt: s.Now().UnixMilli(), Endpoint: endpoint}
-	_, err = s.db.Exec(`INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, device, created_at) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device`,
-		d.ID, endpoint, p256dh, auth, device, d.CreatedAt)
+	_, err = s.db.Exec(`INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, device, created_at, member_id) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device, member_id = excluded.member_id`,
+		d.ID, endpoint, p256dh, auth, device, d.CreatedAt, memberID)
 	return d, err
 }
 
-// Unsubscribe forgets a device by id or by endpoint.
-func (s *Service) Unsubscribe(idOrEndpoint string) error {
-	_, err := s.db.Exec(`DELETE FROM push_subscriptions WHERE id = ? OR endpoint = ?`, idOrEndpoint, idOrEndpoint)
+// Unsubscribe forgets one of a person's devices by id or by endpoint.
+func (s *Service) Unsubscribe(idOrEndpoint, memberID string) error {
+	_, err := s.db.Exec(`DELETE FROM push_subscriptions WHERE (id = ? OR endpoint = ?) AND member_id = ?`, idOrEndpoint, idOrEndpoint, memberID)
 	return err
 }
 
-func (s *Service) Devices() ([]Device, error) {
-	rows, err := s.db.Query(`SELECT id, device, created_at, last_ok_at, last_error, endpoint FROM push_subscriptions ORDER BY created_at`)
+// Devices lists one person's devices (empty ID = the owner's).
+func (s *Service) Devices(memberID string) ([]Device, error) {
+	rows, err := s.db.Query(`SELECT id, device, created_at, last_ok_at, last_error, endpoint FROM push_subscriptions WHERE member_id = ? ORDER BY created_at`, memberID)
 	if err != nil {
 		return nil, err
 	}
@@ -161,21 +162,24 @@ func (s *Service) Devices() ([]Device, error) {
 	return out, rows.Err()
 }
 
-// Count is the number of subscribed devices.
-func (s *Service) Count() int {
+// Count is the number of a person's devices (empty ID = the owner's).
+func (s *Service) Count(memberID string) int {
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM push_subscriptions`).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM push_subscriptions WHERE member_id = ?`, memberID).Scan(&n)
 	return n
 }
 
-// Send delivers m to every subscribed device. Devices the push service reports as
+// Send delivers m to the owner's devices: the "push" notification channel.
+func (s *Service) Send(ctx context.Context, m Message) error { return s.SendTo(ctx, "", m) }
+
+// SendTo delivers m to one person's devices. Devices the push service reports as
 // gone (404/410) are removed. It fails only when no device received the message.
-func (s *Service) Send(ctx context.Context, m Message) error {
+func (s *Service) SendTo(ctx context.Context, memberID string, m Message) error {
 	pub, priv, err := s.keys()
 	if err != nil {
 		return err
 	}
-	rows, err := s.db.Query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions`)
+	rows, err := s.db.Query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE member_id = ?`, memberID)
 	if err != nil {
 		return err
 	}

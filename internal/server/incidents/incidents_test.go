@@ -225,18 +225,18 @@ func TestAdminActions(t *testing.T) {
 	e.s.Ensure(Signal{Type: "high_ram", Key: "high_ram|s1", Severity: "warning", Title: "RAM", ServerID: "s1"})
 	x := e.open(t)["high_ram"]
 	for _, a := range []string{"acknowledge", "mute"} {
-		if y, err := e.s.Act(x.ID, a, ""); err != nil || (a == "mute" && !y.Muted(time.Now())) {
+		if y, err := e.s.Act(x.ID, a, "", ""); err != nil || (a == "mute" && !y.Muted(time.Now())) {
 			t.Fatalf("%s: %+v %v", a, y, err)
 		}
 	}
-	if _, err := e.s.Act(x.ID, "explode", ""); err == nil {
+	if _, err := e.s.Act(x.ID, "explode", "", ""); err == nil {
 		t.Fatal("unknown action accepted")
 	}
-	if y, _ := e.s.Act(x.ID, "resolve", "fixed swap"); y.Status != "resolved" || y.ResolvedBy != "admin" || y.Resolution != "fixed swap" {
+	if y, _ := e.s.Act(x.ID, "resolve", "fixed swap", ""); y.Status != "resolved" || y.ResolvedBy != "admin" || y.Resolution != "fixed swap" {
 		t.Fatalf("resolve: %+v", y)
 	}
 	e.s.Ensure(Signal{Type: "high_ram", Key: "high_ram|s1", Severity: "warning", Title: "RAM again", ServerID: "s1"})
-	if _, err := e.s.Act(x.ID, "reopen", ""); err == nil {
+	if _, err := e.s.Act(x.ID, "reopen", "", ""); err == nil {
 		t.Fatal("reopened while a newer incident is open")
 	}
 }

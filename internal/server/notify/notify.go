@@ -165,7 +165,7 @@ func (s *Service) Channels() ([]ChannelView, error) {
 		}
 		v := ChannelView{Provider: p, Enabled: enabled, Configured: s.configured(p, cfg), Fields: map[string]string{}, Secrets: map[string]bool{}}
 		if p == "push" && s.Push != nil {
-			v.Fields["devices"] = strconv.Itoa(s.Push.Count())
+			v.Fields["devices"] = strconv.Itoa(s.Push.Count(""))
 		}
 		for _, f := range plainFields[p] {
 			v.Fields[f] = cfg[f]
@@ -352,7 +352,7 @@ func (s *Service) enqueue(j job) {
 // at least one device is subscribed.
 func (s *Service) configured(provider string, cfg map[string]string) bool {
 	if provider == "push" {
-		return s.Push != nil && s.Push.Count() > 0
+		return s.Push != nil && s.Push.Count("") > 0
 	}
 	return len(cfg) > 0
 }

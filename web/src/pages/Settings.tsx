@@ -21,6 +21,7 @@ const NAV = [
   ["notifications", "Notifications"],
   ["incidents", "Incident rules"],
   ["team", "Team"],
+  ["oncall", "On-call"],
   ["tokens", "API tokens"],
   ["system", "System"],
 ];
@@ -99,10 +100,11 @@ export function AccountSettings() {
   };
   return (
     <div className="space-y-6">
+      {me.role !== "owner" && <PushCard personal enabled onChange={() => {}} />}
       <Card>
         <SectionTitle title="Profile" />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Username" hint="Set on the server with ADMIN_USERNAME"><Input value={me.username} disabled /></Field>
+          <Field label="Username" hint={me.role === "owner" ? "Set on the server with ADMIN_USERNAME" : `Team member (${me.role}); the owner manages your access.`}><Input value={me.username} disabled /></Field>
           <Field label="Display name"><Input value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></Field>
           <Field label="Email" className="sm:col-span-2"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         </div>

@@ -62,15 +62,15 @@ func TestPush(t *testing.T) {
 	}
 	p256dh, a := browserKeys(t)
 	for _, bad := range [][3]string{{"http://insecure/x", p256dh, a}, {srv.URL + "/s", "short", a}, {srv.URL + "/s", p256dh, "short"}} {
-		if _, err := s.Subscribe(bad[0], bad[1], bad[2], "test"); err == nil {
+		if _, err := s.Subscribe(bad[0], bad[1], bad[2], "test", ""); err == nil {
 			t.Errorf("accepted %v", bad)
 		}
 	}
-	if _, err := s.Subscribe(srv.URL+"/push/1", p256dh, a, "Chrome on Android"); err != nil {
+	if _, err := s.Subscribe(srv.URL+"/push/1", p256dh, a, "Chrome on Android", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Subscribe(srv.URL+"/push/1", p256dh, a, "Chrome on Android"); err != nil || s.Count() != 1 {
-		t.Fatalf("resubscribing duplicated the device: %d %v", s.Count(), err)
+	if _, err := s.Subscribe(srv.URL+"/push/1", p256dh, a, "Chrome on Android", ""); err != nil || s.Count("") != 1 {
+		t.Fatalf("resubscribing duplicated the device: %d %v", s.Count(""), err)
 	}
 
 	if err := s.Send(context.Background(), Message{Title: "api is offline", Body: "…", Severity: "critical"}); err != nil {
@@ -79,7 +79,7 @@ func TestPush(t *testing.T) {
 	if got.Load() != 1 || !strings.HasPrefix(auth, "vapid t=") || !strings.Contains(auth, "k="+pub) || enc != "aes128gcm" || urgency != "high" {
 		t.Fatalf("push request: auth %q encoding %q urgency %q", auth, enc, urgency)
 	}
-	devs, _ := s.Devices()
+	devs, _ := s.Devices("")
 	if len(devs) != 1 || devs[0].LastOKAt == 0 {
 		t.Fatalf("devices: %+v", devs)
 	}
@@ -89,7 +89,31 @@ func TestPush(t *testing.T) {
 	if err := s.Send(context.Background(), Message{Title: "x"}); err == nil {
 		t.Fatal("send to a gone device reported success")
 	}
-	if s.Count() != 0 {
+	if s.Count("") != 0 {
 		t.Fatal("gone device kept")
+	}
+}
+
+func TestDevicesPerPerson(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	s := New(d, box)
+	key := base64.RawURLEncoding.EncodeToString(append([]byte{4}, make([]byte, 64)...))
+	auth := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
+	s.Subscribe("https://push.example/owner", key, auth, "owner phone", "")
+	s.Subscribe("https://push.example/ops", key, auth, "ops phone", "mem_1")
+	if s.Count("") != 1 || s.Count("mem_1") != 1 {
+		t.Fatalf("counts: %d %d", s.Count(""), s.Count("mem_1"))
+	}
+	if list, _ := s.Devices("mem_1"); len(list) != 1 || list[0].Device != "ops phone" {
+		t.Fatalf("member devices: %+v", list)
+	}
+	s.Unsubscribe("https://push.example/owner", "mem_1") // not theirs
+	if s.Count("") != 1 {
+		t.Fatal("a member removed the owner's phone")
 	}
 }

@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -39,6 +40,7 @@ import (
 	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/notify"
+	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
@@ -272,7 +274,27 @@ func serve() error {
 		v, err := appSvc.Get(appID)
 		return override, err != nil || v.Flags.Notifications
 	}
-	incStore.Notify = notifier.Incident
+	onCall := oncall.New(d, nil)
+	onCall.Incidents, onCall.Muted = incStore, maint.Active
+	onCall.PublicURL = func() string { return os.Getenv("OPS_PUBLIC_URL") }
+	onCall.People = func() []oncall.Person {
+		var out []oncall.Person
+		if p, err := authSvc.Profile(); err == nil {
+			out = append(out, oncall.Person{ID: oncall.Owner, Name: cmp.Or(p.DisplayName, p.Username), Email: p.Email, Devices: pushSvc.Count("")})
+		}
+		if list, err := authSvc.ListMembers(); err == nil {
+			for _, m := range list {
+				if !m.Disabled {
+					out = append(out, oncall.Person{ID: m.ID, Name: cmp.Or(m.DisplayName, m.Username), Email: m.Email, Devices: pushSvc.Count(m.ID)})
+				}
+			}
+		}
+		return out
+	}
+	incStore.Notify = func(ev incidents.Event) {
+		notifier.Incident(ev)
+		onCall.OnEvent(ev)
+	}
 	status := statuspage.New(d, incStore)
 	status.DataDir, status.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
 	status.AppState = func(id string) (string, string, int64, bool) {
@@ -305,6 +327,34 @@ func serve() error {
 		return "outage", rec.CreatedAt, true
 	}
 	status.Mail = statuspage.NewMailer(d, box)
+	// An on-call page: push to that person's phones (tapping opens the acknowledge
+	// button) and an email when they have an address and email is set up.
+	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
+		why := ""
+		if level > 0 {
+			why = " Nobody acknowledged in time, so it came to you."
+		}
+		memberID := p.ID
+		if p.ID == oncall.Owner {
+			memberID = ""
+		}
+		var errs []error
+		if err := pushSvc.SendTo(ctx, memberID, push.Message{Title: "On call: " + x.Title, Body: x.Type + " on " + serverName(x.ServerID) + "." + why,
+			URL: ackURL, Tag: "oncall-" + x.ID, Severity: "critical"}); err != nil {
+			errs = append(errs, err)
+		}
+		if p.Email != "" && status.Mail.Ready() {
+			text := fmt.Sprintf("%s\n%s on %s.%s\n\nI'm on it (stops paging): %s\nDashboard: %s/#/incidents\n",
+				x.Title, x.Type, serverName(x.ServerID), why, ackURL, strings.TrimRight(os.Getenv("OPS_PUBLIC_URL"), "/"))
+			if err := status.Mail.Send(ctx, statuspage.Mail{To: []string{p.Email}, Subject: "[On call] " + x.Title, Text: text}); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(errs) == 2 || (len(errs) == 1 && (p.Email == "" || !status.Mail.Ready())) {
+			return errors.Join(errs...)
+		}
+		return nil
+	}
 	status.Latency = func(appID string) []proto.HealthResult {
 		list, _ := appSvc.HealthHistory(appID, 3000)
 		return list
@@ -502,7 +552,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -517,6 +567,7 @@ func serve() error {
 	go domainChecks.Run(ctx)
 	go status.Run(ctx)
 	go sec.Run(ctx)
+	go onCall.Run(ctx)
 	go func() { // forecasts: shortly after start, then hourly
 		for {
 			select {

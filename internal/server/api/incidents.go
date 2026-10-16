@@ -47,12 +47,12 @@ func (s *server) getIncident(w http.ResponseWriter, r *http.Request, _ auth.Sess
 	writeJSON(w, http.StatusOK, x)
 }
 
-func (s *server) actIncident(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) actIncident(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ Note string }
 	if r.ContentLength > 0 && !decode(w, r, &in) {
 		return
 	}
-	x, err := s.Incidents.Act(r.PathValue("id"), r.PathValue("action"), in.Note)
+	x, err := s.Incidents.Act(r.PathValue("id"), r.PathValue("action"), in.Note, sess.Username)
 	if err != nil {
 		fail(w, err)
 		return
