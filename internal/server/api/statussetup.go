@@ -35,6 +35,18 @@ func publicIP(s string) bool {
 	return err == nil && a.IsGlobalUnicast() && !a.IsPrivate() && !a.IsLoopback()
 }
 
+// interfaceIP is the first public IPv4 address on this machine's own interfaces ("" on
+// clouds that put servers behind NAT, like AWS).
+func interfaceIP() string {
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && publicIP(n.IP.String()) {
+			return n.IP.String()
+		}
+	}
+	return ""
+}
+
 func lookup(ctx context.Context, host string) []string {
 	addrs, _ := net.DefaultResolver.LookupHost(ctx, host)
 	slices.Sort(addrs)
@@ -64,6 +76,9 @@ func (s *server) statusSetupInfo(w http.ResponseWriter, r *http.Request, _ auth.
 		if i := slices.IndexFunc(dash, publicIP); i >= 0 {
 			out.ServerIP = dash[i] // the dashboard's name points straight at its server
 		}
+	}
+	if out.ServerIP == "" {
+		out.ServerIP = interfaceIP() // most VPSs have their public IPv4 on the network card
 	}
 
 	// Behind Cloudflare's proxy (or reached by IP) a CNAME to the dashboard would not

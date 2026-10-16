@@ -47,7 +47,7 @@ func TestHistory(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	ok := Defaults()
-	ok.Domain = " Status.Example.COM "
+	ok.Domain = " https://Status.Example.COM/ "
 	ok.Logo = "https://cdn.example.com/brand/logo.svg?v=2"
 	ok.Notices = []Notice{{Title: "Upgrade", Status: "maintenance", Start: 1}}
 	if err := ok.Validate(); err != nil || ok.Domain != "status.example.com" || ok.Notices[0].ID == "" {

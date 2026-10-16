@@ -255,6 +255,7 @@ export function StatusEditor() {
   };
   const publicUrl = pageUrl(saved.data.slug, saved.data.domain);
   const path = `/status${saved.data.slug ? "/" + saved.data.slug : ""}`;
+  const suggested = `${c.slug || "status"}.${location.hostname.split(".").slice(-2).join(".")}`;
 
   const sample: PublicStatus = {
     ...c,
@@ -309,9 +310,9 @@ export function StatusEditor() {
               </div>
             </Field>
             <Field label="Own domain (optional)" className="mt-4" hint="Not needed: the public link above already works. With a domain, that name shows only this page; the dashboard is not reachable through it.">
-              <Input value={c.domain} placeholder={`${c.slug || "status"}.${location.hostname.split(".").slice(-2).join(".")}`} onChange={(e) => set({ domain: e.target.value })} />
+              <Input value={c.domain} placeholder={suggested} onChange={(e) => set({ domain: e.target.value })} />
             </Field>
-            <DomainGuide domain={c.domain} savedDomain={saved.data.domain} savedAt={saved.data.updatedAt} />
+            <DomainGuide domain={c.domain} example={suggested} savedDomain={saved.data.domain} savedAt={saved.data.updatedAt} onUse={(v) => set({ domain: v })} />
           </Card>
 
           <Card>
@@ -542,8 +543,13 @@ function Step({ n, title, done, children }: { n: number; title: string; done?: b
 }
 
 /** Setup of a page's own domain, with this dashboard's real names and live checks. */
-function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDomain: string; savedAt?: number }) {
-  const d = domain.trim().toLowerCase();
+const hostRe = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+function DomainGuide({ domain, example, savedDomain, savedAt, onUse }: { domain: string; example: string; savedDomain: string; savedAt?: number; onUse: (v: string) => void }) {
+  const raw = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const bad = raw !== "" && !hostRe.test(raw);
+  const typed = bad ? "" : raw;
+  const d = typed || example; // nothing typed yet: the same steps for a suggested name
   const [info, setInfo] = useState<Setup | null>(null);
   const [n, setN] = useState(0);
   const [applying, setApplying] = useState(false);
@@ -569,10 +575,26 @@ function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDo
     return () => clearTimeout(t);
   }, [ws, polls, savedDomain, d]);
 
+  if (bad) {
+    const fixed = raw.replace(/[^a-z0-9.-]+/g, "-").replace(/-*\.-*/g, ".").replace(/^[-.]+|[-.]+$/g, "");
+    return (
+      <div className="mt-3 rounded-2xl border border-crit/40 bg-crit-soft p-4 text-xs text-crit">
+        <p>
+          <b>{raw}</b> is not a valid web address.{" "}
+          {raw.includes("_") ? "Domain names cannot contain underscores (_), and HTTPS certificates are never issued for them." : "Domain names may only use letters, numbers, dashes and dots."}
+        </p>
+        {hostRe.test(fixed) && (
+          <Button size="sm" variant="secondary" className="mt-3" onClick={() => onUse(fixed)}>
+            Use {fixed}
+          </Button>
+        )}
+      </div>
+    );
+  }
   if (!d) return null;
   if (!info || info.domain !== d) return <div className="mt-3 flex items-center gap-2 text-xs text-muted"><Spinner size={12} /> Checking {d}…</div>;
 
-  const saved = savedDomain === d;
+  const saved = !!typed && savedDomain === d;
   const served = saved && ws?.state === "ok" && ws.last?.domains.includes(d);
   const cf = info.dashboardProxied;
   const apply = async () => {
@@ -587,7 +609,7 @@ function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDo
   };
   const dnsMsg = {
     ok: <span className="text-ok">✓ {d} points to this server.</span>,
-    cloudflare: <span className="text-ok">✓ {d} is on Cloudflare's proxy (orange cloud).{cf ? "" : " For the first setup, switch it to DNS only so the server can get its certificate."}</span>,
+    cloudflare: <span className="text-ok">✓ {d} is on Cloudflare's proxy (orange cloud). If HTTPS does not start working, set it to DNS only (grey) until it does.</span>,
     elsewhere: <span className="text-warn">{d} points somewhere else ({info.resolves.join(", ")}). Change the record as above.</span>,
     missing: <span className="text-warn">{d} has no record yet. New records can take a few minutes to show up.</span>,
   }[info.dns];
@@ -595,11 +617,16 @@ function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDo
   return (
     <div className="mt-3 rounded-2xl border border-line p-4 text-xs text-muted">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-fg">Set up {d}</span>
-        <Button size="sm" variant="ghost" onClick={() => setN((x) => x + 1)}>Check again</Button>
+        <span className="text-sm font-medium text-fg">{typed ? `Set up ${d}` : "How to use your own domain"}</span>
+        {typed && <Button size="sm" variant="ghost" onClick={() => setN((x) => x + 1)}>Check again</Button>}
       </div>
+      {!typed && (
+        <p className="-mt-2 mb-4">
+          Shown for <span className="font-mono text-fg">{d}</span> as an example. Type the name you want in the box above to get your exact steps and a live check.
+        </p>
+      )}
       <ol className="space-y-5">
-        <Step n={1} title={`Add this DNS record where ${info.zone} is managed`} done={info.dns === "ok" || info.dns === "cloudflare"}>
+        <Step n={1} title={`Add this DNS record where ${info.zone} is managed`} done={!!typed && (info.dns === "ok" || info.dns === "cloudflare")}>
           <div className="overflow-x-auto rounded-xl border border-line">
             <table className="w-full text-left text-xs">
               <thead className="bg-surface2 text-muted">
@@ -626,7 +653,19 @@ function DomainGuide({ domain, savedDomain, savedAt }: { domain: string; savedDo
             </p>
           )}
           {info.recordType === "CNAME" && <p>A CNAME follows the dashboard if its server ever changes. If your provider has no CNAME for this name, use an <b>A</b> record with the same IP as <span className="font-mono">{info.dashboardHost}</span>.</p>}
-          <p>{dnsMsg}</p>
+          <p>
+            {info.serverIp ? (
+              <>
+                Your server's public IP: <span className="select-all font-mono text-fg">{info.serverIp}</span>
+                {info.recordType === "CNAME" ? " (only needed for an A record)." : "."}
+              </>
+            ) : (
+              <>
+                This dashboard could not see your server's public IP: find it in your VPS provider's panel, or run <span className="select-all font-mono text-fg">curl -4 ifconfig.me</span> on the server.
+              </>
+            )}
+          </p>
+          {typed && <p>{dnsMsg}</p>}
         </Step>
 
         <Step n={2} title="Web server and HTTPS" done={!!served}>
@@ -644,6 +683,9 @@ sudo systemctl reload caddy`}</CodeBlock>
           ) : ws.state === "error" ? (
             <div className="space-y-2">
               <p className="text-crit">Caddy setup failed: {ws.last?.error}</p>
+              <p>
+                To see the problem on the server, run <span className="select-all font-mono text-fg">sudo caddy validate --config /etc/caddy/Caddyfile</span>. The file and line it names is where to fix it.
+              </p>
               <Button size="sm" variant="secondary" disabled={applying} onClick={apply}>{applying && <Spinner size={12} />} Try again</Button>
             </div>
           ) : served ? (

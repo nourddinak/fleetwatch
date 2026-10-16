@@ -103,6 +103,8 @@ func text(name, v string, max int) error {
 func (c *Config) Validate() error {
 	c.Title, c.Domain = strings.TrimSpace(c.Title), strings.ToLower(strings.TrimSpace(c.Domain))
 	c.Slug = strings.ToLower(strings.TrimSpace(c.Slug))
+	// A pasted address works too: https://status.example.com/ is status.example.com.
+	c.Domain = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(c.Domain, "https://"), "http://"), "/")
 	if c.Slug != "" && !slugRe.MatchString(c.Slug) {
 		return valid.Error("page address may use a-z, 0-9 and dashes (up to 40)")
 	}
@@ -141,7 +143,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.Domain != "" && !hostRe.MatchString(c.Domain) {
-		return valid.Error("status page domain must look like status.example.com")
+		return valid.Error("the domain may only use letters, numbers, dashes and dots, like status.example.com (no underscores or spaces)")
 	}
 	switch c.HistoryDays {
 	case 30, 60, 90:

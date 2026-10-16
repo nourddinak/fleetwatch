@@ -206,6 +206,11 @@ func caddySync(dataDir, listen string, res *CaddyResult) error {
 	if err != nil {
 		return fmt.Errorf("Caddy is not set up on this server (%s is missing); point the domain at your own web server instead", Caddyfile)
 	}
+	// An error already in the existing configuration (often a site file imported from
+	// elsewhere) would make any reload fail: say so instead of blaming the new site.
+	if out, err := caddyValidate(Caddyfile); err != nil {
+		return fmt.Errorf("your current Caddy configuration already has an error, so nothing was changed. Fix it, then press Try again. Caddy says: %s", lastLine(out, err))
+	}
 	oldSite, siteErr := os.ReadFile(caddySite)
 
 	site := "# Written by Fleetwatch for status pages with their own domain. Changes here are overwritten.\n"

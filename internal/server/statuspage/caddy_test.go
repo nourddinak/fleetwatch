@@ -11,11 +11,17 @@ import (
 func TestCaddySync(t *testing.T) {
 	data, etc := t.TempDir(), t.TempDir()
 	Caddyfile, caddySite = filepath.Join(etc, "Caddyfile"), filepath.Join(etc, "fleetwatch-status.caddy")
-	validateErr, reloads := error(nil), 0
-	caddyValidate = func(string) ([]byte, error) { return []byte("Error: boom"), validateErr }
+	read := func(p string) string { b, _ := os.ReadFile(p); return string(b) }
+	reloads := 0
+	// The stand-in rejects a "status.c.com" site and a Caddyfile marked "broken".
+	caddyValidate = func(string) ([]byte, error) {
+		if strings.Contains(read(caddySite), "status.c.com") || strings.Contains(read(Caddyfile), "broken") {
+			return []byte("Error: boom"), errors.New("exit 1")
+		}
+		return []byte("Valid configuration"), nil
+	}
 	caddyReload = func() ([]byte, error) { reloads++; return nil, nil }
 	os.WriteFile(Caddyfile, []byte("import /etc/caddy/fleetwatch.caddy"), 0o644)
-	read := func(p string) string { b, _ := os.ReadFile(p); return string(b) }
 	request := func(domains string) {
 		os.WriteFile(filepath.Join(data, domainsFile), []byte(domains), 0o644)
 		os.WriteFile(filepath.Join(data, requestFile), []byte("caddy\n"), 0o644)
@@ -49,12 +55,10 @@ func TestCaddySync(t *testing.T) {
 	}
 
 	// Caddy rejects the result: everything is put back as it was.
-	before, beforeMain := read(caddySite), read(Caddyfile)
 	os.WriteFile(Caddyfile, []byte("example.com {\n}\n"), 0o644)
-	beforeMain = read(Caddyfile)
-	validateErr = errors.New("exit 1")
+	before, beforeMain := read(caddySite), read(Caddyfile)
 	request("status.c.com\n")
-	if err := CaddySync(data, "127.0.0.1:8090"); err == nil || !strings.Contains(err.Error(), "boom") {
+	if err := CaddySync(data, "127.0.0.1:8090"); err == nil || !strings.Contains(err.Error(), "rejected the new site") {
 		t.Fatalf("validate failure: %v", err)
 	}
 	if read(caddySite) != before || read(Caddyfile) != beforeMain {
@@ -63,7 +67,17 @@ func TestCaddySync(t *testing.T) {
 	if !strings.Contains(read(filepath.Join(data, caddyResult)), `"ok":false`) {
 		t.Fatal("failure not reported")
 	}
-	validateErr = nil
+
+	// The existing configuration is already broken: nothing is touched, and it says so.
+	os.WriteFile(Caddyfile, []byte("broken {\n"), 0o644)
+	request("status.d.com\n")
+	if err := CaddySync(data, "127.0.0.1:8090"); err == nil || !strings.Contains(err.Error(), "already has an error") {
+		t.Fatalf("broken config: %v", err)
+	}
+	if read(caddySite) != before || read(Caddyfile) != "broken {\n" {
+		t.Fatal("files changed although the config was already broken")
+	}
+	os.WriteFile(Caddyfile, []byte(beforeMain), 0o644)
 
 	// Names from the unprivileged side are checked again by root.
 	for _, bad := range []string{"evil.com {\n}\nother.com", "a.com;rm", "localhost", "*.example.com"} {
