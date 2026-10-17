@@ -56,7 +56,7 @@ type Site struct {
 	EnvKeys    []string `json:"envKeys"`
 
 	Status     string `json:"status"` // building | deploying | live | failed | waiting
-	Local      bool   `json:"local"`  // on the dashboard's own server: at <dashboard>/sites/<name>/
+	AtPath     bool   `json:"atPath"` // at <dashboard>/sites/<name>/: served from this machine or relayed from its preview address
 	Commit     string `json:"commit"` // deployed commit of the branch (for builds: of the source)
 	Message    string `json:"message"`
 	DeployedAt int64  `json:"deployedAt"`
@@ -137,8 +137,8 @@ func (s *Service) Get(id string) (Site, error) {
 	}
 	err = json.Unmarshal([]byte(raw), &st)
 	st.tried = tried
-	st.Local = s.IsLocal(st.ServerID)
 	st.Preview = s.preview(st.Name, st.ServerID)
+	st.AtPath = s.IsLocal(st.ServerID) || st.Preview != ""
 	return st, err
 }
 
@@ -295,6 +295,9 @@ func parseEnv(text string) ([]string, error) {
 	return keys, nil
 }
 
+// PathAgent is the first agent whose Caddy sites also answer under /sites/<name>/.
+const PathAgent = "0.9.46"
+
 func (s *Service) supported(serverID string) error {
 	if s.AgentVersion != nil && release.Newer(MinAgent, s.AgentVersion(serverID)) {
 		return valid.Error("this server's agent is too old for sites; update the agent first")
@@ -359,8 +362,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	if err := checkPlan(plan); err != nil {
 		return Site{}, err
 	}
-	local := s.IsLocal(in.ServerID)
-	if local && plan.Kind == "build" {
+	if atPath := s.IsLocal(in.ServerID) || s.preview(name, in.ServerID) != ""; atPath && plan.Kind == "build" {
 		plan = underPath(plan, "/sites/"+name+"/")
 	}
 	domains, err := checkDomains(in.Domains)
@@ -609,6 +611,11 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 	if err != nil {
 		return err
 	}
+	// The agent's Caddy strips /sites/<name> since 0.9.46, which own domains of a site
+	// built for that path need.
+	if len(st.Domains) > 0 && st.Plan.BasePath != "" && s.AgentVersion != nil && release.Newer(PathAgent, s.AgentVersion(st.ServerID)) {
+		return valid.Error("this server's agent is too old to serve this site on its own domain; update the agent first")
+	}
 	domains := slices.Clone(st.Domains)
 	if st.Preview = s.preview(st.Name, st.ServerID); st.Preview != "" {
 		domains = append([]string{st.Preview}, domains...)
@@ -692,9 +699,9 @@ func (s *Service) Sync(ctx context.Context) {
 		return
 	}
 	for _, st := range s.List() {
-		// A built site on the dashboard's server must be built for its path (sites made
+		// A built site at <dashboard>/sites/<name>/ must be built for that path (sites made
 		// before path addresses existed are moved over once).
-		if base := "/sites/" + st.Name + "/"; st.Plan.Kind == "build" && s.IsLocal(st.ServerID) && st.Plan.BasePath != base {
+		if base := "/sites/" + st.Name + "/"; st.Plan.Kind == "build" && st.AtPath && st.Plan.BasePath != base {
 			st.Plan = underPath(st.Plan, base)
 			if err := s.setupBuild(ctx, st, ""); err == nil {
 				st.Status = "building"

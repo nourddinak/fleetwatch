@@ -2,6 +2,7 @@ package sites
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -75,5 +76,59 @@ func TestBuildUnderPath(t *testing.T) {
 	}
 	if p := underPath(Plan{Kind: "build", Framework: "Next.js (static export)", Build: "npm run build"}, "/sites/x/"); !strings.Contains(p.Note, "basePath") {
 		t.Error("no Next.js note")
+	}
+}
+
+func TestRelayRemoteSite(t *testing.T) {
+	var got *http.Request
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		if r.URL.Path == "/docs" {
+			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "x", Value: "y"})
+		w.Write([]byte("remote " + r.URL.Path))
+	}))
+	defer upstream.Close()
+	old := relayTransport
+	relayTransport = upstream.Client().Transport.(*http.Transport).Clone()
+	relayTransport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", upstream.Listener.Addr().String())
+	}
+	relayTransport.TLSClientConfig.ServerName = "example.com" // the test certificate's name
+	defer func() { relayTransport = old }()
+
+	s, _, _ := setup(t)
+	s.PublicIP = func(string) string { return "203.0.113.7" }
+	s.save(Site{ID: "site_1", Name: "shop", ServerID: "s1", Plan: Plan{Kind: "build"}})
+	if st, _ := s.Get("site_1"); !st.AtPath || st.Preview != "shop.203-0-113-7.sslip.io" {
+		t.Fatalf("%+v", st)
+	}
+	h := s.Files()
+	req := httptest.NewRequest(http.MethodGet, "/sites/shop/assets/app.js?v=1", nil)
+	req.Header.Set("Cookie", "session=secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || got == nil {
+		t.Fatalf("%d %q", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "remote /assets/app.js" || got.Host != "shop.203-0-113-7.sslip.io" || got.URL.RawQuery != "v=1" {
+		t.Fatalf("%d %q host=%s", w.Code, w.Body.String(), got.Host)
+	}
+	if got.Header.Get("Cookie") != "" || w.Header().Get("Set-Cookie") != "" || !strings.HasPrefix(w.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("cookies or sandbox: %v / %v", got.Header, w.Header())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sites/shop/docs", nil))
+	if w.Header().Get("Location") != "/sites/shop/docs/" {
+		t.Fatalf("redirect: %q", w.Header().Get("Location"))
+	}
+	// No public IPv4: nothing to relay from.
+	s.PublicIP = func(string) string { return "" }
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sites/shop/", nil))
+	if w.Code != 404 {
+		t.Fatal(w.Code)
 	}
 }

@@ -145,7 +145,8 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 		site = fmt.Sprintf("# Site %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, own)
 		res.Caddy = "repository"
 	case len(req.Domains) > 0:
-		site = fmt.Sprintf("# Site %s, written by Fleetwatch. Changes here are overwritten.\n%s {\n\troot * %s\n\tencode zstd gzip\n", req.Name, strings.Join(req.Domains, ", "), live(req.Name))
+		// Also answers under /sites/<name>/, the path builds are made for (the dashboard's address).
+		site = fmt.Sprintf("# Site %s, written by Fleetwatch. Changes here are overwritten.\n%s {\n\turi strip_prefix /sites/%s\n\troot * %s\n\tencode zstd gzip\n", req.Name, strings.Join(req.Domains, ", "), req.Name, live(req.Name))
 		if req.SPA {
 			site += "\ttry_files {path} {path}/ /index.html\n"
 		}

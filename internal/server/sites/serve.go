@@ -3,11 +3,15 @@ package sites
 import (
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // LocalRoot is where the agent on the dashboard's own server publishes sites.
@@ -36,7 +40,52 @@ func localDir(name string) string {
 // reachable at <dashboard>/sites/<name>/.
 func (s *Service) Local(name string) bool { return localDir(name) != "" }
 
-// Files serves /sites/<name>/… from the site's live release on this machine.
+// relayTransport fetches sites on other servers from their preview address.
+var relayTransport = &http.Transport{
+	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
+	MaxIdleConnsPerHost:   8,
+	IdleConnTimeout:       90 * time.Second,
+}
+
+// sandboxHeaders are set on every response under /sites/.
+func sandboxHeaders(h http.Header) {
+	h.Set("Content-Security-Policy", sandbox)
+	h.Set("Access-Control-Allow-Origin", "*") // the sandboxed page loads its own module scripts cross-origin
+	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	h.Del("X-Frame-Options")
+	h.Del("Set-Cookie")
+}
+
+// relay passes a request on to the site's server (its Caddy answers on the preview
+// address), without the visitor's dashboard cookies.
+func relay(w http.ResponseWriter, r *http.Request, name, host, file string) {
+	p := &httputil.ReverseProxy{
+		Transport: relayTransport,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL = &url.URL{Scheme: "https", Host: host, Path: "/" + file, RawQuery: r.URL.RawQuery}
+			pr.Out.Host = host
+			for _, k := range []string{"Cookie", "Authorization", "X-Csrf-Token"} {
+				pr.Out.Header.Del(k)
+			}
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			sandboxHeaders(resp.Header)
+			if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") {
+				resp.Header.Set("Location", "/sites/"+name+loc)
+			}
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "The site's server did not answer.", http.StatusBadGateway)
+		},
+	}
+	p.ServeHTTP(w, r)
+}
+
+// Files serves /sites/<name>/… from the site's live release on this machine, or relays
+// it from the server the site is on.
 func (s *Service) Files() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/sites/")
@@ -49,7 +98,7 @@ func (s *Service) Files() http.Handler {
 			}
 		}
 		dir := localDir(name)
-		if site == nil || dir == "" || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		if site == nil || (dir == "" && site.Preview == "") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			http.NotFound(w, r)
 			return
 		}
@@ -57,11 +106,12 @@ func (s *Service) Files() http.Handler {
 			http.Redirect(w, r, "/sites/"+name+"/", http.StatusMovedPermanently)
 			return
 		}
+		if dir == "" {
+			relay(w, r, name, site.Preview, file)
+			return
+		}
 		h := w.Header()
-		h.Set("Content-Security-Policy", sandbox)
-		h.Set("Access-Control-Allow-Origin", "*") // the sandboxed page loads its own module scripts cross-origin
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Del("X-Frame-Options")
+		sandboxHeaders(h)
 		root, err := os.OpenRoot(dir) // nothing outside the release can be opened, whatever the path says
 		if err != nil {
 			http.NotFound(w, r)

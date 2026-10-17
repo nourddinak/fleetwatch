@@ -35,7 +35,7 @@ interface Site {
   error?: string;
   buildUrl?: string;
   createdAt: number;
-  local: boolean;
+  atPath: boolean;
 }
 interface Deploy {
   ts: number;
@@ -90,7 +90,7 @@ export function Sites() {
 function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
   const { getServer, me, toast } = useStore();
   const [tone, label] = STATUS[site.status];
-  const urls = [site.local ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains].filter(Boolean);
+  const urls = [site.atPath ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains].filter(Boolean);
   const redeploy = async () => {
     try {
       await api("POST", `/api/sites/${site.id}/redeploy`);
@@ -122,7 +122,7 @@ function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
           </a>
         ))}
         {urls.length === 0 && <span className="text-xs text-muted">No address yet: add your domain in its settings (the server has no public IPv4 for a preview address).</span>}
-        {site.local && <span className="self-center text-[11px] text-muted">Sandboxed under the dashboard's domain: no cookies or localStorage. Add your own domain for those.</span>}
+        {site.atPath && <span className="self-center text-[11px] text-muted">Sandboxed under the dashboard's domain: no cookies or localStorage. Add your own domain for those.</span>}
       </div>
       <div className="mt-3 text-xs text-muted">
         {site.commit ? <>Deployed <span className="font-mono">{site.commit.slice(0, 7)}</span> {site.message ? `“${site.message}”` : ""} {relTime(site.deployedAt)}</> : "Not deployed yet"}
@@ -304,7 +304,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         {owner && (
           <section className="space-y-3">
             <SectionTitle title="Addresses" />
-            {site.local ? (
+            {site.atPath ? (
               <p className="text-xs text-muted">Always at <a className="underline" href={`/sites/${site.name}/`} target="_blank" rel="noreferrer">{location.host}/sites/{site.name}/</a> (this dashboard's domain).</p>
             ) : site.preview && <p className="text-xs text-muted">Preview address (always on): <a className="underline" href={`https://${site.preview}`} target="_blank" rel="noreferrer">{site.preview}</a></p>}
             <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" />
