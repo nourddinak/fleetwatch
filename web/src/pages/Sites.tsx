@@ -90,7 +90,7 @@ export function Sites() {
 function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
   const { getServer, me, toast } = useStore();
   const [tone, label] = STATUS[site.status];
-  const urls = [site.atPath ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains].filter(Boolean);
+  const urls = [site.atPath ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains.filter((d) => d !== site.preview)].filter(Boolean);
   const redeploy = async () => {
     try {
       await api("POST", `/api/sites/${site.id}/redeploy`);

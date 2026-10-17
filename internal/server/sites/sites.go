@@ -408,7 +408,7 @@ var ErrPermissions = valid.Error("the GitHub app is missing permissions sites ne
 
 func permissionError(err error) error {
 	if err != nil && (strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "not accessible by integration")) {
-		return ErrPermissions
+		return valid.Error(string(ErrPermissions) + " (GitHub said: " + err.Error() + ")")
 	}
 	return err
 }
@@ -432,7 +432,12 @@ func (s *Service) setupBuildOnce(ctx context.Context, st Site, env string) error
 		return fmt.Errorf("could not add the build workflow to the repository: %w", err)
 	}
 	if !changed { // the commit adding it starts a build by itself; otherwise ask for one
-		return s.GitHub.Dispatch(ctx, st.Repo, workflowFile, st.Branch)
+		if err := s.GitHub.Dispatch(ctx, st.Repo, workflowFile, st.Branch); err != nil {
+			if run, e := s.GitHub.LastRun(ctx, st.Repo, workflowFile); e == nil && run != nil && run.Status != "completed" {
+				return nil // a build is already running: that one goes live
+			}
+			return err
+		}
 	}
 	return nil
 }

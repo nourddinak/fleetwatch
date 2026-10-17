@@ -3,6 +3,7 @@ package sites
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,13 +19,14 @@ import (
 
 // fakeGH is a repository host in memory.
 type fakeGH struct {
-	mu       sync.Mutex
-	files    map[string]map[string]string // repo → path → content
-	heads    map[string]string            // repo@branch → sha
-	puts     []string
-	secrets  map[string]string
-	dispatch int
-	run      *github.Run
+	mu          sync.Mutex
+	files       map[string]map[string]string // repo → path → content
+	heads       map[string]string            // repo@branch → sha
+	puts        []string
+	secrets     map[string]string
+	dispatch    int
+	dispatchErr error
+	run         *github.Run
 }
 
 func (f *fakeGH) Connected() bool { return true }
@@ -73,15 +75,19 @@ func (f *fakeGH) File(_ context.Context, repo, path, _ string) ([]byte, string, 
 func (f *fakeGH) PutFile(_ context.Context, repo, path, _ string, content []byte, _ string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	changed := f.files[repo][path] != string(content)
 	f.files[repo][path] = string(content)
 	f.puts = append(f.puts, path)
-	return true, nil
+	return changed, nil
 }
 func (f *fakeGH) SetSecret(_ context.Context, repo, name, value string) error {
 	f.secrets[repo+"/"+name] = value
 	return nil
 }
-func (f *fakeGH) Dispatch(context.Context, string, string, string) error { f.dispatch++; return nil }
+func (f *fakeGH) Dispatch(context.Context, string, string, string) error {
+	f.dispatch++
+	return f.dispatchErr
+}
 func (f *fakeGH) LastRun(context.Context, string, string) (*github.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -257,3 +263,24 @@ func TestHelpers(t *testing.T) {
 }
 
 func sleep() { time.Sleep(10 * time.Millisecond) }
+
+// Retry while GitHub is already building: the refused dispatch is not a failure.
+func TestRedeployWhileBuilding(t *testing.T) {
+	s, gh, _ := setup(t)
+	st, err := s.Create(context.Background(), Input{Repo: "me/shop", ServerID: "s1"}, "Nour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh.dispatchErr = errors.New("GitHub answered 403: Resource not accessible by integration")
+	gh.run = &github.Run{ID: 1, Status: "in_progress"}
+	if err := s.Redeploy(context.Background(), st.ID, "Nour"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = s.Get(st.ID); st.Status != "building" || st.Error != "" {
+		t.Fatalf("%s %q", st.Status, st.Error)
+	}
+	gh.run = &github.Run{ID: 1, Status: "completed", Conclusion: "success"}
+	if err := s.Redeploy(context.Background(), st.ID, "Nour"); err == nil || !strings.Contains(err.Error(), "GitHub said") {
+		t.Fatalf("a refused build with nothing running: %v", err)
+	}
+}

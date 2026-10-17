@@ -48,6 +48,15 @@ func fakeGitHub(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]any{"token": "ghs_x", "expires_at": time.Now().Add(time.Hour)})
 		case r.URL.Path == "/installation/repositories" && r.Header.Get("Authorization") == "token ghs_x":
 			w.Write([]byte(`{"repositories":[{"full_name":"nourddinak/shop","private":true,"default_branch":"main","html_url":"https://github.com/nourddinak/shop"}]}`))
+		case r.URL.Path == "/repos/nourddinak/shop/installation" && checkJWT(r):
+			w.Write([]byte(`{"id":7}`))
+		case r.URL.Path == "/repos/nourddinak/shop/actions/workflows/fleetwatch.yml/dispatches":
+			if r.Header.Get("Authorization") != "token ghs_x" { // a token from before the permission was granted
+				w.WriteHeader(403)
+				w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+				return
+			}
+			w.WriteHeader(204)
 		case r.Method == "DELETE" && r.URL.Path == "/app/installations/7" && checkJWT(r):
 			w.WriteHeader(204)
 		default:
@@ -110,6 +119,14 @@ func TestConnectFlow(t *testing.T) {
 	repos, err := s.Repos(ctx)
 	if err != nil || len(repos) != 1 || repos[0].FullName != "nourddinak/shop" {
 		t.Fatal(repos, err)
+	}
+
+	// A cached token made before permissions were granted is replaced, not trusted.
+	s.mu.Lock()
+	s.tokens[7] = token{"ghs_old", time.Now().Add(time.Hour)}
+	s.mu.Unlock()
+	if err := s.Dispatch(ctx, "nourddinak/shop", "fleetwatch.yml", "main"); err != nil {
+		t.Fatal(err)
 	}
 
 	// Webhooks: only signed deliveries count.

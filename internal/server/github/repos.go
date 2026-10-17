@@ -67,7 +67,18 @@ func (s *Service) repoCall(ctx context.Context, method, repo, sub string, body, 
 	if err != nil {
 		return err
 	}
-	return s.call(ctx, method, p+sub, "token "+tok, body, out)
+	err = s.call(ctx, method, p+sub, "token "+tok, body, out)
+	if err != nil && strings.Contains(err.Error(), "403") {
+		// Tokens keep the permissions they were made with: after permissions are granted
+		// on GitHub, a cached one is still refused. Try once more with a fresh one.
+		s.mu.Lock()
+		clear(s.tokens)
+		s.mu.Unlock()
+		if tok, err2 := s.RepoToken(ctx, repo); err2 == nil {
+			err = s.call(ctx, method, p+sub, "token "+tok, body, out)
+		}
+	}
+	return err
 }
 
 // RepoInfo is a repository's default branch.
