@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ExternalLink, GitBranch, Plus, RefreshCw, Rocket, Settings2, Trash2 } from "lucide-react";
+import { Check, ExternalLink, FileCode2, FolderGit2, GitBranch, Globe, Hammer, Info, KeyRound, Link2, Lock, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Trash2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, SectionTitle, Select, Spinner, Textarea, ToggleRow, type Tone } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, type Tone } from "../components/ui";
+import { cn } from "../utils/cn";
 
 interface Plan {
   kind: "static" | "build";
@@ -158,13 +159,46 @@ function PlanFields({ plan, onChange }: { plan: Plan; onChange: (p: Plan) => voi
   );
 }
 
+/** One part of the new-site form: an icon on a guide line, a title, then the fields. */
+function Step({ icon, title, sub, last, children }: { icon: ReactNode; title: string; sub?: string; last?: boolean; children: ReactNode }) {
+  return (
+    <section className="grid gap-3 sm:grid-cols-[2.25rem_1fr] sm:gap-4">
+      <div className="hidden flex-col items-center sm:flex">
+        <span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface2 text-fg">{icon}</span>
+        {!last && <span className="mt-2 w-px flex-1 bg-line" />}
+      </div>
+      <div className={cn("min-w-0 space-y-3", !last && "pb-4")}>
+        <div className="sm:pt-1">
+          <h4 className="text-sm font-semibold">{title}</h4>
+          {sub && <p className="text-xs text-muted">{sub}</p>}
+        </div>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** An input with an icon (or fixed text) at its start. */
+function IconInput({ icon, prefix, className, ...p }: InputHTMLAttributes<HTMLInputElement> & { icon?: ReactNode; prefix?: string }) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2 text-muted">
+        {icon}
+        {prefix && <span className="font-mono text-[13px]">{prefix}</span>}
+      </span>
+      <Input {...p} className={cn(prefix ? "pl-[5.6rem] font-mono text-[13px]" : "pl-10", className)} />
+    </div>
+  );
+}
+
 function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Site) => void }) {
   const { servers, toast } = useStore();
-  const repos = useApi<{ repo: { fullName: string; defaultBranch: string } }[]>("/api/integrations/github/repos");
+  const repos = useApi<{ repo: { fullName: string; defaultBranch: string; private: boolean } }[]>("/api/integrations/github/repos");
   const [f, setF] = useState({ repo: "", serverId: "", branch: "", name: "", domains: "", env: "" });
   const [plan, setPlan] = useState<Plan | null>(null);
   const [exampleFile, setExampleFile] = useState("");
   const [busy, setBusy] = useState("");
+  const [q, setQ] = useState("");
   const enrolled = servers.filter((s) => s.enrolled);
   useEffect(() => {
     if (!f.serverId && enrolled[0]) setF((x) => ({ ...x, serverId: enrolled[0].id }));
@@ -196,51 +230,149 @@ function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: S
     }
     setBusy("");
   };
+  const pick = (repo: string) => {
+    setF({ ...f, repo, branch: "", env: "" });
+    detect(repo, "");
+  };
+  const list = (repos.data ?? []).filter(({ repo }) => repo.fullName.toLowerCase().includes(q.trim().toLowerCase()));
+  // The folder the server picks when the name is left empty (the repository's name).
+  const name = f.name || (f.repo.split("/")[1] ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  const server = enrolled.find((s) => s.id === f.serverId);
   return (
-    <Modal open wide onClose={onClose} title="New site"
-      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={!plan || !f.serverId || !!busy} onClick={create}>{busy === "create" && <Spinner size={14} />} Create site</Button></>}>
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Repository">
-            {repos.error ? <p className="text-sm text-crit">{repos.error}</p> : (
-              <Select value={f.repo} onChange={(e) => { setF({ ...f, repo: e.target.value, branch: "" }); detect(e.target.value, ""); }}>
-                <option value="">{repos.data ? "Pick a repository…" : "Loading…"}</option>
-                {repos.data?.map(({ repo }) => <option key={repo.fullName} value={repo.fullName}>{repo.fullName}</option>)}
-              </Select>
-            )}
-          </Field>
-          <Field label="Server">
-            <Select value={f.serverId} onChange={(e) => setF({ ...f, serverId: e.target.value })}>
-              {enrolled.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Branch" hint="Pushes to it are deployed.">
-            <Input value={f.branch} onChange={(e) => setF({ ...f, branch: e.target.value })} onBlur={() => f.repo && detect(f.repo, f.branch)} placeholder="main" />
-          </Field>
-          <Field label="Name" hint="Folder /var/www/<name>. Empty: the repository's name.">
-            <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          </Field>
-        </div>
-        {busy === "detect" && <LoadingState label="Looking at the repository…" />}
-        {plan && (
-          <div className="space-y-3 rounded-2xl bg-surface2 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="info">{plan.framework}</Badge>
-              <span className="text-sm text-muted">{plan.kind === "build" ? "Built by GitHub Actions on every push, then deployed." : "Published as is on every push."}</span>
-            </div>
-            {plan.note && <p className="text-xs text-warn">{plan.note}</p>}
-            <PlanFields plan={plan} onChange={setPlan} />
-            {plan.kind === "build" && (
-              <Field label=".env for the build" hint={`${exampleFile ? `Filled from ${exampleFile}: put in your values. ` : ""}Stored encrypted here and as the FLEETWATCH_ENV secret on GitHub; written to .env before building. Anything it holds ends up in the public JavaScript, so no server secrets.`}>
-                <Textarea rows={4} value={f.env} onChange={(e) => setF({ ...f, env: e.target.value })} placeholder="VITE_API_URL=https://api.example.com" />
-              </Field>
-            )}
+    <Modal open wide onClose={onClose}
+      title={
+        <span className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-fg text-bg"><Rocket size={16} /></span>
+          <span>
+            <span className="block">New site</span>
+            <span className="block text-xs font-normal text-muted">Deploy a GitHub repository to one of your servers</span>
+          </span>
+        </span>
+      }
+      footer={
+        <div className="flex w-full flex-wrap items-center justify-between gap-3">
+          <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-[11px] text-muted">
+            {f.repo ? <><FolderGit2 size={13} className="shrink-0" />{server?.name ?? "…"}:/var/www/{name || "…"}</> : "Pick a repository to start"}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button disabled={!plan || !f.serverId || !!busy} onClick={create}>
+              {busy === "create" ? <Spinner size={14} /> : <Rocket size={14} />} Deploy site
+            </Button>
           </div>
+        </div>
+      }>
+      <div>
+        <Step icon={<Github size={16} />} title="Repository" sub="From the repositories the GitHub app can see.">
+          {repos.error ? (
+            <p className="text-sm text-crit">{repos.error}</p>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-line">
+              <div className="border-b border-line p-2">
+                <SearchInput value={q} onChange={setQ} placeholder="Search repositories…" />
+              </div>
+              <div className="max-h-52 overflow-y-auto p-1.5">
+                {!repos.data && <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted"><Spinner size={14} /> Loading repositories…</div>}
+                {repos.data && list.length === 0 && (
+                  <p className="px-3 py-3 text-sm text-muted">No repository matches. <Link to="/settings/integrations" className="underline">Give the app access to more</Link></p>
+                )}
+                {list.map(({ repo }) => {
+                  const [owner, rname] = repo.fullName.split("/");
+                  const on = f.repo === repo.fullName;
+                  return (
+                    <button key={repo.fullName} type="button" onClick={() => pick(repo.fullName)}
+                      className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition", on ? "bg-surface2 ring-1 ring-fg/25" : "hover:bg-surface2")}>
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-surface text-muted"><Github size={15} /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{rname}</span>
+                        <span className="block truncate text-[11px] text-muted">{owner}</span>
+                      </span>
+                      {repo.private && <Lock size={13} className="shrink-0 text-muted" aria-label="Private" />}
+                      <span className="hidden shrink-0 items-center gap-1 rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-muted sm:flex"><GitBranch size={11} />{repo.defaultBranch}</span>
+                      <span className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-full", on ? "bg-fg text-bg" : "border border-line")}>{on && <Check size={12} />}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Step>
+
+        <Step icon={<ServerIcon size={16} />} title="Destination" sub="Caddy serves the site from this folder on the server.">
+          {enrolled.length === 0 && (
+            <p className="flex items-center gap-2 rounded-2xl border border-dashed border-line px-4 py-3 text-sm text-muted">
+              <ServerIcon size={14} /> No server yet. <Link to="/servers/new" className="underline">Add one</Link> first.
+            </p>
+          )}
+          <div className="grid gap-2 sm:grid-cols-3">
+            {enrolled.map((s) => {
+              const on = f.serverId === s.id;
+              return (
+                <button key={s.id} type="button" onClick={() => setF({ ...f, serverId: s.id })}
+                  className={cn("flex items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition", on ? "border-fg/40 bg-surface2" : "border-line hover:bg-surface2")}>
+                  <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-surface2 text-muted">
+                    <ServerIcon size={15} />
+                    <span className={cn("absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface", s.status === "disconnected" ? "bg-crit" : s.status === "pending" ? "bg-muted" : "bg-ok")} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{s.name}</span>
+                    <span className="block truncate font-mono text-[11px] text-muted">{s.ip || s.hostname}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Branch" hint="Every push to it deploys again.">
+              <IconInput icon={<GitBranch size={14} />} value={f.branch} onChange={(e) => setF({ ...f, branch: e.target.value })} onBlur={() => f.repo && detect(f.repo, f.branch)} placeholder="main" />
+            </Field>
+            <Field label="Folder" hint="Empty: the repository's name.">
+              <IconInput prefix="/var/www/" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={name || "my-site"} />
+            </Field>
+          </div>
+        </Step>
+
+        {f.repo && (
+          <Step icon={<Hammer size={16} />} title="Build" sub="Found by looking at the repository.">
+            {busy === "detect" && <div className="flex items-center gap-2 rounded-2xl border border-line px-4 py-3 text-sm text-muted"><Spinner size={14} /> Looking at the repository…</div>}
+            {plan && (
+              <div className="space-y-3 rounded-2xl border border-line bg-surface2/60 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface text-fg">{plan.kind === "build" ? <Workflow size={16} /> : <FileCode2 size={16} />}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-sm font-medium">{plan.framework} <Badge tone={plan.kind === "build" ? "info" : "ok"}>{plan.kind === "build" ? "Build" : "Static"}</Badge></div>
+                    <p className="text-xs text-muted">{plan.kind === "build" ? "GitHub Actions builds every push, then the output goes live." : "The files are published as they are on every push."}</p>
+                  </div>
+                </div>
+                {plan.note && <p className="flex gap-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn"><Info size={14} className="mt-px shrink-0" />{plan.note}</p>}
+                <PlanFields plan={plan} onChange={setPlan} />
+                {plan.kind === "build" && (
+                  <Field label={exampleFile ? `.env for the build (from ${exampleFile})` : ".env for the build"}
+                    hint="Encrypted here and stored as a GitHub Actions secret. It ends up in the public JavaScript, so no server secrets.">
+                    <div className="relative">
+                      <KeyRound size={14} className="pointer-events-none absolute left-4 top-3.5 text-muted" />
+                      <Textarea rows={4} value={f.env} onChange={(e) => setF({ ...f, env: e.target.value })} placeholder="VITE_API_URL=https://api.example.com" className="pl-10 font-mono text-[12px]" />
+                    </div>
+                  </Field>
+                )}
+              </div>
+            )}
+          </Step>
         )}
-        <Field label="Your domains (optional)" hint="Point each at the server (DNS A record); Caddy gets the HTTPS certificate. A preview address is added on its own.">
-          <Input value={f.domains} onChange={(e) => setF({ ...f, domains: e.target.value })} placeholder="www.example.com, example.com" />
-        </Field>
-        <p className="text-xs text-muted">If the repository has a Caddyfile at its top, Caddy uses it for this site instead of the generated one.</p>
+
+        <Step icon={<Globe size={16} />} title="Addresses" last>
+          {f.repo && name && (
+            <div className="flex items-center gap-3 rounded-2xl border border-line px-4 py-2.5">
+              <Link2 size={14} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{location.host}/sites/{name}/</span>
+              <Badge tone="ok">Automatic</Badge>
+            </div>
+          )}
+          <Field label="Your own domains (optional)" hint="Point each at the server with a DNS A record; Caddy gets the HTTPS certificate.">
+            <IconInput icon={<Globe size={14} />} value={f.domains} onChange={(e) => setF({ ...f, domains: e.target.value })} placeholder="example.com, www.example.com" />
+          </Field>
+          <p className="flex items-center gap-2 text-[11px] text-muted"><FileCode2 size={12} className="shrink-0" />A Caddyfile at the top of the repository is used for the site instead of the generated one.</p>
+        </Step>
       </div>
     </Modal>
   );
