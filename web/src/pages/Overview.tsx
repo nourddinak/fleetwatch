@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { ArrowRight, Boxes, Cpu, HardDrive, MemoryStick, Radar, Server as ServerIcon } from "lucide-react";
+import { AlertOctagon, AlertTriangle, ArrowRight, Bell, Boxes, CheckCircle2, Cpu, Database, Flame, Globe, HardDrive, HeartPulse, LayoutGrid, MemoryStick, Network, PlugZap, Radar, ServerCrash, Server as ServerIcon, ShieldCheck, Unplug, Wrench } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
 import { AppStatus, Bar, Card, EmptyState, Gate, MetricCard, PageHeader, SectionTitle, ServerStatus, levelTone, Button } from "../components/ui";
 import { IncidentCard, IncidentDrawer, NotificationItem } from "../components/domain";
@@ -68,15 +68,15 @@ export function Overview() {
       />
       <Gate>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <MetricCard to="/servers" label="Total servers" value={servers.length} sub={`${providers} providers`} />
-          <MetricCard to="/servers" label="Servers online" value={connected.length} tone="ok" sub={`${servers.filter((s) => s.status === "online").length} fully healthy`} />
-          <MetricCard to="/servers" label="Servers offline" value={offline} tone={offline ? "crit" : undefined} sub="agent disconnected" />
-          <MetricCard to="/applications" label="Applications" value={apps.length} sub={`${pm2} PM2 · ${apps.length - pm2} systemd`} />
-          <MetricCard to="/applications?status=online" label="Apps online" value={appsOnline} tone="ok" sub={`${Math.round((appsOnline / Math.max(1, apps.length)) * 100)}% of fleet`} />
-          <MetricCard to="/applications?status=down" label="Apps offline" value={appsOff} tone={appsOff ? "crit" : undefined} sub={appsStopped ? `crashed or offline · ${appsStopped} stopped on purpose` : "crashed or offline"} />
-          <MetricCard to="/applications?status=warning" label="Apps with warnings" value={appsWarn} tone={appsWarn ? "warn" : undefined} sub="warning or failing health" />
-          <MetricCard to="/incidents" label="Active incidents" value={active.length} tone={active.length ? "warn" : "ok"} sub={`${incidents.filter((i) => i.status === "acknowledged").length} acknowledged`} />
-          <MetricCard to="/incidents" label="Critical incidents" value={critical.length} tone={critical.length ? "crit" : "ok"} sub="need attention" />
+          <MetricCard to="/servers" icon={<ServerIcon size={14} />} label="Total servers" value={servers.length} sub={`${providers} providers`} />
+          <MetricCard to="/servers" icon={<PlugZap size={14} />} label="Servers online" value={connected.length} tone="ok" sub={`${servers.filter((s) => s.status === "online").length} fully healthy`} />
+          <MetricCard to="/servers" icon={<Unplug size={14} />} label="Servers offline" value={offline} tone={offline ? "crit" : undefined} sub="agent disconnected" />
+          <MetricCard to="/applications" icon={<Boxes size={14} />} label="Applications" value={apps.length} sub={`${pm2} PM2 · ${apps.length - pm2} systemd`} />
+          <MetricCard to="/applications?status=online" icon={<CheckCircle2 size={14} />} label="Apps online" value={appsOnline} tone="ok" sub={`${Math.round((appsOnline / Math.max(1, apps.length)) * 100)}% of fleet`} />
+          <MetricCard to="/applications?status=down" icon={<ServerCrash size={14} />} label="Apps offline" value={appsOff} tone={appsOff ? "crit" : undefined} sub={appsStopped ? `crashed or offline · ${appsStopped} stopped on purpose` : "crashed or offline"} />
+          <MetricCard to="/applications?status=warning" icon={<AlertTriangle size={14} />} label="Apps with warnings" value={appsWarn} tone={appsWarn ? "warn" : undefined} sub="warning or failing health" />
+          <MetricCard to="/incidents" icon={<AlertOctagon size={14} />} label="Active incidents" value={active.length} tone={active.length ? "warn" : "ok"} sub={`${incidents.filter((i) => i.status === "acknowledged").length} acknowledged`} />
+          <MetricCard to="/incidents" icon={<Flame size={14} />} label="Critical incidents" value={critical.length} tone={critical.length ? "crit" : "ok"} sub="need attention" />
           <MetricCard label="Average CPU" value={avg("cpu")} unit="%" icon={<Cpu size={14} />} progress={Number(avg("cpu"))} sub="connected servers" />
           <MetricCard label="Average RAM" value={avg("ram")} unit="%" icon={<MemoryStick size={14} />} progress={Number(avg("ram"))} sub="connected servers" />
           <MetricCard to="/metrics" label="Total disk usage" value={Math.round(diskPct(diskUsed, diskTotal))} unit="%" icon={<HardDrive size={14} />} progress={diskPct(diskUsed, diskTotal)} sub={`${Math.round(diskUsed)} / ${diskTotal} GB`} />
@@ -84,19 +84,19 @@ export function Overview() {
 
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-1">
-            <SectionTitle title="Infrastructure summary" sub="What the agents currently report" />
+            <SectionTitle icon={<LayoutGrid size={15} />} title="Infrastructure summary" sub="What the agents currently report" />
             <dl className="divide-y divide-line text-sm">
-              {[
-                ["Servers", `${servers.length} across ${providers} providers`],
-                ["Applications", `${apps.length} monitored (${pm2} PM2, ${apps.length - pm2} systemd)`],
-                ["Domains served", `${domains} public domains`],
-                ["Listening ports", `${apps.reduce((n, a) => n + a.ports.length, 0)} app ports · ${publicPorts} publicly bound`],
-                ["Project storage", fmtMB(apps.reduce((n, a) => n + a.folderMB, 0))],
-                ["Agents", `${connected.length} connected · ${offline} disconnected`],
-                ["Discoveries", `${discoveries.length} awaiting review`],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-4 py-2.5">
-                  <dt className="text-muted">{k}</dt>
+              {([
+                [ServerIcon, "Servers", `${servers.length} across ${providers} providers`],
+                [Boxes, "Applications", `${apps.length} monitored (${pm2} PM2, ${apps.length - pm2} systemd)`],
+                [Globe, "Domains served", `${domains} public domains`],
+                [Network, "Listening ports", `${apps.reduce((n, a) => n + a.ports.length, 0)} app ports · ${publicPorts} publicly bound`],
+                [Database, "Project storage", fmtMB(apps.reduce((n, a) => n + a.folderMB, 0))],
+                [ShieldCheck, "Agents", `${connected.length} connected · ${offline} disconnected`],
+                [Radar, "Discoveries", `${discoveries.length} awaiting review`],
+              ] as const).map(([Icon, k, v]) => (
+                <div key={k} className="flex items-center justify-between gap-4 py-2.5">
+                  <dt className="flex items-center gap-2 text-muted"><Icon size={14} />{k}</dt>
                   <dd className="text-right font-medium">{v}</dd>
                 </div>
               ))}
@@ -104,19 +104,19 @@ export function Overview() {
           </Card>
 
           <Card className="lg:col-span-2">
-            <SectionTitle title="Resource overview" sub="CPU · RAM · Disk per server" action={<More to="/metrics" label="Metrics explorer" />} />
+            <SectionTitle icon={<Cpu size={15} />} title="Resource overview" sub="CPU · RAM · Disk per server" action={<More to="/metrics" label="Metrics explorer" />} />
             <div className="space-y-4">
               {servers.map((s) => (
                 <Link key={s.id} to={`/servers/${s.id}`} className={cn("block rounded-2xl p-2 transition hover:bg-surface2", s.status === "disconnected" && "opacity-60")}>
                   <div className="mb-2 flex items-center justify-between gap-2 text-sm">
-                    <span className="font-medium">{s.name}</span>
+                    <span className="flex min-w-0 items-center gap-2 font-medium"><ServerIcon size={14} className="shrink-0 text-muted" /><span className="truncate">{s.name}</span></span>
                     <ServerStatus status={s.status} />
                   </div>
                   <div className="grid grid-cols-3 gap-4 text-[11px] text-muted">
-                    {([["CPU", s.cpu], ["RAM", s.ram], ["Disk", s.disk]] as const).map(([l, v]) => (
+                    {([["CPU", s.cpu, Cpu], ["RAM", s.ram, MemoryStick], ["Disk", s.disk, HardDrive]] as const).map(([l, v, Icon]) => (
                       <div key={l}>
                         <div className="mb-1 flex justify-between">
-                          <span>{l}</span>
+                          <span className="flex items-center gap-1"><Icon size={11} />{l}</span>
                           <span className={cn("tabular-nums", levelTone(v) !== "ok" && (levelTone(v) === "crit" ? "text-crit" : "text-warn"))}>{v.toFixed(0)}%</span>
                         </div>
                         <Bar value={v} />
@@ -129,9 +129,9 @@ export function Overview() {
           </Card>
 
           <Card>
-            <SectionTitle title="Servers requiring attention" action={<More to="/servers" />} />
+            <SectionTitle icon={<Wrench size={15} />} title="Servers requiring attention" action={<More to="/servers" />} />
             {needServers.length === 0 ? (
-              <EmptyState title="All servers healthy" desc="No server needs attention right now." />
+              <EmptyState icon={<CheckCircle2 size={20} />} title="All servers healthy" desc="No server needs attention right now." />
             ) : (
               <ul className="space-y-1">
                 {needServers.map((s) => {
@@ -139,8 +139,9 @@ export function Overview() {
                   const why = s.status === "disconnected" ? "Agent heartbeat lost" : s.disk > 85 ? `Disk ${s.disk.toFixed(0)}% full` : s.cpu > 85 ? `CPU ${s.cpu.toFixed(0)}%` : `${c.incidents} active incident${c.incidents === 1 ? "" : "s"}`;
                   return (
                     <li key={s.id}>
-                      <Link to={`/servers/${s.id}`} className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
-                        <div className="min-w-0">
+                      <Link to={`/servers/${s.id}`} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
+                        <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", s.status === "disconnected" || s.status === "critical" ? "bg-crit-soft text-crit" : "bg-warn-soft text-warn")}><ServerIcon size={14} /></span>
+                        <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium">{s.name}</div>
                           <div className="truncate text-xs text-muted">{why}</div>
                         </div>
@@ -154,15 +155,16 @@ export function Overview() {
           </Card>
 
           <Card>
-            <SectionTitle title="Applications requiring attention" action={<More to="/applications?status=attention" />} />
+            <SectionTitle icon={<HeartPulse size={15} />} title="Applications requiring attention" action={<More to="/applications?status=attention" />} />
             {needApps.length === 0 ? (
-              <EmptyState title="Everything is running" />
+              <EmptyState icon={<CheckCircle2 size={20} />} title="Everything is running" />
             ) : (
               <ul className="max-h-[360px] space-y-1 overflow-y-auto">
                 {needApps.slice(0, 9).map((a) => (
                   <li key={a.id}>
-                    <Link to={`/applications/${a.id}`} className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
-                      <div className="min-w-0">
+                    <Link to={`/applications/${a.id}`} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-surface2 text-muted"><Boxes size={14} /></span>
+                      <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium">{a.name}</div>
                         <div className="truncate text-xs text-muted">{servers.find((s) => s.id === a.serverId)?.name} · {a.manager}</div>
                       </div>
@@ -175,7 +177,7 @@ export function Overview() {
           </Card>
 
           <Card>
-            <SectionTitle title="Application status" sub={`${apps.length} applications`} />
+            <SectionTitle icon={<Boxes size={15} />} title="Application status" sub={`${apps.length} applications`} />
             <div className="mb-4 flex h-4 overflow-hidden rounded-full bg-neutral-soft">
               {dist.map((d) => (
                 <button key={d.s} onClick={() => nav(`/applications?status=${d.s}`)} title={`${d.s}: ${d.n}`} className={cn("h-full transition hover:opacity-70", STATUS_COLOR[d.s])} style={{ width: `${(d.n / apps.length) * 100}%` }} />
@@ -195,20 +197,23 @@ export function Overview() {
           </Card>
 
           <Card className="lg:col-span-2">
-            <SectionTitle title="Recent incidents" action={<More to="/incidents" />} />
-            {recent.length === 0 ? <EmptyState title="No open incidents" /> : <div className="space-y-2">{recent.map((i) => <IncidentCard key={i.id} incident={i} onOpen={() => setDrawer(i.id)} />)}</div>}
+            <SectionTitle icon={<AlertOctagon size={15} />} title="Recent incidents" action={<More to="/incidents" />} />
+            {recent.length === 0 ? <EmptyState icon={<CheckCircle2 size={20} />} title="No open incidents" /> : <div className="space-y-2">{recent.map((i) => <IncidentCard key={i.id} incident={i} onOpen={() => setDrawer(i.id)} />)}</div>}
           </Card>
 
           <Card>
-            <SectionTitle title="Recent recoveries" action={<More to="/incidents" />} />
+            <SectionTitle icon={<HeartPulse size={15} />} title="Recent recoveries" action={<More to="/incidents" />} />
             {recov.length === 0 ? (
               <EmptyState title="No recoveries yet" />
             ) : (
               <ul className="space-y-3">
                 {recov.map((i) => (
-                  <li key={i.id} onClick={() => setDrawer(i.id)} className="cursor-pointer rounded-2xl p-2 hover:bg-surface2">
-                    <div className="text-sm font-medium">{i.title}</div>
-                    <div className="text-xs text-muted">Resolved {relTime(i.resolvedAt ?? i.lastAt)} · {servers.find((s) => s.id === i.serverId)?.name}</div>
+                  <li key={i.id} onClick={() => setDrawer(i.id)} className="flex cursor-pointer items-start gap-3 rounded-2xl p-2 hover:bg-surface2">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ok-soft text-ok"><CheckCircle2 size={14} /></span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{i.title}</div>
+                      <div className="text-xs text-muted">Resolved {relTime(i.resolvedAt ?? i.lastAt)} · {servers.find((s) => s.id === i.serverId)?.name}</div>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -216,15 +221,16 @@ export function Overview() {
           </Card>
 
           <Card>
-            <SectionTitle title="Recent discoveries" action={<More to="/discoveries" />} />
+            <SectionTitle icon={<Radar size={15} />} title="Recent discoveries" action={<More to="/discoveries" />} />
             {discoveries.length === 0 || empty ? (
               <EmptyState title="Nothing new discovered" icon={<Radar size={20} />} />
             ) : (
               <ul className="space-y-1">
                 {discoveries.slice(0, 4).map((d) => (
                   <li key={d.id}>
-                    <Link to="/discoveries" className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
-                      <div className="min-w-0">
+                    <Link to="/discoveries" className="flex items-center gap-3 rounded-2xl px-3 py-2.5 hover:bg-surface2">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-info-soft text-info"><Radar size={14} /></span>
+                      <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium">{d.name}</div>
                         <div className="truncate text-xs text-muted">{d.headline}</div>
                       </div>
@@ -237,7 +243,7 @@ export function Overview() {
           </Card>
 
           <Card className="lg:col-span-2">
-            <SectionTitle title="Recent notifications" action={<More to="/notifications" />} />
+            <SectionTitle icon={<Bell size={15} />} title="Recent notifications" action={<More to="/notifications" />} />
             {empty ? <EmptyState title="No notifications" /> : <div>{notifications.slice(0, 6).map((n) => <NotificationItem key={n.id} n={n} onClick={() => nav("/notifications")} />)}</div>}
           </Card>
         </div>

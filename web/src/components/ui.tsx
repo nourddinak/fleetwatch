@@ -35,12 +35,15 @@ export function Card({ className, children, pad = true, onClick }: { className?:
   );
 }
 
-export function SectionTitle({ title, sub, action, className }: { title: ReactNode; sub?: ReactNode; action?: ReactNode; className?: string }) {
+export function SectionTitle({ title, sub, action, className, icon }: { title: ReactNode; sub?: ReactNode; action?: ReactNode; className?: string; icon?: ReactNode }) {
   return (
     <div className={cn("mb-4 flex flex-wrap items-start justify-between gap-2", className)}>
-      <div className="min-w-0">
-        <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
-        {sub && <p className="mt-0.5 text-xs text-muted">{sub}</p>}
+      <div className="flex min-w-0 items-start gap-3">
+        {icon && <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-line bg-surface2 text-fg">{icon}</span>}
+        <div className={cn("min-w-0", icon && "pt-0.5")}>
+          <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
+          {sub && <p className="mt-0.5 text-xs text-muted">{sub}</p>}
+        </div>
       </div>
       {action}
     </div>
@@ -144,9 +147,9 @@ export function Bar({ value, tone, className }: { value: number; tone?: Tone; cl
 export function MetricCard({ label, value, unit, sub, tone, to, icon, progress, className }: { label: string; value: ReactNode; unit?: string; sub?: ReactNode; tone?: Tone; to?: string; icon?: ReactNode; progress?: number; className?: string }) {
   const body = (
     <div className={cn("h-full rounded-3xl border border-line bg-surface p-4 transition", to && "hover:border-fg/30", className)}>
-      <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted">
-        <span>{label}</span>
-        {icon}
+      <div className="mb-2 flex items-center gap-2.5 text-xs text-muted">
+        {icon && <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-lg", tone ? toneBg[tone] : "bg-surface2 text-fg")}>{icon}</span>}
+        <span className="min-w-0 truncate">{label}</span>
       </div>
       <div className="flex items-baseline gap-1">
         <span className={cn("text-2xl font-semibold tracking-tight tabular-nums", tone && toneText[tone])}>{value}</span>
