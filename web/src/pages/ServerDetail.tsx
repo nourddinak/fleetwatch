@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { Activity, Boxes, Cpu, Gpu, HardDrive, KeyRound, MemoryStick, Network, Plug, Plus, PowerOff, RefreshCw, Timer, Trash2 } from "lucide-react";
+import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
 import { api, toSeries, useApi, type ApiError, type EnrollInfo, type MetricKey, type MetricPoint, type ServerEvent } from "../api/client";
 import type { Range, Server } from "../mock/types";
@@ -38,16 +38,25 @@ export function ServerDetail() {
     <>
       <PageHeader
         back={{ to: "/servers", label: "All servers" }}
-        title={s.name}
+        title={
+          <span className="flex items-center gap-3">
+            <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-line bg-surface2 text-fg">
+              <ServerIcon size={18} />
+              <span className={cn("absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-bg",
+                { online: "bg-ok", warning: "bg-warn", critical: "bg-crit", disconnected: "bg-crit", pending: "bg-muted" }[s.status], s.status === "disconnected" && "pulse-dot")} />
+            </span>
+            <span className="min-w-0 break-words">{s.name}</span>
+          </span>
+        }
         badge={<ServerStatus status={s.status} />}
         sub={
           <span className="flex flex-wrap gap-x-4 gap-y-1">
-            {s.hostname && <span>{s.hostname}</span>}
-            {s.ip && <span className="font-mono">{s.ip}</span>}
-            {s.os && <span>{s.os}</span>}
-            {s.provider && <span>{s.provider}</span>}
-            <span className={s.status === "disconnected" ? "text-crit" : ""}>Agent {agentState}{s.agentVersion && ` · v${s.agentVersion}`}</span>
-            {s.status !== "pending" && <span>Uptime {s.status === "disconnected" ? "unknown" : fmtDur(s.uptimeSec)}</span>}
+            {s.hostname && <span className="inline-flex items-center gap-1.5"><ServerIcon size={13} />{s.hostname}</span>}
+            {s.ip && <span className="inline-flex items-center gap-1.5 font-mono"><Network size={13} />{s.ip}</span>}
+            {s.os && <span className="inline-flex items-center gap-1.5"><Monitor size={13} />{s.os}</span>}
+            {s.provider && <span className="inline-flex items-center gap-1.5"><Cloud size={13} />{s.provider}</span>}
+            <span className={cn("inline-flex items-center gap-1.5", s.status === "disconnected" && "text-crit")}>{s.status === "disconnected" ? <Unplug size={13} /> : <Bot size={13} />}Agent {agentState}{s.agentVersion && ` · v${s.agentVersion}`}</span>
+            {s.status !== "pending" && <span className="inline-flex items-center gap-1.5"><Timer size={13} />Up {s.status === "disconnected" ? "unknown" : fmtDur(s.uptimeSec)}</span>}
           </span>
         }
         actions={
@@ -59,16 +68,16 @@ export function ServerDetail() {
       />
       <LinkTabs
         tabs={[
-          { to: base, label: "Overview", end: true },
-          { to: `${base}/applications`, label: "Applications", badge: <Badge>{c.apps}</Badge> },
-          { to: `${base}/metrics`, label: "Metrics" },
-          { to: `${base}/ports`, label: "Ports" },
-          { to: `${base}/firewall`, label: "Firewall" },
-          { to: `${base}/storage`, label: "Storage" },
-          ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker" }] : []),
-          { to: `${base}/incidents`, label: "Incidents", badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
-          { to: `${base}/agent`, label: "Agent" },
-          { to: `${base}/settings`, label: "Settings" },
+          { to: base, label: "Overview", end: true, icon: <LayoutGrid size={14} /> },
+          { to: `${base}/applications`, label: "Applications", icon: <Boxes size={14} />, badge: <Badge>{c.apps}</Badge> },
+          { to: `${base}/metrics`, label: "Metrics", icon: <Activity size={14} /> },
+          { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
+          { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
+          { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
+          ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
+          { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
+          { to: `${base}/agent`, label: "Agent", icon: <Bot size={14} /> },
+          { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}
       />
       <Gate>
@@ -92,8 +101,9 @@ export function ServerOverview() {
   return (
     <div className="space-y-6">
       {dc && (
-        <div className="rounded-2xl bg-crit-soft px-5 py-4 text-sm text-crit">
-          <b>Agent disconnected.</b> No heartbeat since {seen(s)}. Values below are the last known state.
+        <div className="flex items-start gap-3 rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">
+          <Unplug size={16} className="mt-0.5 shrink-0" />
+          <span><b>Agent disconnected.</b> No heartbeat since {seen(s)}. Values below are the last known state.</span>
         </div>
       )}
       <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", dc && "opacity-60")}>
@@ -112,7 +122,7 @@ export function ServerOverview() {
         ))}
       </div>
       <Card>
-        <SectionTitle title="Recent server events" sub="Agent connections, reboots and changes" />
+        <SectionTitle icon={<History size={15} />} title="Recent server events" sub="Agent connections, reboots and changes" />
         {events.error ? (
           <p className="text-sm text-crit">{events.error}</p>
         ) : !events.data ? (
@@ -120,10 +130,10 @@ export function ServerOverview() {
         ) : events.data.length === 0 ? (
           <p className="text-sm text-muted">No events yet.</p>
         ) : (
-          <ol className="space-y-3">
+          <ol className="relative space-y-3 before:absolute before:bottom-1 before:left-[5px] before:top-1 before:w-px before:bg-line">
             {events.data.map((e) => (
-              <li key={e.id} className="flex items-start gap-3 text-sm">
-                <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", e.kind === "reboot" ? "bg-warn" : "bg-fg")} />
+              <li key={e.id} className="relative flex items-start gap-3 pl-6 text-sm">
+                <span className={cn("absolute left-0 top-1.5 h-[11px] w-[11px] rounded-full border-2 border-surface", e.kind === "reboot" ? "bg-warn" : e.text.includes("disconnected") ? "bg-crit" : e.kind === "agent" ? "bg-ok" : "bg-muted")} />
                 <span className="min-w-0 flex-1">{e.text}</span>
                 <span className="shrink-0 text-xs text-muted" title={dateTime(e.ts)}>{relTime(e.ts)}</span>
               </li>
@@ -141,7 +151,7 @@ export function ServerApplications() {
   const list = apps.filter((a) => a.serverId === s.id);
   return (
     <Card pad={false}>
-      <div className="p-5 pb-2"><SectionTitle title={`Applications on ${s.name}`} sub={`${list.length} discovered or manually added`} action={<Button size="sm" variant="secondary" onClick={() => openAddApp(s.id)}><Plus size={13} /> Add</Button>} /></div>
+      <div className="p-5 pb-2"><SectionTitle icon={<Boxes size={15} />} title={`Applications on ${s.name}`} sub={`${list.length} discovered or manually added`} action={<Button size="sm" variant="secondary" onClick={() => openAddApp(s.id)}><Plus size={13} /> Add</Button>} /></div>
       {list.length ? <AppsTable apps={list} showServer={false} /> : <div className="p-5"><EmptyState title="No applications on this server" desc="Discovered PM2, systemd and static sites appear under Discoveries. You can also add one manually." /></div>}
     </Card>
   );
@@ -209,7 +219,7 @@ export function ServerPorts() {
   return (
     <Card pad={false}>
       <div className="p-5 pb-2">
-        <SectionTitle title="Listening ports" sub={`${rows.length} sockets from the latest agent scan · ${pub} publicly exposed`} action={<Button size="sm" variant="ghost" onClick={reload}>Refresh</Button>} />
+        <SectionTitle icon={<EthernetPort size={15} />} title="Listening ports" sub={`${rows.length} sockets from the latest agent scan · ${pub} publicly exposed`} action={<Button size="sm" variant="ghost" onClick={reload}>Refresh</Button>} />
         {unexpected > 0 && <p className="text-sm text-warn">{unexpected} application socket{unexpected === 1 ? " listens" : "s listen"} on all interfaces. If the app sits behind Caddy, bind it to 127.0.0.1 instead. Fleetwatch never changes bind or firewall settings.</p>}
       </div>
       {rows.length ? <PortTable rows={rows} /> : <div className="p-5"><EmptyState title="No listening sockets reported" desc="Ports appear after the agent's first scan." /></div>}
@@ -229,7 +239,7 @@ export function ServerStorage() {
     <div className="grid gap-6 lg:grid-cols-5">
       <DiskRescue serverId={s.id} disk={s.disk} />
       <Card className="lg:col-span-2">
-        <SectionTitle title="Disk usage" sub="Root filesystem /" />
+        <SectionTitle icon={<HardDrive size={15} />} title="Disk usage" sub="Root filesystem /" />
         <div className="text-4xl font-semibold tracking-tight tabular-nums">{s.disk.toFixed(1)}<span className="text-lg text-muted">%</span></div>
         <Bar value={s.disk} className="mt-3 !h-3" />
         <div className="mt-2 flex justify-between text-xs text-muted"><span>{fmtMB(usedMB)} used</span><span>{s.diskGb} GB total</span></div>
@@ -242,7 +252,7 @@ export function ServerStorage() {
         </dl>
       </Card>
       <Card className="lg:col-span-3">
-        <SectionTitle title="Application folder ranking" />
+        <SectionTitle icon={<FolderTree size={15} />} title="Application folder ranking" />
         {list.length === 0 ? (
           <p className="text-sm text-muted">Folder sizes are measured once applications are discovered.</p>
         ) : (
@@ -305,7 +315,7 @@ export function ServerAgent() {
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <Card className="lg:col-span-2">
-        <SectionTitle title="Agent status" action={<Badge tone={pending ? "neutral" : dc ? "crit" : "ok"} dot pulse={!dc && !pending}>{pending ? "Not paired yet" : dc ? "Disconnected" : "Connected"}</Badge>} />
+        <SectionTitle icon={<Bot size={15} />} title="Agent status" action={<Badge tone={pending ? "neutral" : dc ? "crit" : "ok"} dot pulse={!dc && !pending}>{pending ? "Not paired yet" : dc ? "Disconnected" : "Connected"}</Badge>} />
         {pending ? (
           <div className="space-y-4">
             <p className="text-sm text-muted">Install the agent on the VPS to start monitoring. Each install command has a single-use token valid for one hour.</p>
@@ -340,13 +350,13 @@ export function ServerAgent() {
       </Card>
       <div className="space-y-6">
         <Card>
-          <SectionTitle title="Capabilities" sub="Reported by the agent" />
+          <SectionTitle icon={<ListChecks size={15} />} title="Capabilities" sub="Reported by the agent" />
           <div className="flex flex-wrap gap-1.5">
             {s.capabilities.length ? s.capabilities.map((c) => <Badge key={c} tone="ok">{c}</Badge>) : <span className="text-sm text-muted">Reported when the agent connects.</span>}
           </div>
         </Card>
         <Card>
-          <SectionTitle title="Recent heartbeats" sub="WebSocket ping round-trips" />
+          <SectionTitle icon={<HeartPulse size={15} />} title="Recent heartbeats" sub="WebSocket ping round-trips" />
           {s.pings.length === 0 ? (
             <p className="text-sm text-muted">{dc || pending ? "No live connection." : "First ping within 15 seconds."}</p>
           ) : (
@@ -406,7 +416,7 @@ export function ServerSettings() {
   return (
     <div className="max-w-2xl space-y-6">
       <Card>
-        <SectionTitle title="Server settings" />
+        <SectionTitle icon={<Settings size={15} />} title="Server settings" />
         <div className="space-y-5">
           <Field label="Server display name"><Input value={f.name} maxLength={64} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
           <Field label="Provider label" hint="Free text, used for grouping and filters"><Input value={f.provider} maxLength={64} placeholder="e.g. Hetzner" onChange={(e) => setF({ ...f, provider: e.target.value })} /></Field>
@@ -426,7 +436,7 @@ export function ServerSettings() {
         </div>
       </Card>
       <Card>
-        <SectionTitle title="Uninstall agent" sub="Run this on the VPS. It stops ops-agent and removes its binary, service, config and credential. Your apps are not touched." />
+        <SectionTitle icon={<PowerOff size={15} />} title="Uninstall agent" sub="Run this on the VPS. It stops ops-agent and removes its binary, service, config and credential. Your apps are not touched." />
         <div className="flex items-center gap-2 rounded-2xl bg-surface2 px-4 py-3">
           <code className="flex-1 break-all font-mono text-xs">{`curl -fsSL ${location.origin}/uninstall.sh | sudo bash`}</code>
           <CopyButton text={`curl -fsSL ${location.origin}/uninstall.sh | sudo bash`} />
@@ -434,7 +444,7 @@ export function ServerSettings() {
         <p className="mt-3 text-xs text-muted">Then delete the server below to remove its history from the dashboard.</p>
       </Card>
       <Card>
-        <SectionTitle title="Delete server" sub="Revokes the agent and deletes all stored metrics and events for this server." />
+        <SectionTitle icon={<Trash2 size={15} />} title="Delete server" sub="Revokes the agent and deletes all stored metrics and events for this server." />
         <Button variant="danger" onClick={() => setDel(true)}><Trash2 size={14} /> Delete {s.name}</Button>
         <p className="mt-3 text-xs text-muted">The agent stays installed on the VPS but can no longer connect. Uninstall it there first (see above).</p>
       </Card>

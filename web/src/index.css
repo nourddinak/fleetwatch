@@ -81,9 +81,12 @@ body {
   transition: background-color 0.2s, color 0.2s;
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
+/* In the base layer, so utilities (like the sidebar's hidden scrollbar) can override it. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
 }
 
 @keyframes pulse-dot {
