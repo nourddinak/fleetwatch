@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { type Forecasts } from "../components/DiskRescue";
 import { Link, useNavigate } from "react-router-dom";
-import { Activity, FlaskConical, Pencil, RefreshCw, ScrollText, Trash2 } from "lucide-react";
+import { Activity, AlertOctagon, AlertTriangle, Cpu, Flame, FlaskConical, Globe, History, Info, ListTree, MemoryStick, Pencil, RefreshCw, ScrollText, Timer, Trash2, Unplug } from "lucide-react";
 import { useStore } from "../store/store";
 import { useApp } from "./AppDetail";
 import { api, useApi, type ApiError } from "../api/client";
 import type { App, AppFlags, Range } from "../mock/types";
 import { clock, dateTime, fmtDur, fmtMB, relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, HealthBadge, Input, KV, LoadingState, MetricCard, Modal, SectionTitle, Select, Spinner, Table, Td, Textarea, TimeRangeSelector, Toggle, Tr, AppStatus, IncidentStatusBadge, SeverityBadge } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, HealthBadge, Input, KV, LoadingState, MetricCard, Modal, SectionTitle, Select, Spinner, Table, Td, Textarea, TimeRangeSelector, Toggle, Tr, AppStatus, IncidentStatusBadge, SeverityBadge, toneDot } from "../components/ui";
 import { cn } from "../utils/cn";
 import { GitSummary, IncidentActions, StorageBreakdown } from "../components/domain";
 import { CommandRunner } from "../components/CommandRunner";
@@ -21,6 +21,17 @@ interface AppEventRow {
   text: string;
 }
 const evTone: Record<string, "ok" | "warn" | "crit" | "info" | "neutral"> = { status: "warn", added: "ok", discovery: "info" };
+
+/** A banner on the app overview: an icon, then the message. */
+function Notice({ tone, icon, children }: { tone: "warn" | "crit" | "info" | "neutral"; icon: ReactNode; children: ReactNode }) {
+  const cls = { warn: "bg-warn-soft text-warn", crit: "bg-crit-soft text-crit", info: "bg-info-soft text-info", neutral: "bg-surface2 text-fg" }[tone];
+  return (
+    <div className={cn("flex flex-wrap items-start gap-3 rounded-2xl px-4 py-3 text-sm", cls)}>
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
 
 export function AppOverview() {
   const a = useApp()!;
@@ -41,40 +52,42 @@ export function AppOverview() {
   const proc = a.manager === "PM2" ? `#${a.pm2Id ?? "—"} · ${a.pm2Name}${a.instances > 1 ? ` · ${a.instances} instances` : ""}` : a.manager === "systemd" ? a.unit : "—";
   return (
     <div className="space-y-6">
-      {s?.status === "disconnected" && <div className="rounded-2xl bg-warn-soft px-5 py-3 text-sm text-warn">The agent on {s.name} is disconnected. Status is unknown and values are the last known state.</div>}
+      {s?.status === "disconnected" && <Notice tone="warn" icon={<Unplug size={16} />}>The agent on {s.name} is disconnected. Status is unknown and values are the last known state.</Notice>}
       {leak && (
-        <div className="rounded-2xl bg-warn-soft px-5 py-3 text-sm text-warn">
+        <Notice tone="warn" icon={<MemoryStick size={16} />}>
           Possible memory leak: memory has grown steadily from {leak.fromMb} MB to {leak.nowMb} MB since the process started {relTime(leak.since)} (about +{leak.pctPerDay}% a day). A restart frees it for a while; a fix in the code ends it.
-        </div>
+        </Notice>
       )}
-      {a.status === "crash-loop" && <div className="rounded-2xl bg-crit-soft px-5 py-3 text-sm text-crit">Crash loop detected ({a.restarts} restarts, manager state “{a.rawStatus}”). The process exits right after starting.</div>}
+      {a.status === "crash-loop" && <Notice tone="crit" icon={<Flame size={16} />}>Crash loop detected ({a.restarts} restarts, manager state “{a.rawStatus}”). The process exits right after starting.</Notice>}
       {a.manager !== "standalone" && !a.processFound && s?.status !== "disconnected" && (
-        <div className="rounded-2xl bg-crit-soft px-5 py-3 text-sm text-crit">{a.manager} on {s?.name} does not know <span className="font-mono">{a.processKey}</span>. Check the process name in Settings, or start it on the server.</div>
+        <Notice tone="crit" icon={<AlertTriangle size={16} />}>{a.manager} on {s?.name} does not know <span className="font-mono">{a.processKey}</span>. Check the process name in Settings, or start it on the server.</Notice>
       )}
       {a.manager === "standalone" && (
-        <div className="rounded-2xl bg-surface2 px-5 py-3 text-sm">
+        <Notice tone="neutral" icon={<Info size={16} className="text-muted" />}>
           {a.rawStatus.startsWith("served by Caddy") ? (
             <>Static site, {a.rawStatus}. {a.health.enabled ? "Its health check decides whether it is up." : <><Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Turn on a health check</Link> to be alerted when it goes down.</>}</>
           ) : (
             <>No process belongs to this app and Caddy does not serve its folder, so its state is unknown. <Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Add a health check</Link> to monitor it.</>
           )}
-        </div>
+        </Notice>
       )}
       {a.suggestedDomain && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-info-soft px-5 py-3 text-sm text-info">
-          <span className="min-w-0 flex-1">Caddy {a.ports.length ? "routes" : "serves this app’s folder at"} <b>{a.suggestedDomain}</b>{a.ports.length ? " to this app’s port" : ""}. Use it as the app’s domain?</span>
-          <Button size="sm" variant="secondary" onClick={useDomain}>Use domain</Button>
-        </div>
+        <Notice tone="info" icon={<Globe size={16} />}>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="min-w-0 flex-1">Caddy {a.ports.length ? "routes" : "serves this app’s folder at"} <b>{a.suggestedDomain}</b>{a.ports.length ? " to this app’s port" : ""}. Use it as the app’s domain?</span>
+            <Button size="sm" variant="secondary" onClick={useDomain}>Use domain</Button>
+          </div>
+        </Notice>
       )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricCard label="CPU" value={live ? a.cpu.toFixed(1) : "—"} unit={live ? "%" : ""} progress={live ? Math.min(100, a.cpu) : 0} sub="of one core, incl. child processes" />
-        <MetricCard label="RAM" value={live ? fmtMB(a.ram) : "—"} sub={s ? `of ${s.ramGb} GB host` : undefined} />
-        <MetricCard label="Uptime" value={live && a.uptimeSec ? fmtDur(a.uptimeSec) : "—"} sub={`${a.restarts} restarts`} tone={a.restarts > 10 ? "warn" : undefined} />
-        <MetricCard to={`/applications/${a.id}/incidents`} label="Active incidents" value={active.length} tone={active.length ? "crit" : "ok"} sub="click to review" />
+        <MetricCard icon={<Cpu size={14} />} label="CPU" value={live ? a.cpu.toFixed(1) : "—"} unit={live ? "%" : ""} progress={live ? Math.min(100, a.cpu) : 0} sub="of one core, incl. child processes" />
+        <MetricCard icon={<MemoryStick size={14} />} label="RAM" value={live ? fmtMB(a.ram) : "—"} sub={s ? `of ${s.ramGb} GB host` : undefined} />
+        <MetricCard icon={<Timer size={14} />} label="Uptime" value={live && a.uptimeSec ? fmtDur(a.uptimeSec) : "—"} sub={`${a.restarts} restarts`} tone={a.restarts > 10 ? "warn" : undefined} />
+        <MetricCard to={`/applications/${a.id}/incidents`} icon={<AlertOctagon size={14} />} label="Active incidents" value={active.length} tone={active.length ? "crit" : "ok"} sub="click to review" />
       </div>
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <SectionTitle title="Application details" />
+          <SectionTitle icon={<ListTree size={15} />} title="Application details" />
           <dl className="grid grid-cols-2 gap-x-6 sm:grid-cols-3">
             <KV label="Server"><Link className="hover:underline" to={`/servers/${a.serverId}`}>{s?.name ?? "—"}</Link></KV>
             <KV label="Status"><AppStatus status={a.status} /></KV>
@@ -96,17 +109,18 @@ export function AppOverview() {
           {a.notes && <p className="mt-3 rounded-2xl bg-surface2 px-4 py-3 text-sm text-muted">{a.notes}</p>}
         </Card>
         <Card>
-          <SectionTitle title="Recent events" />
+          <SectionTitle icon={<History size={15} />} title="Recent events" />
           {!events.data ? (
             <Spinner />
           ) : events.data.length === 0 ? (
             <p className="text-sm text-muted">No events yet. Status changes show up here.</p>
           ) : (
-            <ol className="space-y-3">
+            <ol className="relative space-y-4 before:absolute before:bottom-1 before:left-[5px] before:top-1 before:w-px before:bg-line">
               {events.data.slice(0, 10).map((e) => (
-                <li key={e.id} className="flex items-start gap-3 text-sm">
-                  <Badge tone={evTone[e.kind] ?? "neutral"} className="mt-0.5 !px-2">{e.kind}</Badge>
-                  <div className="min-w-0 flex-1"><div className="leading-snug">{e.text}</div><div className="text-xs text-muted" title={dateTime(e.ts)}>{relTime(e.ts)}</div></div>
+                <li key={e.id} className="relative pl-6 text-sm">
+                  <span className={cn("absolute left-0 top-1.5 h-[11px] w-[11px] rounded-full border-2 border-surface", toneDot[evTone[e.kind] ?? "neutral"])} />
+                  <div className="leading-snug">{e.text}</div>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted"><Badge tone={evTone[e.kind] ?? "neutral"} className="!px-2 !py-0.5">{e.kind}</Badge><span title={dateTime(e.ts)}>{relTime(e.ts)}</span></div>
                 </li>
               ))}
             </ol>

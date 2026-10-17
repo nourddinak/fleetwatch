@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Boxes, Plus } from "lucide-react";
+import { AlertTriangle, Boxes, CheckCircle2, CircleStop, Plus, ServerCrash } from "lucide-react";
 import { useStore } from "../store/store";
 import { AppsTable } from "../components/AppsTable";
 import { Button, Card, EmptyState, FilterBar, Gate, LoadingState, PageHeader, SearchInput, Select } from "../components/ui";
+import { cn } from "../utils/cn";
 import { ServerPicker } from "../components/domain";
 
 export function Applications() {
@@ -89,9 +90,24 @@ export function Applications() {
         ) : list.length === 0 ? (
           <EmptyState icon={<Boxes size={20} />} title={apps.length === 0 ? "No applications monitored" : "No applications match"} desc={apps.length === 0 ? "Review discoveries or add one manually." : "Try removing a filter."} action={<Button onClick={() => (apps.length === 0 ? nav("/discoveries") : clear())}>{apps.length === 0 ? "Open discoveries" : "Clear filters"}</Button>} />
         ) : (
-          <Card pad={false}>
-            <AppsTable apps={list} />
-          </Card>
+          <>
+            <div className="mb-4 flex flex-wrap gap-2 text-xs">
+              {([
+                ["online", "online", CheckCircle2, apps.filter((a) => a.status === "online").length],
+                ["attention", "need attention", AlertTriangle, apps.filter((a) => a.status !== "online" || a.healthStatus === "failed").length],
+                ["down", "down", ServerCrash, apps.filter((a) => a.status === "offline" || a.status === "crash-loop").length],
+                ["stopped", "stopped", CircleStop, apps.filter((a) => a.status === "stopped").length],
+              ] as const).map(([k, word, Icon, n]) => n > 0 && (
+                <button key={k} onClick={() => set("status", status === k ? "all" : k)}
+                  className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 transition", status === k ? "border-fg/40 bg-surface2 text-fg" : "border-line bg-surface text-muted hover:text-fg")}>
+                  <Icon size={13} /> {n} {word}
+                </button>
+              ))}
+            </div>
+            <Card pad={false}>
+              <AppsTable apps={list} />
+            </Card>
+          </>
         )}
       </Gate>
     </>

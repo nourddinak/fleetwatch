@@ -1,6 +1,7 @@
 import { Link, Outlet, useParams } from "react-router-dom";
 import { MaintenanceControl } from "../components/Maintenance";
-import { FileText, RotateCw } from "lucide-react";
+import { Activity, AlertOctagon, Cog, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
+import { AppIcon } from "../components/AppsTable";
 import { useStore } from "../store/store";
 import { AppStatus, Badge, Button, EmptyState, Gate, HealthBadge, LinkTabs, LoadingState, PageHeader } from "../components/ui";
 
@@ -22,7 +23,7 @@ export function AppDetail() {
     <>
       <PageHeader
         back={{ to: "/applications", label: "All applications" }}
-        title={a.name}
+        title={<span className="flex items-center gap-3"><AppIcon a={a} size={40} /><span className="min-w-0 break-words">{a.name}</span></span>}
         badge={
           <>
             <AppStatus status={a.status} />
@@ -31,10 +32,10 @@ export function AppDetail() {
         }
         sub={
           <span className="flex flex-wrap gap-x-4 gap-y-1">
-            <Link to={`/servers/${a.serverId}`} className="underline-offset-2 hover:underline">{s?.name}</Link>
-            <span>{a.manager === "PM2" ? `PM2 · ${a.pm2Name}` : a.manager === "systemd" ? `systemd · ${a.unit}` : "standalone"}</span>
-            {a.path && <span className="font-mono">{a.path}</span>}
-            {a.domain && <span>{a.domain}</span>}
+            <Link to={`/servers/${a.serverId}`} className="inline-flex items-center gap-1.5 underline-offset-2 hover:underline"><ServerIcon size={13} />{s?.name}</Link>
+            <span className="inline-flex items-center gap-1.5">{a.manager === "PM2" ? <Layers size={13} /> : <Cog size={13} />}{a.manager === "PM2" ? `PM2 · ${a.pm2Name}` : a.manager === "systemd" ? `systemd · ${a.unit}` : "standalone"}</span>
+            {a.path && <span className="inline-flex min-w-0 items-center gap-1.5 font-mono"><Folder size={13} className="shrink-0" /><span className="truncate">{a.path}</span></span>}
+            {a.domain && <a href={`https://${a.domain}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:underline"><Globe size={13} />{a.domain}</a>}
           </span>
         }
         actions={
@@ -47,15 +48,15 @@ export function AppDetail() {
       />
       <LinkTabs
         tabs={[
-          { to: base, label: "Overview", end: true },
-          { to: `${base}/logs`, label: "Logs" },
-          { to: `${base}/metrics`, label: "Metrics" },
-          { to: `${base}/commands`, label: "Commands" },
-          { to: `${base}/incidents`, label: "Incidents", badge: active ? <Badge tone="crit">{active}</Badge> : undefined },
-          { to: `${base}/health`, label: "Health" },
-          { to: `${base}/storage`, label: "Storage" },
-          { to: `${base}/git`, label: "Git" },
-          { to: `${base}/settings`, label: "Settings" },
+          { to: base, label: "Overview", end: true, icon: <LayoutGrid size={14} /> },
+          { to: `${base}/logs`, label: "Logs", icon: <ScrollText size={14} /> },
+          { to: `${base}/metrics`, label: "Metrics", icon: <Activity size={14} /> },
+          { to: `${base}/commands`, label: "Commands", icon: <SquareTerminal size={14} /> },
+          { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: active ? <Badge tone="crit">{active}</Badge> : undefined },
+          { to: `${base}/health`, label: "Health", icon: <HeartPulse size={14} /> },
+          { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
+          { to: `${base}/git`, label: "Git", icon: <GitBranch size={14} /> },
+          { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}
       />
       <Gate>

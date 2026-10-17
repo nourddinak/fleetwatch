@@ -299,12 +299,13 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
 }
 
 /* ---------- navigation ---------- */
-export function LinkTabs({ tabs }: { tabs: { to: string; label: string; end?: boolean; badge?: ReactNode }[] }) {
+export function LinkTabs({ tabs }: { tabs: { to: string; label: string; end?: boolean; badge?: ReactNode; icon?: ReactNode }[] }) {
   return (
     <div className="mb-6 -mx-1 overflow-x-auto px-1">
       <div className="inline-flex min-w-full gap-1 rounded-full border border-line bg-surface p-1">
         {tabs.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cn("flex items-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 text-sm transition", isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:text-fg")}>
+            {t.icon}
             {t.label}
             {t.badge}
           </NavLink>
