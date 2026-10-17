@@ -1,10 +1,10 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Check, ExternalLink, FileCode2, FolderGit2, GitBranch, Globe, Hammer, Info, KeyRound, Link2, Lock, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Trash2, Workflow } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Terminal, Trash2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, type Tone } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, Spinner, Textarea, ToggleRow, toneDot, type Tone } from "../components/ui";
 import { cn } from "../utils/cn";
 
 interface Plan {
@@ -79,7 +79,16 @@ export function Sites() {
         ) : list.data.length === 0 ? (
           <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc="Pick a repository and a server: the site is online in a minute, at an address of its own." action={owner && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
         ) : (
-          <div className="space-y-4">{list.data.map((s) => <SiteCard key={s.id} site={s} onOpen={() => setOpen(s.id)} />)}</div>
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {([["live", "live", CheckCircle2], ["building", "building", Workflow], ["failed", "failed", AlertTriangle]] as const).map(([k, word, Icon]) => {
+                const n = list.data!.filter((x) => (k === "building" ? x.status === "building" || x.status === "deploying" : x.status === k)).length;
+                return n > 0 && <span key={k} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-muted"><Icon size={13} /> {n} {word}</span>;
+              })}
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-muted"><Rocket size={13} /> {list.data.length} {list.data.length === 1 ? "site" : "sites"}</span>
+            </div>
+            <div className="grid gap-4 xl:grid-cols-2">{list.data.map((s) => <SiteCard key={s.id} site={s} onOpen={() => setOpen(s.id)} />)}</div>
+          </div>
         )}
       </Gate>
       {adding && <NewSite onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); list.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
@@ -88,56 +97,115 @@ export function Sites() {
   );
 }
 
+/** Where a site answers: its automatic address first, then its own domains. */
+function addresses(site: Site) {
+  const out: { label: string; href: string; auto?: boolean }[] = [];
+  if (site.atPath) out.push({ label: `${location.host}/sites/${site.name}/`, href: `/sites/${site.name}/`, auto: true });
+  else if (site.preview) out.push({ label: site.preview, href: `https://${site.preview}`, auto: true });
+  for (const d of site.domains) if (d !== site.preview) out.push({ label: d, href: `https://${d}` });
+  return out;
+}
+
+const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+async function redeploySite(site: Site, toast: (msg: string, kind?: "ok" | "err") => void) {
+  try {
+    await api("POST", `/api/sites/${site.id}/redeploy`);
+    toast(site.plan.kind === "build" ? "Building again on GitHub" : "Deploying");
+  } catch (e) {
+    toast((e as ApiError).message, "err");
+  }
+}
+
+/** The site's tile: what kind of site it is, with its status as a dot. */
+function SiteIcon({ site, size = 44 }: { site: Site; size?: number }) {
+  const [tone] = STATUS[site.status];
+  return (
+    <span style={{ width: size, height: size }} className="relative grid shrink-0 place-items-center rounded-2xl border border-line bg-surface2 text-fg">
+      {site.plan.kind === "build" ? <Workflow size={size * 0.4} /> : <FileCode2 size={size * 0.4} />}
+      <span className={cn("absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-surface", toneDot[tone],
+        (site.status === "building" || site.status === "deploying") && "pulse-dot")} />
+    </span>
+  );
+}
+
+function SiteError({ site, onRetry }: { site: Site; onRetry: () => void }) {
+  const { me } = useStore();
+  if (!site.error) return null;
+  return (
+    <div className="flex gap-3 rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">
+      <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+      <div className="min-w-0 space-y-1.5">
+        <p className="break-words">{upper(site.error)}</p>
+        {me?.role !== "viewer" && (
+          <div className="flex flex-wrap gap-3 text-xs font-medium">
+            {site.error.includes("permissions") && <Link to="/settings/integrations" className="inline-flex items-center gap-1 underline"><KeyRound size={12} /> How to grant them</Link>}
+            <button className="inline-flex items-center gap-1 underline" onClick={onRetry}><RefreshCw size={12} /> Retry</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
   const { getServer, me, toast } = useStore();
   const [tone, label] = STATUS[site.status];
-  const urls = [site.atPath ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains.filter((d) => d !== site.preview)].filter(Boolean);
-  const redeploy = async () => {
-    try {
-      await api("POST", `/api/sites/${site.id}/redeploy`);
-      toast(site.plan.kind === "build" ? "Building again on GitHub" : "Deploying");
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-  };
+  const urls = addresses(site);
+  const redeploy = () => redeploySite(site, toast);
   return (
-    <Card>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <Card className="flex flex-col gap-4 transition hover:border-fg/25">
+      <div className="flex items-start gap-3">
+        <button onClick={onOpen} className="shrink-0" aria-label={`Open ${site.name}`}><SiteIcon site={site} /></button>
         <button onClick={onOpen} className="min-w-0 flex-1 text-left">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold hover:underline">{site.name}</span>
+            <span className="truncate text-[15px] font-semibold tracking-tight hover:underline">{site.name}</span>
             <Badge tone={tone} dot pulse={site.status === "building" || site.status === "deploying"}>{label}</Badge>
-            <Badge>{site.plan.framework}</Badge>
           </div>
-          <div className="mt-0.5 text-xs text-muted">{site.repo} <GitBranch size={11} className="inline" /> {site.branch} → {getServer(site.serverId)?.name ?? "a removed server"}:/var/www/{site.name}</div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted">
+            <Github size={12} /><span className="truncate">{site.repo}</span>
+            <GitBranch size={12} className="ml-1 shrink-0" /><span className="font-mono">{site.branch}</span>
+          </div>
         </button>
-        <div className="flex items-center gap-1">
-          {me?.role !== "viewer" && <Button size="sm" variant="ghost" onClick={redeploy} title={site.plan.kind === "build" ? "Build and deploy again" : "Deploy again"} disabled={site.status === "deploying"}>{site.status === "deploying" ? <Spinner size={14} /> : <RefreshCw size={14} />}</Button>}
-          <Button size="sm" variant="ghost" onClick={onOpen} title="Settings and history"><Settings2 size={14} /></Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {me?.role !== "viewer" && (
+            <button onClick={redeploy} disabled={site.status === "deploying"} title={site.plan.kind === "build" ? "Build and deploy again" : "Deploy again"} aria-label="Deploy again"
+              className="grid h-9 w-9 place-items-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg disabled:opacity-40">
+              {site.status === "deploying" ? <Spinner size={15} /> : <RefreshCw size={15} />}
+            </button>
+          )}
+          <button onClick={onOpen} title="Settings and history" aria-label="Settings and history" className="grid h-9 w-9 place-items-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg">
+            <Settings2 size={15} />
+          </button>
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+
+      <div className="flex flex-wrap gap-2">
         {urls.map((u) => (
-          <a key={u} href={`https://${u}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-line px-3 py-1 text-xs hover:border-fg/40">
-            {u} <ExternalLink size={11} />
+          <a key={u.label} href={u.href} target="_blank" rel="noreferrer"
+            className="group/url inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-line bg-surface2/50 px-3 py-1.5 font-mono text-[11px] transition hover:border-fg/40">
+            {u.auto ? <Link2 size={12} className="shrink-0 text-muted" /> : <Globe size={12} className="shrink-0 text-muted" />}
+            <span className="truncate">{u.label}</span>
+            <ExternalLink size={11} className="shrink-0 text-muted group-hover/url:text-fg" />
           </a>
         ))}
-        {urls.length === 0 && <span className="text-xs text-muted">No address yet: add your domain in its settings (the server has no public IPv4 for a preview address).</span>}
-        {site.atPath && <span className="self-center text-[11px] text-muted">Sandboxed under the dashboard's domain: no cookies or localStorage. Add your own domain for those.</span>}
+        {urls.length === 0 && <span className="inline-flex items-center gap-1.5 text-xs text-muted"><Info size={13} /> No address yet: add your domain in its settings.</span>}
       </div>
-      <div className="mt-3 text-xs text-muted">
-        {site.commit ? <>Deployed <span className="font-mono">{site.commit.slice(0, 7)}</span> {site.message ? `“${site.message}”` : ""} {relTime(site.deployedAt)}</> : "Not deployed yet"}
-        {site.buildUrl && site.plan.kind === "build" && <> · <a className="underline" href={site.buildUrl} target="_blank" rel="noreferrer">last build</a></>}
-        {!site.autoDeploy && " · automatic deploys off"}
+
+      <SiteError site={site} onRetry={redeploy} />
+
+      <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-3 text-[11px] text-muted">
+        <span className="inline-flex min-w-0 items-center gap-1.5"><ServerIcon size={12} /><span className="truncate font-mono">{getServer(site.serverId)?.name ?? "removed server"}:/var/www/{site.name}</span></span>
+        {site.commit ? (
+          <span className="inline-flex min-w-0 items-center gap-1.5" title={site.message}>
+            <GitCommitHorizontal size={12} /><span className="font-mono">{site.commit.slice(0, 7)}</span>
+            <Clock size={12} className="ml-1" />{relTime(site.deployedAt)}
+          </span>
+        ) : <span className="inline-flex items-center gap-1.5"><Clock size={12} /> Not deployed yet</span>}
+        <span className="inline-flex items-center gap-1.5">{site.plan.kind === "build" ? <Workflow size={12} /> : <FileCode2 size={12} />}{site.plan.framework}</span>
+        {site.buildUrl && site.plan.kind === "build" && <a className="inline-flex items-center gap-1.5 hover:text-fg" href={site.buildUrl} target="_blank" rel="noreferrer"><Terminal size={12} /> Last build</a>}
+        {!site.autoDeploy && <span className="inline-flex items-center gap-1.5"><PauseCircle size={12} /> Auto deploy off</span>}
       </div>
-      {site.error && (
-        <p className="mt-2 text-sm text-crit">
-          {site.error}
-          {site.error.includes("permissions") && me?.role !== "viewer" && (
-            <> · <Link to="/settings/integrations" className="underline">How to grant them</Link> · <button className="underline" onClick={redeploy}>Retry</button></>
-          )}
-        </p>
-      )}
     </Card>
   );
 }
@@ -378,6 +446,22 @@ function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: S
   );
 }
 
+/** A block of the site drawer: icon, title, then its content. */
+function Panel({ icon, title, sub, danger, children }: { icon: ReactNode; title: string; sub?: ReactNode; danger?: boolean; children: ReactNode }) {
+  return (
+    <section className={cn("rounded-2xl border p-4", danger ? "border-crit/30" : "border-line")}>
+      <div className="mb-3 flex items-start gap-3">
+        <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", danger ? "bg-crit-soft text-crit" : "bg-surface2 text-fg")}>{icon}</span>
+        <div className="min-w-0 pt-0.5">
+          <h4 className="text-sm font-semibold">{title}</h4>
+          {sub && <p className="text-xs text-muted">{sub}</p>}
+        </div>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
 function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { me, getServer, toast } = useStore();
   const owner = !me || me.role === "owner";
@@ -401,6 +485,8 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   }, [env.data]);
   if (!site || domains === null || !plan) return <Drawer open onClose={onClose} title="Site"><LoadingState /></Drawer>;
   const ip = getServer(site.serverId)?.ip;
+  const [tone, label] = STATUS[site.status];
+  const urls = addresses(site);
   const save = async () => {
     try {
       data.setData({ ...data.data!, site: await api<Site>("PUT", `/api/sites/${id}`, { domains: domains.split(/[\s,]+/).filter(Boolean), autoDeploy: auto, plan }) });
@@ -422,67 +508,110 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
     setDel(false);
     try {
       await api("DELETE", `/api/sites/${id}`);
-      toast("Site removed from the server");
+      toast("Site removed");
       onClose();
     } catch (e) {
       toast((e as ApiError).message, "err");
     }
   };
   const dirty = domains !== site.domains.join("\n") || auto !== site.autoDeploy || JSON.stringify(plan) !== JSON.stringify(site.plan);
+  const envFromExample = env.data && "env" in env.data && !env.data.env && env.data.exampleFile;
   return (
-    <Drawer open onClose={onClose} title={site.name}>
-      <div className="space-y-6">
-        <p className="text-sm text-muted">{site.repo} · {site.branch} → {getServer(site.serverId)?.name}:/var/www/{site.name}</p>
+    <Drawer open onClose={onClose}
+      title={
+        <span className="flex items-center gap-3">
+          <SiteIcon site={site} size={36} />
+          <span className="min-w-0">
+            <span className="flex items-center gap-2"><span className="truncate">{site.name}</span><Badge tone={tone} dot pulse={site.status === "building" || site.status === "deploying"}>{label}</Badge></span>
+            <span className="block truncate text-xs font-normal text-muted">{site.plan.framework} · {site.plan.kind === "build" ? "built by GitHub Actions" : "published as is"}</span>
+          </span>
+        </span>
+      }>
+      <div className="space-y-4">
+        <div className="grid gap-2 rounded-2xl bg-surface2/60 p-4 text-xs">
+          <a href={`https://github.com/${site.repo}`} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 hover:underline"><Github size={13} /><span className="truncate">{site.repo}</span><ExternalLink size={11} className="text-muted" /></a>
+          <span className="flex items-center gap-2"><GitBranch size={13} /><span className="font-mono">{site.branch}</span></span>
+          <span className="flex min-w-0 items-center gap-2"><ServerIcon size={13} /><span className="truncate font-mono">{getServer(site.serverId)?.name ?? "removed server"}:/var/www/{site.name}</span></span>
+          {site.commit && <span className="flex min-w-0 items-center gap-2"><GitCommitHorizontal size={13} /><span className="font-mono">{site.commit.slice(0, 7)}</span><span className="truncate text-muted">{site.message}</span><span className="ml-auto shrink-0 text-muted">{relTime(site.deployedAt)}</span></span>}
+          <div className="mt-1 flex flex-wrap gap-2">
+            {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm"><ExternalLink size={13} /> Open site</Button></a>}
+            {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={13} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
+            {site.buildUrl && site.plan.kind === "build" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={13} /> Last build</Button></a>}
+          </div>
+        </div>
+
+        <SiteError site={site} onRetry={() => redeploySite(site, toast)} />
+
         {owner && (
-          <section className="space-y-3">
-            <SectionTitle title="Addresses" />
-            {site.atPath ? (
-              <p className="text-xs text-muted">Always at <a className="underline" href={`/sites/${site.name}/`} target="_blank" rel="noreferrer">{location.host}/sites/{site.name}/</a> (this dashboard's domain).</p>
-            ) : site.preview && <p className="text-xs text-muted">Preview address (always on): <a className="underline" href={`https://${site.preview}`} target="_blank" rel="noreferrer">{site.preview}</a></p>}
-            <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" />
-            <p className="text-xs text-muted">One domain per line. In your DNS, add an A record for each pointing to {ip || "the server's IP"}.</p>
+          <Panel icon={<Globe size={15} />} title="Addresses" sub="Where the site answers.">
+            {urls.filter((u) => u.auto).map((u) => (
+              <div key={u.label} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
+                <Link2 size={13} className="shrink-0 text-muted" />
+                <a href={u.href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-[12px] hover:underline">{u.label}</a>
+                <Badge tone="ok">Automatic</Badge>
+              </div>
+            ))}
+            {site.atPath && <p className="flex gap-2 text-[11px] text-muted"><Info size={13} className="shrink-0" />Sandboxed under the dashboard's domain: storage lasts until the page reloads. Add your own domain for full browser features.</p>}
+            <Field label="Your own domains" hint={<>One per line. In your DNS, add an A record for each pointing to <span className="font-mono">{ip || "the server's IP"}</span>.</>}>
+              <div className="relative">
+                <Globe size={14} className="pointer-events-none absolute left-4 top-3.5 text-muted" />
+                <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" className="pl-10 font-mono text-[12px]" />
+              </div>
+            </Field>
+          </Panel>
+        )}
+
+        {owner && (
+          <Panel icon={<Hammer size={15} />} title="Deploying" sub={site.plan.kind === "build" ? "How GitHub Actions builds it." : "Which files are published."}>
             <ToggleRow label="Deploy every push" desc={site.plan.kind === "build" ? "Each build GitHub Actions finishes goes live." : `Each push to ${site.branch} goes live.`} checked={auto} onChange={setAuto} />
             <PlanFields plan={plan} onChange={setPlan} />
-            <Button size="sm" disabled={!dirty} onClick={save}>Save</Button>
-          </section>
+            <div className="flex justify-end"><Button size="sm" disabled={!dirty} onClick={save}><Check size={13} /> Save changes</Button></div>
+          </Panel>
         )}
+
         {owner && site.plan.kind === "build" && envText !== null && (
-          <section className="space-y-2">
-            <SectionTitle title=".env" sub={`Used when building (and so visible in the site's JavaScript).${env.data && "env" in env.data && !env.data.env && env.data.exampleFile ? ` Filled from ${env.data.exampleFile}: put in your values and save.` : ""}`} />
-            <Textarea rows={5} value={envText} onChange={(e) => setEnvText(e.target.value)} className="font-mono text-xs" />
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}>Save and rebuild</Button>
+          <Panel icon={<KeyRound size={15} />} title=".env" sub={envFromExample ? `Filled from ${env.data && "exampleFile" in env.data ? env.data.exampleFile : ""}: put in your values and save.` : "Used when building, so it ends up in the site's JavaScript."}>
+            <Textarea rows={5} value={envText} onChange={(e) => setEnvText(e.target.value)} className="font-mono text-[12px]" placeholder="VITE_API_URL=https://api.example.com" />
+            <div className="flex flex-wrap justify-end gap-2">
               {env.data && "env" in env.data && env.data.example && envText !== env.data.example && (
-                <Button size="sm" variant="ghost" onClick={() => setEnvText(env.data && "example" in env.data ? env.data.example ?? "" : "")}>Load {env.data.exampleFile}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEnvText(env.data && "example" in env.data ? env.data.example ?? "" : "")}><FileCode2 size={13} /> Load {env.data.exampleFile}</Button>
               )}
+              <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}><RefreshCw size={13} /> Save and rebuild</Button>
             </div>
-          </section>
+          </Panel>
         )}
-        <section>
-          <SectionTitle title="Deploys" />
+
+        <Panel icon={<History size={15} />} title="Deploys" sub="The last 20.">
           {data.data!.history.length === 0 && <p className="text-sm text-muted">None yet.</p>}
-          <ul className="divide-y divide-line">
+          <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-line">
             {data.data!.history.map((d, i) => (
-              <li key={i} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={d.ok ? "ok" : "crit"}>{d.ok ? "live" : "failed"}</Badge>
-                  <span className="font-mono text-xs">{d.commit.slice(0, 7)}</span>
-                  <span className="min-w-0 flex-1 truncate">{d.message}</span>
-                  <span className="text-xs text-muted">{d.by} · {relTime(d.ts)}</span>
+              <li key={i} className="relative pl-6">
+                <span className={cn("absolute left-0 top-1.5 h-[11px] w-[11px] rounded-full border-2 border-surface", d.ok ? "bg-ok" : "bg-crit")} />
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="rounded-md bg-surface2 px-1.5 py-0.5 font-mono text-[11px]">{d.commit.slice(0, 7)}</span>
+                  <span className="min-w-0 flex-1 truncate">{d.message || (d.ok ? "Deployed" : "Failed")}</span>
                 </div>
-                {d.error && <p className="mt-1 text-xs text-crit">{d.error}</p>}
-                {d.log && <button className="mt-1 text-xs text-muted underline" onClick={() => setLog(log === i ? null : i)}>{log === i ? "Hide" : "Show"} log</button>}
-                {log === i && <pre className="mt-1 whitespace-pre-wrap rounded-xl bg-surface2 p-2 font-mono text-[11px]">{d.log}</pre>}
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[11px] text-muted">
+                  <span>{d.by}</span>
+                  <span>{relTime(d.ts)}</span>
+                  {d.log && <button className="inline-flex items-center gap-1 hover:text-fg" onClick={() => setLog(log === i ? null : i)}><Terminal size={11} /> {log === i ? "Hide log" : "Log"}</button>}
+                </div>
+                {d.error && <p className="mt-1 text-xs text-crit">{upper(d.error)}</p>}
+                {log === i && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-surface2 p-3 font-mono text-[11px]">{d.log}</pre>}
               </li>
             ))}
-          </ul>
-        </section>
+          </ol>
+        </Panel>
+
         {owner && (
-          <Button variant="danger" size="sm" onClick={() => setDel(true)}><Trash2 size={14} /> Remove site</Button>
+          <Panel icon={<Trash2 size={15} />} title="Remove site" danger
+            sub={`Deletes its files and Caddy site from the server${site.plan.kind === "build" ? ", and the build workflow, build branch and .env secret from the repository" : ""}.`}>
+            <div className="flex justify-end"><Button variant="danger" size="sm" onClick={() => setDel(true)}><Trash2 size={13} /> Remove {site.name}</Button></div>
+          </Panel>
         )}
       </div>
       <ConfirmDialog open={del} title={`Remove ${site.name}?`} confirmLabel="Remove" danger onConfirm={remove} onCancel={() => setDel(false)}
-        message={`Its files in /var/www and its Caddy site are deleted from the server. The repository keeps its build workflow and the ${"fleetwatch-build"} branch; delete them on GitHub if no server uses them.`} />
+        message={`Its files in /var/www and its Caddy site are deleted from the server${site.plan.kind === "build" ? "; its build workflow, the fleetwatch-build branch and the .env secret are removed from the repository (unless another site builds from it)" : ""}.`} />
     </Drawer>
   );
 }
