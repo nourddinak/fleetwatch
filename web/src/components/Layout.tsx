@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, Radio, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
+import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, Radio, Rocket, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -108,6 +108,7 @@ function Shell() {
     { to: "/logs", label: "Logs", icon: ScrollText },
     { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
     { to: "/team", label: "Team", icon: Users },
+    { to: "/sites", label: "Sites", icon: Rocket },
     { to: "/uptime", label: "Uptime", icon: Gauge },
     { to: "/domains", label: "Domains", icon: Globe },
     ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),

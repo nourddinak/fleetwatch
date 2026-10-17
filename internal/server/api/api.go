@@ -34,6 +34,7 @@ import (
 	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/security"
+	"fleetwatch/internal/server/sites"
 	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/uptime"
@@ -73,6 +74,7 @@ type Deps struct {
 	Admin      *hostadmin.Service
 	Vulns      *vulns.Service
 	GitHub     *github.Service
+	Sites      *sites.Service
 }
 
 type server struct{ Deps }
@@ -147,6 +149,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.GitHub != nil {
 		s.integrationRoutes(mux)
+	}
+	if d.Sites != nil {
+		s.siteRoutes(mux)
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))

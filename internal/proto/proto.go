@@ -495,6 +495,39 @@ type DepsReport struct {
 	Apps map[string][]Dep `json:"apps"`
 }
 
+// Static sites (agent 0.9.43+): publish a repository snapshot under /var/www/<name>
+// with a Caddy site for its addresses.
+const (
+	TypeSiteDeploy = "site.deploy" // server → agent: SiteDeploy
+	TypeSiteRemove = "site.remove" // server → agent: SiteRemove
+	TypeSiteResult = "site.result" // agent → server: SiteResult
+)
+
+type SiteDeploy struct {
+	RunID   string   `json:"runId"`
+	Name    string   `json:"name"`    // folder under /var/www and Caddy site name
+	Archive string   `json:"archive"` // https URL of a tar.gz snapshot (GitHub tarball)
+	Token   string   `json:"token"`   // short-lived token for the download
+	Dir     string   `json:"dir"`     // folder of the snapshot to publish ("" = all)
+	Domains []string `json:"domains"` // addresses Caddy serves the site on
+	SPA     bool     `json:"spa"`     // unknown paths fall back to /index.html
+}
+
+type SiteRemove struct {
+	RunID string `json:"runId"`
+	Name  string `json:"name"`
+}
+
+type SiteResult struct {
+	RunID   string `json:"runId"`
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Log     string `json:"log,omitempty"`
+	Release string `json:"release,omitempty"` // the release now live
+	Caddy   string `json:"caddy,omitempty"`   // generated | repository | "" (files only)
+}
+
 // Docker: containers, compose stacks, images and volumes (agent 0.9.38+).
 const (
 	TypeDockerList   = "docker.list"   // server → agent: send a DockerReport (no data)

@@ -28,6 +28,7 @@ import (
 	"fleetwatch/internal/agent/hostcheck"
 	"fleetwatch/internal/agent/inventory"
 	"fleetwatch/internal/agent/logs"
+	"fleetwatch/internal/agent/sites"
 	"fleetwatch/internal/agent/storage"
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/selfupdate"
@@ -256,6 +257,16 @@ func (r *Runner) session(ctx context.Context) error {
 				var req proto.DepsScan
 				if json.Unmarshal(env.Data, &req) == nil {
 					go func() { r.sendCurrent(proto.TypeDepsReport, hostcheck.Deps(req)) }()
+				}
+			case proto.TypeSiteDeploy:
+				var req proto.SiteDeploy
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeSiteResult, sites.Deploy(rootCtx, req)) }()
+				}
+			case proto.TypeSiteRemove:
+				var req proto.SiteRemove
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeSiteResult, sites.Remove(req)) }()
 				}
 			case proto.TypeDiskScan:
 				go func() { r.sendCurrent(proto.TypeDiskReport, hostcheck.DiskScan(rootCtx)) }()

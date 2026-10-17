@@ -30,7 +30,7 @@ var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account
 // Writes operators may also make: operate apps and handle incidents, not configure.
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +
 	`POST /api/incidents/[^/]+/[^/]+|PUT /api/maintenance|POST /api/servers/[^/]+/(disk/scan|disk/clean|security/scan)|` +
-	`POST /api/(domains/check|discoveries/scan)|POST /api/uptime/[^/]+/check|POST /api/servers/[^/]+/(docker/action|updates/scan)|POST /api/vulns/scan)$`)
+	`POST /api/(domains/check|discoveries/scan)|POST /api/uptime/[^/]+/check|POST /api/servers/[^/]+/(docker/action|updates/scan)|POST /api/vulns/scan|POST /api/sites/[^/]+/redeploy)$`)
 
 var (
 	serverPath   = regexp.MustCompile(`^/api/servers/([^/]+)`)
@@ -38,6 +38,7 @@ var (
 	incidentPath = regexp.MustCompile(`^/api/incidents/([^/]+)`)
 	commandPath  = regexp.MustCompile(`^/api/commands/([^/]+)`)
 	runPath      = regexp.MustCompile(`^/api/runs/([^/]+)`)
+	sitePath     = regexp.MustCompile(`^/api/sites/([^/]+)`)
 )
 
 // scope answers "may this session see that server or app?" with a small cache of
@@ -169,6 +170,11 @@ func (s *server) allowed(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	}
 	if m := commandPath.FindStringSubmatch(p); m != nil && s.Commands != nil {
 		if c, err := s.Commands.Get(m[1]); err == nil && !sc.app(c.AppID) {
+			return hidden()
+		}
+	}
+	if m := sitePath.FindStringSubmatch(p); m != nil && s.Sites != nil {
+		if st, err := s.Sites.Get(m[1]); err == nil && !sc.server(st.ServerID) {
 			return hidden()
 		}
 	}

@@ -54,11 +54,12 @@ type App struct {
 
 // Installation is the app installed on one account.
 type Installation struct {
-	ID            int64  `json:"id"`
-	Account       string `json:"account"`
-	AccountType   string `json:"accountType"`   // User | Organization
-	RepoSelection string `json:"repoSelection"` // all | selected
-	Suspended     bool   `json:"suspended"`
+	ID            int64    `json:"id"`
+	Account       string   `json:"account"`
+	AccountType   string   `json:"accountType"`   // User | Organization
+	RepoSelection string   `json:"repoSelection"` // all | selected
+	Suspended     bool     `json:"suspended"`
+	Missing       []string `json:"missing,omitempty"` // permissions deploys need that were not granted
 }
 
 // Push is one push GitHub reported.
@@ -93,6 +94,9 @@ type Service struct {
 	API    string // https://api.github.com
 	Web    string // https://github.com
 	Client *http.Client
+
+	// OnPush is told about every push (a site may need deploying).
+	OnPush func(repo, branch, sha string)
 
 	mu      sync.Mutex
 	pending map[string]pendingState // manifest flow state → who started it
@@ -221,10 +225,13 @@ func (s *Service) Manifest(publicURL, org, by string) (action, manifest string, 
 		"setup_on_update": true,
 		"public":          false,
 		"description":     "Fleetwatch dashboard at " + publicURL,
+		// contents/workflows/secrets: deploys add a build workflow and its .env secret;
+		// actions: they follow the builds.
 		"default_permissions": map[string]string{
-			"contents": "read", "metadata": "read", "deployments": "write", "statuses": "write", "pull_requests": "read",
+			"contents": "write", "metadata": "read", "deployments": "write", "statuses": "write", "pull_requests": "read",
+			"workflows": "write", "secrets": "write", "actions": "read",
 		},
-		"default_events": []string{"push", "pull_request"},
+		"default_events": []string{"push", "pull_request", "workflow_run"},
 		// GitHub only reaches a public HTTPS address; elsewhere the webhook stays off.
 		"hook_attributes": map[string]any{"url": publicURL + "/api/integrations/github/webhook", "active": u.Scheme == "https" && !local(u.Hostname())},
 	}
@@ -304,8 +311,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"account"`
-		RepositorySelection string  `json:"repository_selection"`
-		SuspendedAt         *string `json:"suspended_at"`
+		RepositorySelection string            `json:"repository_selection"`
+		SuspendedAt         *string           `json:"suspended_at"`
+		Permissions         map[string]string `json:"permissions"`
 	}
 	if err := s.call(ctx, http.MethodGet, "/app/installations?per_page=100", "Bearer "+jwt, nil, &list); err != nil {
 		return err
@@ -313,7 +321,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	st.Installations = []Installation{}
 	for _, i := range list {
 		st.Installations = append(st.Installations, Installation{ID: i.ID, Account: i.Account.Login, AccountType: i.Account.Type,
-			RepoSelection: i.RepositorySelection, Suspended: i.SuspendedAt != nil})
+			RepoSelection: i.RepositorySelection, Suspended: i.SuspendedAt != nil, Missing: missing(i.Permissions)})
 	}
 	if err := s.save(st, nil); err != nil {
 		return err
@@ -471,6 +479,22 @@ func (s *Service) Webhook(event, signature string, body []byte) bool {
 		}
 		s.save(st, nil)
 		s.Bus.Publish("github.push", push)
+		if s.OnPush != nil {
+			go s.OnPush(push.Repo, push.Branch, push.Commit)
+		}
+	case "workflow_run":
+		var w struct {
+			Repository struct {
+				FullName string `json:"full_name"`
+			} `json:"repository"`
+			WorkflowRun struct {
+				HeadBranch string `json:"head_branch"`
+				HeadSHA    string `json:"head_sha"`
+			} `json:"workflow_run"`
+		}
+		if json.Unmarshal(body, &w) == nil && s.OnPush != nil {
+			go s.OnPush(w.Repository.FullName, w.WorkflowRun.HeadBranch, w.WorkflowRun.HeadSHA) // a build started or ended
+		}
 	}
 	return true
 }

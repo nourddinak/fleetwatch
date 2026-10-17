@@ -51,6 +51,7 @@ import (
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/secret"
 	"fleetwatch/internal/server/security"
+	"fleetwatch/internal/server/sites"
 	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/uptime"
@@ -555,6 +556,18 @@ func serve() error {
 	}
 	vulnSvc.Notify = admin.Notify
 	hub.Handlers[proto.TypeDepsReport] = vulnSvc.OnReport
+	// GitHub and the static sites deployed from it.
+	ghSvc := github.New(d, box, bus)
+	siteSvc := sites.New(d, box, bus, ghSvc)
+	siteSvc.Send, siteSvc.AgentVersion, siteSvc.Notify = hub.Send, diskSvc.AgentVersion, admin.Notify
+	siteSvc.PublicIP = func(id string) string {
+		if rec, err := hub.Reg.Get(id); err == nil {
+			return rec.PublicIP
+		}
+		return ""
+	}
+	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
+	ghSvc.OnPush = siteSvc.OnPush
 	serverIDs := func() []string {
 		recs, _ := hub.Reg.List()
 		ids := make([]string, 0, len(recs))
@@ -692,7 +705,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: github.New(d, box, bus),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -710,6 +723,7 @@ func serve() error {
 	go onCall.Run(ctx)
 	go upSvc.Run(ctx)
 	go vulnSvc.Run(ctx)
+	go siteSvc.Run(ctx)
 	go func() {
 		for range time.Tick(time.Minute) {
 			admin.Sweep()

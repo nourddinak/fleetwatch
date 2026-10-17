@@ -125,6 +125,9 @@ func (s *server) activityOf(r audit.Row) Activity {
 		a.Text = "connected GitHub (" + r.Detail + ")"
 	case r.Action == "integration.github.disconnect":
 		a.Text = "disconnected GitHub"
+	case verb == "site":
+		a.Text = map[string]string{"create": "added the site", "delete": "removed the site", "redeploy": "redeployed the site",
+			"env": "changed the .env of the site", "update": "changed the site"}[rest] + " " + r.Detail + " on " + srv(r.Target)
 	case r.Action == "runbook.save":
 		a.Text = "updated the runbook for " + incidents.Labels[r.Target]
 	case r.Action == "postmortem.save":

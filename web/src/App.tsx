@@ -68,6 +68,7 @@ const Postmortem = page(() => import("./pages/Postmortem"), "Postmortem");
 const TeamPage = page(() => import("./pages/TeamPage"), "TeamPage");
 const Domains = page(() => import("./pages/Domains"), "Domains");
 const Uptime = page(() => import("./pages/Uptime"), "Uptime");
+const Sites = page(() => import("./pages/Sites"), "Sites");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
 const StatusPages = page(() => import("./pages/StatusEditor"), "StatusPages");
 const Security = page(() => import("./pages/Security"), "Security");
@@ -134,6 +135,7 @@ export default function App() {
             <Route path="team" element={<TeamPage />} />
             <Route path="domains" element={<Domains />} />
             <Route path="uptime" element={<Uptime />} />
+            <Route path="sites" element={<Sites />} />
             <Route path="status-page" element={<StatusPages />} />
             <Route path="status-page/:id" element={<StatusEditor />} />
             <Route path="security" element={<Security />} />

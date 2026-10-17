@@ -30,6 +30,7 @@ interface Installation {
   accountType: string;
   repoSelection: "all" | "selected";
   suspended: boolean;
+  missing?: string[];
 }
 interface Push {
   ts: number;
@@ -74,7 +75,7 @@ export function IntegrationsSettings() {
     <div className="space-y-6">
       <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
       <Card>
-        <SectionTitle title="Coming next" sub="What the GitHub connection is for: deploy static sites and apps on push, show a ✅ deployed status on commits, previews for pull requests, and one-click rollbacks." />
+        <SectionTitle title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
       </Card>
     </div>
   );
@@ -129,9 +130,9 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
         <SectionTitle title={<span className="flex items-center gap-2"><Github size={18} /> GitHub</span>}
           sub="Creates a private GitHub App for this dashboard in one click, then you pick the repositories it may read. No password or long-lived token is stored: the dashboard asks GitHub for one-hour tokens." />
         <ul className="mb-4 space-y-1 text-sm text-muted">
-          <li>• Reads code and metadata of the repositories you choose</li>
-          <li>• Posts deployment statuses and commit checks (for deploys, later)</li>
-          <li>• Gets told about pushes and pull requests</li>
+          <li>• Reads the repositories you choose</li>
+          <li>• For sites that need a build: adds a GitHub Actions workflow and its .env secret, and follows the builds</li>
+          <li>• Gets told about pushes, so sites deploy again by themselves</li>
         </ul>
         {!webhooks && (
           <div className="mb-4 flex gap-2 rounded-2xl bg-warn-soft px-4 py-3 text-sm text-warn">
@@ -165,7 +166,12 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
             <Button size="sm" variant="danger" onClick={() => setDisconnect(true)}>Disconnect</Button>
           </div>
         </div>
-        {!webhooks && <p className="mt-3 text-xs text-warn">Push events cannot reach {publicUrl}: set OPS_PUBLIC_URL to your https domain.</p>}
+        {!webhooks && <p className="mt-3 text-xs text-warn">Push events cannot reach {publicUrl}: sites still deploy, checked every minute. Set OPS_PUBLIC_URL to your https domain for instant deploys.</p>}
+        {status.installations.some((i) => i.missing?.length) && (
+          <p className="mt-3 rounded-2xl bg-warn-soft px-4 py-3 text-sm text-warn">
+            Sites need more permissions than this app has ({[...new Set(status.installations.flatMap((i) => i.missing ?? []))].join(", ")}). Disconnect and connect again, or add them in <a className="underline" href={`${app.htmlUrl.replace("/apps/", "/settings/apps/")}/permissions`} target="_blank" rel="noreferrer">the app's permissions</a> and accept them on GitHub.
+          </p>
+        )}
         <div className="mt-4">
           {status.installations.length === 0 ? (
             <div className="rounded-2xl bg-surface2 p-4 text-sm">
