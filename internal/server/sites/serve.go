@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,6 +53,35 @@ func (s *Service) IsSitePath(serverID, p string) bool {
 // reachable at <dashboard>/sites/<name>/.
 func (s *Service) Local(name string) bool { return localDir(name) != "" }
 
+// storageShim goes first in every page served under the dashboard's domain. The sandbox
+// gives the page no storage, so reading localStorage, sessionStorage or document.cookie
+// throws and most apps stop on the spot; this puts in-memory stand-ins there instead
+// (they last until the page is reloaded; an own domain gives the real thing).
+const storageShim = `<script>(function(){` +
+	`function mk(){var d={},s={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},` +
+	`setItem:function(k,v){d[String(k)]=String(v)},removeItem:function(k){delete d[String(k)]},clear:function(){d={}},` +
+	`key:function(i){var k=Object.keys(d);return i<k.length?k[i]:null}};` +
+	`Object.defineProperty(s,"length",{get:function(){return Object.keys(d).length}});return s}` +
+	`["localStorage","sessionStorage"].forEach(function(n){try{window[n];return}catch(e){}` +
+	`try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(e){}});` +
+	`try{document.cookie}catch(e){var c={};try{Object.defineProperty(document,"cookie",{configurable:true,` +
+	`get:function(){return Object.keys(c).map(function(k){return k+"="+c[k]}).join("; ")},` +
+	`set:function(v){var p=String(v).split(";")[0],i=p.indexOf("=");if(i>0)c[p.slice(0,i).trim()]=p.slice(i+1).trim()}})}catch(e){}}` +
+	`})();</script>`
+
+// withShim puts storageShim at the start of a page's <head> (or of the page).
+func withShim(page []byte) []byte {
+	at := 0
+	if i := bytes.Index(bytes.ToLower(page[:min(len(page), 4096)]), []byte("<head")); i >= 0 {
+		if j := bytes.IndexByte(page[i:], '>'); j >= 0 {
+			at = i + j + 1
+		}
+	}
+	return append(append(append([]byte{}, page[:at]...), storageShim...), page[at:]...)
+}
+
+const maxPage = 8 << 20 // pages larger than this are passed on without the shim
+
 // relayTransport fetches sites on other servers from their preview address.
 var relayTransport = &http.Transport{
 	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
@@ -77,14 +108,25 @@ func relay(w http.ResponseWriter, r *http.Request, name, host, file string) {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL = &url.URL{Scheme: "https", Host: host, Path: "/" + file, RawQuery: r.URL.RawQuery}
 			pr.Out.Host = host
-			for _, k := range []string{"Cookie", "Authorization", "X-Csrf-Token"} {
-				pr.Out.Header.Del(k)
+			for _, k := range []string{"Cookie", "Authorization", "X-Csrf-Token", "Accept-Encoding"} {
+				pr.Out.Header.Del(k) // without Accept-Encoding, Go asks for gzip and unpacks it, so pages can be edited
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			sandboxHeaders(resp.Header)
 			if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") {
 				resp.Header.Set("Location", "/sites/"+name+loc)
+			}
+			if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") && resp.Header.Get("Content-Encoding") == "" && resp.ContentLength <= maxPage {
+				page, err := io.ReadAll(io.LimitReader(resp.Body, maxPage))
+				resp.Body.Close()
+				if err != nil {
+					return err
+				}
+				page = withShim(page)
+				resp.Body, resp.ContentLength = io.NopCloser(bytes.NewReader(page)), int64(len(page))
+				resp.Header.Set("Content-Length", strconv.Itoa(len(page)))
+				resp.Header.Del("Etag")
 			}
 			return nil
 		},
@@ -152,11 +194,13 @@ func (s *Service) Files() http.Handler {
 		for _, c := range candidates {
 			if f, fi, ok := open(c); ok {
 				defer f.Close()
-				if strings.HasSuffix(c, ".html") {
+				if strings.HasSuffix(c, ".html") && fi.Size() <= maxPage {
+					page, _ := io.ReadAll(f)
 					h.Set("Cache-Control", "no-cache")
-				} else {
-					h.Set("Cache-Control", "public, max-age=300")
+					http.ServeContent(w, r, fi.Name(), fi.ModTime(), bytes.NewReader(withShim(page)))
+					return
 				}
+				h.Set("Cache-Control", "public, max-age=300")
 				http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 				return
 			}
@@ -172,7 +216,8 @@ func (s *Service) Files() http.Handler {
 			h.Set("Cache-Control", "no-cache")
 			w.WriteHeader(status)
 			if r.Method == http.MethodGet {
-				io.Copy(w, f)
+				page, _ := io.ReadAll(io.LimitReader(f, maxPage))
+				w.Write(withShim(page))
 			}
 			return
 		}

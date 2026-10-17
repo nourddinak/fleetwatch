@@ -92,6 +92,9 @@ type GitHub interface {
 	Dispatch(ctx context.Context, repo, workflow, ref string) error
 	LastRun(ctx context.Context, repo, workflow string) (*github.Run, error)
 	Tarball(repo, sha string) string
+	DeleteFile(ctx context.Context, repo, path, branch, message string) error
+	DeleteBranch(ctx context.Context, repo, branch string) error
+	DeleteSecret(ctx context.Context, repo, name string) error
 }
 
 type Service struct {
@@ -553,6 +556,19 @@ func (s *Service) Delete(id string) (Site, error) {
 		return st, err
 	}
 	s.Bus.Publish("site.removed", map[string]string{"id": id, "serverId": st.ServerID})
+	// What Fleetwatch added to the repository for building goes too, unless another
+	// site still builds from it.
+	if st.Plan.Kind == "build" && !slices.ContainsFunc(s.List(), func(o Site) bool { return o.Repo == st.Repo && o.Plan.Kind == "build" }) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := errors.Join(
+			s.GitHub.DeleteFile(ctx, st.Repo, ".github/workflows/"+workflowFile, st.Branch, "Remove the Fleetwatch build"),
+			s.GitHub.DeleteBranch(ctx, st.Repo, github.BuildBranchName),
+			s.GitHub.DeleteSecret(ctx, st.Repo, envSecret),
+		); err != nil {
+			slog.Warn("site removal on GitHub", "site", st.Name, "err", err)
+		}
+	}
 	return st, nil
 }
 

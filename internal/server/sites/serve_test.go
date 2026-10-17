@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -39,14 +40,14 @@ func TestServeLocalSite(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 	w := get("/sites/shop/")
-	if w.Code != 200 || w.Body.String() != "<h1>shop</h1>" || !strings.HasPrefix(w.Header().Get("Content-Security-Policy"), "sandbox") ||
+	if w.Code != 200 || !strings.HasSuffix(w.Body.String(), "<h1>shop</h1>") || !strings.HasPrefix(w.Body.String(), storageShim) || !strings.HasPrefix(w.Header().Get("Content-Security-Policy"), "sandbox") ||
 		strings.Contains(w.Header().Get("Content-Security-Policy"), "allow-same-origin") {
 		t.Fatalf("%d %q %v", w.Code, w.Body.String(), w.Header())
 	}
 	if w := get("/sites/shop/assets/app.js"); w.Code != 200 || w.Body.String() != "x" {
 		t.Fatal(w.Code)
 	}
-	if w := get("/sites/shop/products/42"); w.Code != 200 || w.Body.String() != "<h1>shop</h1>" {
+	if w := get("/sites/shop/products/42"); w.Code != 200 || w.Body.String() != storageShim+"<h1>shop</h1>" {
 		t.Fatalf("single-page fallback: %d", w.Code)
 	}
 	for _, p := range []string{"/sites/shop/../../../etc/passwd", "/sites/notours/", "/sites/missing/", "/sites/shop/%2e%2e/notours/index.html"} {
@@ -85,6 +86,11 @@ func TestRelayRemoteSite(t *testing.T) {
 		got = r
 		if r.URL.Path == "/docs" {
 			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+			return
+		}
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte("<!doctype html><html><HEAD><title>x</title></HEAD><body>remote</body></html>"))
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "x", Value: "y"})
@@ -127,6 +133,11 @@ func TestRelayRemoteSite(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sites/shop/docs", nil))
 	if w.Header().Get("Location") != "/sites/shop/docs/" {
 		t.Fatalf("redirect: %q", w.Header().Get("Location"))
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sites/shop/", nil))
+	if want := "<!doctype html><html><HEAD>" + storageShim + "<title>x</title>"; !strings.HasPrefix(w.Body.String(), want) || w.Header().Get("Content-Length") != strconv.Itoa(w.Body.Len()) {
+		t.Fatalf("page: %q", w.Body.String())
 	}
 	// No public IPv4: nothing to relay from.
 	s.PublicIP = func(string) string { return "" }

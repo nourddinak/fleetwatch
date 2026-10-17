@@ -93,6 +93,22 @@ func (f *fakeGH) LastRun(context.Context, string, string) (*github.Run, error) {
 	defer f.mu.Unlock()
 	return f.run, nil
 }
+func (f *fakeGH) DeleteFile(_ context.Context, repo, path, _, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.files[repo], path)
+	return nil
+}
+func (f *fakeGH) DeleteBranch(_ context.Context, repo, branch string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.heads, repo+"@"+branch)
+	return nil
+}
+func (f *fakeGH) DeleteSecret(_ context.Context, repo, name string) error {
+	delete(f.secrets, repo+"/"+name)
+	return nil
+}
 func (f *fakeGH) Tarball(repo, sha string) string {
 	return "https://api.github.test/repos/" + repo + "/tarball/" + sha
 }
@@ -282,5 +298,24 @@ func TestRedeployWhileBuilding(t *testing.T) {
 	gh.run = &github.Run{ID: 1, Status: "completed", Conclusion: "success"}
 	if err := s.Redeploy(context.Background(), st.ID, "Nour"); err == nil || !strings.Contains(err.Error(), "GitHub said") {
 		t.Fatalf("a refused build with nothing running: %v", err)
+	}
+}
+
+// Deleting a built site takes its workflow, build branch and .env secret off GitHub.
+func TestDeleteCleansGitHub(t *testing.T) {
+	s, gh, _ := setup(t)
+	st, err := s.Create(context.Background(), Input{Repo: "me/shop", ServerID: "s1", Env: "VITE_API=https://api.example.com"}, "Nour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh.heads["me/shop@"+github.BuildBranchName] = "b9"
+	if _, ok := gh.files["me/shop"][".github/workflows/"+workflowFile]; !ok || gh.secrets["me/shop/"+envSecret] == "" {
+		t.Fatal("setup did not add the workflow and secret")
+	}
+	if _, err := s.Delete(st.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gh.files["me/shop"][".github/workflows/"+workflowFile]; ok || gh.secrets["me/shop/"+envSecret] != "" || gh.heads["me/shop@"+github.BuildBranchName] != "" {
+		t.Fatalf("left on GitHub: %v %v %v", gh.files["me/shop"], gh.secrets, gh.heads)
 	}
 }

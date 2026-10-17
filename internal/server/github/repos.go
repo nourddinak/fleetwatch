@@ -188,6 +188,33 @@ func (s *Service) SetSecret(ctx context.Context, repo, name, value string) error
 		map[string]string{"encrypted_value": base64.StdEncoding.EncodeToString(sealed), "key_id": pk.KeyID}, nil)
 }
 
+// gone treats "not there" as done, for the Delete calls below.
+func gone(err error) error {
+	if err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "422")) {
+		return nil
+	}
+	return err
+}
+
+// DeleteFile removes a file with a commit on branch (nothing when it is not there).
+func (s *Service) DeleteFile(ctx context.Context, repo, path, branch, message string) error {
+	_, sha, exists, err := s.File(ctx, repo, path, branch)
+	if err != nil || !exists {
+		return err
+	}
+	return gone(s.repoCall(ctx, http.MethodDelete, repo, "/contents/"+path, map[string]string{"message": message, "sha": sha, "branch": branch}, nil))
+}
+
+// DeleteBranch removes a branch.
+func (s *Service) DeleteBranch(ctx context.Context, repo, branch string) error {
+	return gone(s.repoCall(ctx, http.MethodDelete, repo, "/git/refs/heads/"+branch, nil, nil))
+}
+
+// DeleteSecret removes an Actions secret.
+func (s *Service) DeleteSecret(ctx context.Context, repo, name string) error {
+	return gone(s.repoCall(ctx, http.MethodDelete, repo, "/actions/secrets/"+url.PathEscape(name), nil, nil))
+}
+
 // Dispatch starts a workflow (it must allow workflow_dispatch).
 func (s *Service) Dispatch(ctx context.Context, repo, workflow, ref string) error {
 	return s.repoCall(ctx, http.MethodPost, repo, "/actions/workflows/"+url.PathEscape(workflow)+"/dispatches", map[string]string{"ref": ref}, nil)
