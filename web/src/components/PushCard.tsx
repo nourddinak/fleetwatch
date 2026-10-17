@@ -99,7 +99,7 @@ export function PushCard({ enabled, onChange, personal }: { enabled: boolean; on
   const list = devices.data ?? [];
   return (
     <Card>
-      <SectionTitle
+      <SectionTitle icon={<BellRing size={15} />}
         title="Browser push"
         sub={personal ? "On-call pages on your phone. Turn it on from each phone that should ring." : "Without the app: alerts through the browser (installed as a home-screen app on the phone). The Mobile notifications app above is more reliable in the background."}
         action={personal ? undefined : <Toggle checked={enabled} disabled={list.length === 0 || !!busy} onChange={setEnabled} />}

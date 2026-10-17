@@ -75,7 +75,7 @@ export function MobileCard() {
 
   return (
     <Card>
-      <SectionTitle
+      <SectionTitle icon={<Smartphone size={15} />}
         title="Mobile notifications"
         sub="The Fleetwatch Notifications app rings your phone for alerts and on-call pages, even with the browser closed. It connects straight to this dashboard: no other account or service in between."
       />

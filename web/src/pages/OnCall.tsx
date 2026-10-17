@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarClock, CalendarDays, PhoneCall, Plus, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ErrorState, Field, IconButton, Input, LoadingState, SectionTitle, Segmented, Select, Spinner, ToggleRow } from "../components/ui";
@@ -87,7 +87,7 @@ export function OnCallSettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="On call now" />
+        <SectionTitle icon={<PhoneCall size={15} />} title="On call now" />
         {v.data.config.enabled && v.data.now ? (
           <p className="text-sm">
             <span className="text-lg font-semibold">{name(v.data.now)}</span>
@@ -102,7 +102,7 @@ export function OnCallSettings() {
       </Card>
 
       <Card>
-        <SectionTitle title="Schedule" sub="Saved with the Save button below." />
+        <SectionTitle icon={<CalendarClock size={15} />} title="Schedule" sub="Saved with the Save button below." />
         <ToggleRow label="Page the person on call" checked={c.enabled} onChange={(val) => set({ enabled: val })} />
         <Field label="Rotation (each person takes a week, in this order)" className="mt-3">
           <div className="space-y-2">
@@ -176,7 +176,7 @@ export function OnCallSettings() {
 
       {(v.data.schedule?.length ?? 0) > 0 && (
         <Card>
-          <SectionTitle title="Coming weeks" />
+          <SectionTitle icon={<CalendarDays size={15} />} title="Coming weeks" />
           <ul className="divide-y divide-line">
             {v.data.schedule.map((s, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 py-2 text-sm">

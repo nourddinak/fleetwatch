@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Bell, Copy, RefreshCw, ShieldCheck } from "lucide-react";
+import { Activity, Bell, BookOpen, Bot, CalendarClock, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, KeySquare, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Puzzle, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, deviceLabel, useApi, type ApiError, type AuditRow, type SecuritySettings as SecurityConfig, type SessionInfo } from "../api/client";
 import { relTime, dateTime, fmtMB } from "../mock/util";
@@ -11,37 +11,35 @@ import { PushCard } from "../components/PushCard";
 import { MobileCard } from "../components/MobileCard";
 import { AlertRulesCard } from "../components/AlertRulesCard";
 
-const NAV = [
-  ["account", "Account"],
-  ["security", "Security"],
-  ["2fa", "2FA"],
-  ["sessions", "Sessions"],
-  ["servers", "Servers"],
-  ["agents", "Agents"],
-  ["logs", "Logs"],
-  ["metrics", "Metrics"],
-  ["notifications", "Notifications"],
-  ["incidents", "Incident rules"],
-  ["team", "Team"],
-  ["oncall", "On-call"],
-  ["integrations", "Integrations"],
-  ["tokens", "API tokens"],
-  ["system", "System"],
+const GROUPS: { title: string; items: [string, string, typeof Bell][] }[] = [
+  { title: "You", items: [["account", "Account", UserRound], ["security", "Security", ShieldCheck], ["2fa", "2FA", KeyRound], ["sessions", "Sessions", MonitorSmartphone]] },
+  { title: "Fleet", items: [["servers", "Servers", Server], ["agents", "Agents", Bot], ["logs", "Logs", ScrollText], ["metrics", "Metrics", Activity]] },
+  { title: "Alerts", items: [["notifications", "Notifications", Bell], ["incidents", "Incident rules", Siren], ["oncall", "On-call", CalendarClock]] },
+  { title: "Access", items: [["team", "Team", Users], ["integrations", "Integrations", Puzzle], ["tokens", "API tokens", KeySquare]] },
+  { title: "Platform", items: [["system", "System", Cog]] },
 ];
 
 export function SettingsLayout() {
   const { me } = useStore();
   // Team members only manage their own account; everything else is the owner's.
-  const nav = me && me.role !== "owner" ? NAV.filter(([to]) => to === "account" || to === "2fa") : NAV;
+  const groups = me && me.role !== "owner"
+    ? [{ title: "You", items: GROUPS[0].items.filter(([to]) => to === "account" || to === "2fa") }]
+    : GROUPS;
   return (
     <>
       <PageHeader title="Settings" sub="Account, security, collection, notifications and rules" />
-      <div className="grid gap-6 lg:grid-cols-[200px_1fr]">
-        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-24 lg:mx-0 lg:h-fit lg:flex-col lg:px-0">
-          {nav.map(([to, label]) => (
-            <NavLink key={to} to={`/settings/${to}`} className={({ isActive }) => cn("whitespace-nowrap rounded-full px-4 py-2 text-sm transition", isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:bg-surface2 hover:text-fg")}>
-              {label}
-            </NavLink>
+      <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-24 lg:mx-0 lg:h-fit lg:flex-col lg:gap-4 lg:overflow-visible lg:rounded-3xl lg:border lg:border-line lg:bg-surface lg:p-3">
+          {groups.map((g) => (
+            <div key={g.title} className="flex gap-1 lg:flex-col lg:gap-0.5">
+              <div className="hidden px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted/70 lg:block">{g.title}</div>
+              {g.items.map(([to, label, Icon]) => (
+                <NavLink key={to} to={`/settings/${to}`} className={({ isActive }) => cn("flex items-center gap-2.5 whitespace-nowrap rounded-full px-3.5 py-2 text-sm transition", isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:bg-surface2 hover:text-fg")}>
+                  <Icon size={15} className="shrink-0" />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="min-w-0">
@@ -111,7 +109,7 @@ export function AccountSettings() {
         </>
       )}
       <Card>
-        <SectionTitle title="Profile" />
+        <SectionTitle icon={<UserRound size={15} />} title="Profile" />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Username" hint={me.role === "owner" ? "Set on the server with ADMIN_USERNAME" : `Team member (${me.role}); the owner manages your access.`}><Input value={me.username} disabled /></Field>
           <Field label="Display name"><Input value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></Field>
@@ -120,7 +118,7 @@ export function AccountSettings() {
         <SaveBar dirty={dirty} busy={busy === "profile"} onSave={saveProfile} onReset={() => setF({ displayName: me.displayName, email: me.email })} />
       </Card>
       <Card>
-        <SectionTitle title="Change password" sub={`Last changed ${relTime(me.passwordChangedAt)} · changing it signs out every other session`} />
+        <SectionTitle icon={<LockKeyhole size={15} />} title="Change password" sub={`Last changed ${relTime(me.passwordChangedAt)} · changing it signs out every other session`} />
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Current password"><Input type="password" autoComplete="current-password" value={pw.cur} onChange={(e) => setPw({ ...pw, cur: e.target.value })} /></Field>
           <Field label="New password"><Input type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
@@ -161,7 +159,7 @@ export function SecuritySettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Session & access" />
+        <SectionTitle icon={<Timer size={15} />} title="Session & access" />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Session timeout (idle)">
             <Select value={f.sessionTimeoutMin} onChange={(e) => setF({ ...f, sessionTimeoutMin: Number(e.target.value) })}>
@@ -177,7 +175,7 @@ export function SecuritySettings() {
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setF(sec.data)} />
       </Card>
       <Card pad={false}>
-        <div className="p-5 pb-0"><SectionTitle title="Login history" sub="Last 25 sign-in attempts" /></div>
+        <div className="p-5 pb-0"><SectionTitle icon={<LogIn size={15} />} title="Login history" sub="Last 25 sign-in attempts" /></div>
         {logins.error ? (
           <div className="p-5 text-sm text-crit">{logins.error}</div>
         ) : (
@@ -195,7 +193,7 @@ export function SecuritySettings() {
         )}
       </Card>
       <Card pad={false}>
-        <div className="p-5 pb-0"><SectionTitle title="Audit log" sub="Last 200 administrative actions: sign-ins, 2FA, pairing, commands, settings" /></div>
+        <div className="p-5 pb-0"><SectionTitle icon={<ClipboardList size={15} />} title="Audit log" sub="Last 200 administrative actions: sign-ins, 2FA, pairing, commands, settings" /></div>
         {events.error ? (
           <div className="p-5 text-sm text-crit">{events.error}</div>
         ) : (
@@ -286,13 +284,13 @@ export function TwoFASettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Two-factor authentication" action={<Badge tone={me.twofaEnabled ? "ok" : "warn"} dot>{me.twofaEnabled ? "Enabled" : "Disabled"}</Badge>} />
+        <SectionTitle icon={<KeyRound size={15} />} title="Two-factor authentication" action={<Badge tone={me.twofaEnabled ? "ok" : "warn"} dot>{me.twofaEnabled ? "Enabled" : "Disabled"}</Badge>} />
         <p className="text-sm text-muted">{me.twofaEnabled ? "A 6-digit code from your authenticator app is required after your password." : "Add a second step to protect access to your infrastructure."}</p>
         <div className="mt-4">{me.twofaEnabled ? <Button variant="danger" onClick={() => setModal("disable")}>Disable 2FA</Button> : <Button onClick={() => setModal("enable")}><ShieldCheck size={15} /> Enable 2FA</Button>}</div>
       </Card>
       {me.twofaEnabled && (
         <Card>
-          <SectionTitle title="Recovery codes" sub={`${me.recoveryCodesLeft} of 10 unused. Each code works once. Codes are only shown when generated.`} action={<Button size="sm" variant="secondary" onClick={() => setModal("regen")}><RefreshCw size={13} /> Regenerate</Button>} />
+          <SectionTitle icon={<LifeBuoy size={15} />} title="Recovery codes" sub={`${me.recoveryCodesLeft} of 10 unused. Each code works once. Codes are only shown when generated.`} action={<Button size="sm" variant="secondary" onClick={() => setModal("regen")}><RefreshCw size={13} /> Regenerate</Button>} />
           {me.recoveryCodesLeft <= 3 && <p className="text-sm text-warn">You are running low on recovery codes. Regenerate a new set.</p>}
         </Card>
       )}
@@ -377,7 +375,7 @@ export function SessionSettings() {
   return (
     <Card pad={false}>
       <div className="p-5 pb-0">
-        <SectionTitle
+        <SectionTitle icon={<MonitorSmartphone size={15} />}
           title="Active sessions"
           sub={`${data.length} signed-in browser${data.length === 1 ? "" : "s"}`}
           action={
@@ -410,7 +408,7 @@ export function ServersSettings() {
   const nav = useNavigate();
   return (
     <Card pad={false}>
-      <div className="p-5 pb-0"><SectionTitle title="Servers" action={<Button size="sm" onClick={() => nav("/servers/new")}>Add server</Button>} /></div>
+      <div className="p-5 pb-0"><SectionTitle icon={<Server size={15} />} title="Servers" action={<Button size="sm" onClick={() => nav("/servers/new")}>Add server</Button>} /></div>
       {servers.length === 0 ? (
         <p className="p-5 text-sm text-muted">No servers yet.</p>
       ) : (
@@ -448,7 +446,7 @@ export function AgentsSettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Agent version" action={outdated.length > 0 && <Button size="sm" disabled={busy} onClick={updateAll}>{busy && <Spinner size={13} />} Update {outdated.length} agent{outdated.length === 1 ? "" : "s"}</Button>} />
+        <SectionTitle icon={<PackageCheck size={15} />} title="Agent version" action={outdated.length > 0 && <Button size="sm" disabled={busy} onClick={updateAll}>{busy && <Spinner size={13} />} Update {outdated.length} agent{outdated.length === 1 ? "" : "s"}</Button>} />
         <p className="text-sm text-muted">This server ships agent <b className="text-fg">v{latest ?? "—"}</b>. Agents update in place: each downloads the new binary from this dashboard, checks its SHA-256 and restarts. Agents older than v0.8 need a new install command once.</p>
       </Card>
       <Card>
@@ -467,7 +465,7 @@ export function AgentsSettings() {
         />
       </Card>
       <Card pad={false}>
-        <div className="p-5 pb-0"><SectionTitle title="Agents" /></div>
+        <div className="p-5 pb-0"><SectionTitle icon={<Bot size={15} />} title="Agents" /></div>
         {paired.length === 0 ? (
           <p className="p-5 text-sm text-muted">No agents have connected yet.</p>
         ) : (
@@ -514,7 +512,7 @@ export function LogSettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Log retention" sub="Older log lines are deleted from the central server every 10 minutes" />
+        <SectionTitle icon={<Hourglass size={15} />} title="Log retention" sub="Older log lines are deleted from the central server every 10 minutes" />
         <Segmented value={String(f.retentionDays)} onChange={(v) => setF({ ...f, retentionDays: Number(v) })} options={[1, 3, 7, 14, 30].map((d) => ({ value: String(d), label: `${d} day${d > 1 ? "s" : ""}` }))} />
         {f.retentionDays === 7 && <span className="ml-3 text-xs text-muted">default</span>}
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -523,7 +521,7 @@ export function LogSettings() {
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setF(cfg.data)} />
       </Card>
       <Card>
-        <SectionTitle title="Stored logs" />
+        <SectionTitle icon={<Database size={15} />} title="Stored logs" />
         {stats.data ? (
           <dl className="grid gap-x-6 sm:grid-cols-3">
             <KV label="Lines stored (approx.)">{stats.data.lines.toLocaleString()}</KV>
@@ -564,7 +562,7 @@ export function MetricsSettings() {
   };
   return (
     <Card>
-      <SectionTitle title="Metrics collection" />
+      <SectionTitle icon={<Activity size={15} />} title="Metrics collection" />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Collection interval" hint="How often agents sample the host"><Select value={f.intervalSec} onChange={(e) => setF({ ...f, intervalSec: Number(e.target.value) })}>{[5, 10, 15, 30, 60].map((n) => <option key={n} value={n}>{n} seconds</option>)}</Select></Field>
         <Field label="Long-term retention" hint="Hourly averages are kept this long"><Select value={f.retentionDays} onChange={(e) => setF({ ...f, retentionDays: Number(e.target.value) })}>{[7, 14, 30, 60, 90, 180, 365].map((n) => <option key={n} value={n}>{n} days</option>)}</Select></Field>
@@ -643,7 +641,7 @@ function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => 
   };
   return (
     <Card>
-      <SectionTitle title={def.title} sub={def.help} action={<Toggle checked={enabled} onChange={setEnabled} />} />
+      <SectionTitle icon={<Send size={15} />} title={def.title} sub={def.help} action={<Toggle checked={enabled} onChange={setEnabled} />} />
       <div className="grid gap-4 sm:grid-cols-2">
         {def.fields.map(([k, label, ph, secret]) => (
           <Field key={k} label={label} className={def.fields.length === 1 ? "sm:col-span-2" : undefined} hint={secret && ch.secrets[k] ? "Saved and encrypted. Leave empty to keep it." : undefined}>
@@ -717,7 +715,7 @@ export function NotificationSettings() {
         ),
       )}
       <Card>
-        <SectionTitle title="Notification rules" sub="Which incident events send a notification. Per-server and per-app overrides live on their settings pages. A 10-minute cooldown prevents repeats." />
+        <SectionTitle icon={<Bell size={15} />} title="Notification rules" sub="Which incident events send a notification. Per-server and per-app overrides live on their settings pages. A 10-minute cooldown prevents repeats." />
         <div className="divide-y divide-line">
           {NOTIFY_RULE_ROWS.map(([k, label, desc]) => <ToggleRow key={k} label={label} desc={desc} checked={!!r[k]} onChange={(v) => setR({ ...r, [k]: v })} />)}
         </div>
@@ -768,7 +766,7 @@ export function IncidentRulesSettings() {
   return (
     <div className="space-y-6">
     <Card>
-      <SectionTitle title="Incident detection rules" sub="Thresholds the central server uses to open incidents. Incidents resolve automatically when the condition clears." />
+      <SectionTitle icon={<Siren size={15} />} title="Incident detection rules" sub="Thresholds the central server uses to open incidents. Incidents resolve automatically when the condition clears." />
       <div className="divide-y divide-line">
         {INCIDENT_RULE_ROWS.map(([k, label, unit, desc]) => (
           <div key={k} className="flex flex-wrap items-center justify-between gap-3 py-3">
@@ -805,7 +803,7 @@ function Runbooks() {
   };
   return (
     <Card>
-      <SectionTitle title="Runbooks" sub="Steps to fix each kind of incident. They appear in the incident, in its notifications and on the phone, so whoever is woken up knows what to do." />
+      <SectionTitle icon={<BookOpen size={15} />} title="Runbooks" sub="Steps to fix each kind of incident. They appear in the incident, in its notifications and on the phone, so whoever is woken up knows what to do." />
       <div className="divide-y divide-line">
         {Object.entries(data.data.types).sort((a, b) => a[1].localeCompare(b[1])).map(([type, label]) => {
           const text = data.data!.runbooks[type];
@@ -857,18 +855,18 @@ export function SystemSettings() {
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle title="Discovery" sub="PM2 processes and systemd services are found wherever they live. These directories are additionally scanned for project folders (one level deep)." />
+        <SectionTitle icon={<Radar size={15} />} title="Discovery" sub="PM2 processes and systemd services are found wherever they live. These directories are additionally scanned for project folders (one level deep)." />
         <Field label="Project folder roots" hint="One absolute path per line, up to 10">
           <Textarea rows={4} value={roots} onChange={(e) => setRoots(e.target.value)} className="font-mono" />
         </Field>
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setRoots(disc.data!.roots.join("\n"))} />
       </Card>
       <Card>
-        <SectionTitle title="Updates" sub="New Fleetwatch releases from GitHub, installed with one click" />
+        <SectionTitle icon={<Download size={15} />} title="Updates" sub="New Fleetwatch releases from GitHub, installed with one click" />
         <UpdateCard />
       </Card>
       <Card>
-        <SectionTitle title="About" />
+        <SectionTitle icon={<Info size={15} />} title="About" />
         <dl className="grid grid-cols-2 gap-y-2 text-sm">
           {[["Central server", `v${health.data?.version ?? "—"}`], ["Agent protocol", "v1 (JSON over WebSocket)"], ["Database", "SQLite (WAL) in OPS_DATA_DIR"]].map(([k, v]) => <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd>{v}</dd></div>)}
         </dl>

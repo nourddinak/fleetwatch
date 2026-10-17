@@ -64,7 +64,7 @@ export function TeamSettings() {
 
   return (
     <Card>
-      <SectionTitle
+      <SectionTitle icon={<Users size={15} />}
         title="Team"
         sub="Give others their own sign-in. Every action they take is in the audit log under their name. You stay the owner: only you change settings, servers and the team."
         action={<Button size="sm" onClick={() => setForm({ username: "", displayName: "", email: "", role: "operator", servers: null, disabled: false, password: "" })}><Plus size={14} /> Member</Button>}

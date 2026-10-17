@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KeyRound, Trash2 } from "lucide-react";
+import { KeyRound, KeySquare, Terminal, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Button, Card, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Input, LoadingState, Modal, SectionTitle, Spinner, Table, Td, Tr } from "../components/ui";
@@ -67,7 +67,7 @@ export function TokenSettings() {
     <div className="space-y-6">
       <Card pad={false}>
         <div className="p-5 pb-0">
-          <SectionTitle
+          <SectionTitle icon={<KeySquare size={15} />}
             title="API tokens"
             sub="Read-only access for scripts, Grafana and Prometheus. A token can read what the dashboard shows; it cannot run commands, change settings, or see sessions and the audit log."
             action={<Button size="sm" onClick={() => setCreating(true)}><KeyRound size={14} /> New token</Button>}
@@ -95,7 +95,7 @@ export function TokenSettings() {
       </Card>
 
       <Card>
-        <SectionTitle title="Using a token" sub="Send it as a bearer token." />
+        <SectionTitle icon={<Terminal size={15} />} title="Using a token" sub="Send it as a bearer token." />
         <div className="space-y-3 text-sm">
           <Snippet text={`curl -H "Authorization: Bearer fwt_…" ${origin}/api/servers`} />
           <p className="text-muted">Prometheus (prometheus.yml):</p>

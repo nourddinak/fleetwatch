@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ExternalLink, GitBranch, Lock, RefreshCw, TriangleAlert } from "lucide-react";
+import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Info, Lock, RefreshCw, TriangleAlert } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -66,7 +66,7 @@ export function IntegrationsSettings() {
     <div className="space-y-6">
       <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
       <Card>
-        <SectionTitle title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
+        <SectionTitle icon={<Info size={15} />} title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
       </Card>
     </div>
   );
@@ -176,7 +176,7 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
       {status.installations.length > 0 && <Repos />}
       {status.pushes.length > 0 && (
         <Card>
-          <SectionTitle title="Recent pushes" sub="As GitHub reports them." />
+          <SectionTitle icon={<GitCommitHorizontal size={15} />} title="Recent pushes" sub="As GitHub reports them." />
           <ul className="divide-y divide-line text-sm">
             {status.pushes.map((p, i) => (
               <li key={i} className="flex flex-wrap items-baseline gap-2 py-2">
@@ -231,7 +231,7 @@ function Repos() {
   return (
     <Card pad={false}>
       <div className="p-5 pb-2">
-        <SectionTitle title={`Repositories (${list.data.length})`} sub="Linked to your apps by the git remote of their folder." action={<Button size="sm" variant="ghost" onClick={list.reload}><RefreshCw size={14} /></Button>} />
+        <SectionTitle icon={<FolderGit2 size={15} />} title={`Repositories (${list.data.length})`} sub="Linked to your apps by the git remote of their folder." action={<Button size="sm" variant="ghost" onClick={list.reload}><RefreshCw size={14} /></Button>} />
       </div>
       {list.data.length === 0 ? (
         <div className="p-5 pt-0"><EmptyState title="No repositories" desc="Choose repositories on GitHub for the app." /></div>
