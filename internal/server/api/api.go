@@ -21,6 +21,7 @@ import (
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -71,6 +72,7 @@ type Deps struct {
 	Docker     *docker.Service
 	Admin      *hostadmin.Service
 	Vulns      *vulns.Service
+	GitHub     *github.Service
 }
 
 type server struct{ Deps }
@@ -143,6 +145,9 @@ func New(d Deps) http.Handler {
 	if d.Admin != nil {
 		s.adminRoutes(mux)
 	}
+	if d.GitHub != nil {
+		s.integrationRoutes(mux)
+	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))
@@ -179,7 +184,7 @@ func static(ui fs.FS) http.Handler {
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://github.com")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
@@ -195,8 +200,9 @@ func sameOriginWrites(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			// Unsubscribe links carry their own secret and are posted by mail apps.
-			// The phone app uses its own bearer token, never cookies.
-			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") {
+			// The phone app uses its own bearer token, never cookies; GitHub signs its webhooks.
+			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") &&
+				r.URL.Path != "/api/integrations/github/webhook" {
 				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
 				return
 			}

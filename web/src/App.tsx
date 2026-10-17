@@ -89,6 +89,7 @@ const SystemSettings = page(() => import("./pages/Settings"), "SystemSettings");
 const OnCallSettings = page(() => import("./pages/OnCall"), "OnCallSettings");
 const TeamSettings = page(() => import("./pages/Team"), "TeamSettings");
 const TokenSettings = page(() => import("./pages/Tokens"), "TokenSettings");
+const IntegrationsSettings = page(() => import("./pages/Integrations"), "IntegrationsSettings");
 const TwoFASettings = page(() => import("./pages/Settings"), "TwoFASettings");
 
 export default function App() {
@@ -154,6 +155,7 @@ export default function App() {
               <Route path="team" element={<TeamSettings />} />
               <Route path="oncall" element={<OnCallSettings />} />
               <Route path="tokens" element={<TokenSettings />} />
+              <Route path="integrations" element={<IntegrationsSettings />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

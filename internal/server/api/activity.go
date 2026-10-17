@@ -121,6 +121,10 @@ func (s *server) activityOf(r audit.Row) Activity {
 		a.Text = "brought back ignored discoveries"
 	case r.Action == "statuspage.delete":
 		a.Text = "deleted a status page"
+	case r.Action == "integration.github.connect":
+		a.Text = "connected GitHub (" + r.Detail + ")"
+	case r.Action == "integration.github.disconnect":
+		a.Text = "disconnected GitHub"
 	case r.Action == "runbook.save":
 		a.Text = "updated the runbook for " + incidents.Labels[r.Target]
 	case r.Action == "postmortem.save":

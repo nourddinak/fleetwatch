@@ -37,6 +37,7 @@ import (
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -691,7 +692,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: github.New(d, box, bus),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

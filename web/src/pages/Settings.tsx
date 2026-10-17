@@ -24,6 +24,7 @@ const NAV = [
   ["incidents", "Incident rules"],
   ["team", "Team"],
   ["oncall", "On-call"],
+  ["integrations", "Integrations"],
   ["tokens", "API tokens"],
   ["system", "System"],
 ];
