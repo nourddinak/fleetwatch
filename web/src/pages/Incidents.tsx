@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertOctagon } from "lucide-react";
+import { AlertOctagon, BellOff, CheckCircle2, Siren, UserCheck } from "lucide-react";
 import { useStore } from "../store/store";
 import { Button, EmptyState, FilterBar, Gate, MetricCard, PageHeader, SearchInput, Select } from "../components/ui";
 import { ApplicationPicker, IncidentCard, IncidentDrawer, ServerPicker } from "../components/domain";
@@ -33,10 +33,10 @@ export function Incidents() {
       <PageHeader title="Incidents" sub="Detected problems across servers and applications" />
       <Gate>
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MetricCard label="Active" value={count("active")} tone={count("active") ? "crit" : "ok"} sub={`${incidents.filter((i) => i.status === "active" && i.severity === "critical").length} critical`} />
-          <MetricCard label="Acknowledged" value={count("acknowledged")} tone={count("acknowledged") ? "warn" : undefined} />
-          <MetricCard label="Muted" value={count("muted")} />
-          <MetricCard label="Resolved" value={count("resolved")} tone="ok" sub="last 90 days" />
+          <MetricCard icon={<Siren size={14} />} label="Active" value={count("active")} tone={count("active") ? "crit" : "ok"} sub={`${incidents.filter((i) => i.status === "active" && i.severity === "critical").length} critical`} />
+          <MetricCard icon={<UserCheck size={14} />} label="Acknowledged" value={count("acknowledged")} tone={count("acknowledged") ? "warn" : undefined} />
+          <MetricCard icon={<BellOff size={14} />} label="Muted" value={count("muted")} />
+          <MetricCard icon={<CheckCircle2 size={14} />} label="Resolved" value={count("resolved")} tone="ok" sub="last 90 days" />
         </div>
         <FilterBar>
           <SearchInput value={q} onChange={setQ} placeholder="Search incidents…" className="lg:w-64" />

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bell, BellOff, Check, Eye, EyeOff, FolderGit2, GitBranch, Plus, Server as ServerIcon, ShieldCheck, Terminal } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Boxes, Check, Clock, Eye, EyeOff, Flame, FolderGit2, GitBranch, Info, Plus, Repeat, Server as ServerIcon, ShieldCheck, Tag, Terminal } from "lucide-react";
 import type { App, Discovery, Incident, NotificationRec, Server } from "../mock/types";
 import { exposure } from "../utils/net";
 import { clock, dateTime, fmtMB, relTime } from "../mock/util";
@@ -132,25 +132,29 @@ export function GitSummary({ app, full }: { app: App; full?: boolean }) {
 }
 
 /* ---------------- incidents ---------------- */
-const sevBorder = { critical: "bg-crit", warning: "bg-warn", info: "bg-info" } as const;
+const sevTile = { critical: "bg-crit-soft text-crit", warning: "bg-warn-soft text-warn", info: "bg-info-soft text-info" } as const;
+const sevIcon = { critical: Flame, warning: AlertTriangle, info: Info } as const;
 export function IncidentCard({ incident, onOpen, compact }: { incident: Incident; onOpen?: () => void; compact?: boolean }) {
   const { getApp, getServer } = useStore();
   const app = incident.appId ? getApp(incident.appId) : null;
   const srv = getServer(incident.serverId);
   return (
-    <div onClick={onOpen} className={cn("relative flex gap-3 overflow-hidden rounded-2xl border border-line bg-surface p-4 pl-5 transition", onOpen && "cursor-pointer hover:border-fg/30")}>
-      <span className={cn("absolute left-0 top-0 h-full w-1.5", sevBorder[incident.severity])} />
+    <div onClick={onOpen} className={cn("relative flex items-start gap-3 overflow-hidden rounded-2xl border border-line bg-surface p-4 transition", onOpen && "cursor-pointer hover:border-fg/30", incident.status === "resolved" && "opacity-80")}>
+      {(() => {
+        const Icon = incident.status === "resolved" ? Check : sevIcon[incident.severity];
+        return <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", incident.status === "resolved" ? "bg-ok-soft text-ok" : sevTile[incident.severity])}><Icon size={17} /></span>;
+      })()}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{incident.title}</span>
           <SeverityBadge severity={incident.severity} />
           <IncidentStatusBadge status={incident.status} />
         </div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
-          <span>{incident.type}</span>
-          <span>{app ? app.name : "Server-level"} · {srv?.name}</span>
-          {!compact && <span>{incident.occurrences.toLocaleString()} occurrence{incident.occurrences === 1 ? "" : "s"}</span>}
-          <span>{incident.status === "resolved" && incident.resolvedAt ? `resolved ${relTime(incident.resolvedAt)}` : `started ${clock(incident.firstAt, false)} · last ${clock(incident.lastAt, false)}`}</span>
+        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+          <span className="inline-flex items-center gap-1.5"><Tag size={12} />{incident.type}</span>
+          <span className="inline-flex items-center gap-1.5">{app ? <Boxes size={12} /> : <ServerIcon size={12} />}{app ? app.name : "Server-level"} · {srv?.name}</span>
+          {!compact && <span className="inline-flex items-center gap-1.5"><Repeat size={12} />{incident.occurrences.toLocaleString()} occurrence{incident.occurrences === 1 ? "" : "s"}</span>}
+          <span className="inline-flex items-center gap-1.5"><Clock size={12} />{incident.status === "resolved" && incident.resolvedAt ? `resolved ${relTime(incident.resolvedAt)}` : `started ${clock(incident.firstAt, false)} · last ${clock(incident.lastAt, false)}`}</span>
         </div>
       </div>
     </div>

@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Gauge, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, CircleArrowDown, Clock, Gauge, Globe, Link2, MapPin, PauseCircle, Pencil, Plus, RefreshCw, Server as ServerIcon, Snail, Sparkles, Timer, Trash2, Zap } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import type { Range } from "../mock/types";
 import { dateTime, relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, SectionTitle, Table, Td, TimeRangeSelector, Tr, type Tone } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, SectionTitle, Table, Td, TimeRangeSelector, Tr, toneDot, type Tone } from "../components/ui";
 import { MetricPanel } from "../components/MetricChart";
 import { cn } from "../utils/cn";
 
@@ -114,11 +114,15 @@ export function Uptime() {
         ) : (
           <div className="space-y-4">
             {list.data.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                <Badge tone="ok">{count(["up"])} up</Badge>
-                {count(["down", "partial"]) > 0 && <Badge tone="crit">{count(["down", "partial"])} down</Badge>}
-                {count(["slow"]) > 0 && <Badge tone="warn">{count(["slow"])} slow</Badge>}
-                {count(["paused"]) > 0 && <Badge>{count(["paused"])} paused</Badge>}
+              <div className="flex flex-wrap gap-2 text-xs">
+                {([
+                  [CheckCircle2, `${count(["up"])} up`, count(["up"]) >= 0, ""],
+                  [CircleArrowDown, `${count(["down", "partial"])} down`, count(["down", "partial"]) > 0, "border-crit/40 text-crit"],
+                  [Snail, `${count(["slow"])} slow`, count(["slow"]) > 0, "border-warn/40 text-warn"],
+                  [PauseCircle, `${count(["paused"])} paused`, count(["paused"]) > 0, ""],
+                ] as const).map(([Icon, text, show, cls]) => show && (
+                  <span key={text} className={cn("inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-muted", cls)}><Icon size={13} /> {text}</span>
+                ))}
               </div>
             )}
             {owner && <Suggestions onAdd={(s) => setEdit({ name: s.name, url: s.url, serverId: s.serverId, locations: ["dashboard"], enabled: true })} known={list.data.length} />}
@@ -155,19 +159,31 @@ function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; o
   const [tone, label] = STATUS[v.status];
   const name = (id: string) => getServer(id)?.name;
   return (
-    <Card>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <Card className="transition hover:border-fg/25">
+      <div className="flex items-start gap-3">
+        <button onClick={onOpen} className="relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-surface2 text-fg" aria-label={`Open ${v.name}`}>
+          <Globe size={18} />
+          <span className={cn("absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-surface", toneDot[tone], v.status === "down" && "pulse-dot")} />
+        </button>
         <button onClick={onOpen} className="min-w-0 flex-1 text-left">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold hover:underline">{v.name}</span>
+            <span className="text-[15px] font-semibold tracking-tight hover:underline">{v.name}</span>
             <Badge tone={tone} dot pulse={v.status === "down"}>{label}</Badge>
           </div>
-          <div className="truncate text-xs text-muted">{v.url} · every {v.intervalSec < 60 ? `${v.intervalSec}s` : `${v.intervalSec / 60} min`}{v.slowMs ? ` · slow above ${ms(v.slowMs)}` : ""}</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
+            <span className="inline-flex min-w-0 items-center gap-1.5"><Link2 size={12} className="shrink-0" /><span className="truncate">{v.url}</span></span>
+            <span className="inline-flex items-center gap-1.5"><Timer size={12} />every {v.intervalSec < 60 ? `${v.intervalSec}s` : `${v.intervalSec / 60} min`}</span>
+            {v.slowMs > 0 && <span className="inline-flex items-center gap-1.5"><Snail size={12} />slow above {ms(v.slowMs)}</span>}
+          </div>
         </button>
-        <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" onClick={onCheck} disabled={!v.enabled} title="Check now"><RefreshCw size={14} /></Button>
-          {owner && <Button size="sm" variant="ghost" onClick={onEdit} title="Edit"><Pencil size={14} /></Button>}
-          {owner && <Button size="sm" variant="ghost" onClick={onDelete} title="Delete"><Trash2 size={14} /></Button>}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {([
+            [RefreshCw, "Check now", onCheck, true, !v.enabled],
+            [Pencil, "Edit", onEdit, owner, false],
+            [Trash2, "Delete", onDelete, owner, false],
+          ] as const).map(([Icon, t, fn, show, off]) => show && (
+            <button key={t} onClick={fn} disabled={off} title={t} aria-label={t} className="grid h-9 w-9 place-items-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg disabled:opacity-40"><Icon size={15} /></button>
+          ))}
         </div>
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto]">
@@ -179,10 +195,17 @@ function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; o
           </div>
           <div className="mt-1 flex justify-between text-[11px] text-muted"><span>30 days ago</span><span>{pct(v.uptime30d)} uptime</span><span>today</span></div>
         </div>
-        <div className="grid grid-cols-3 gap-4 text-center md:text-right">
-          <div><div className="text-[11px] text-muted">24 h</div><div className="font-semibold">{pct(v.uptime24h)}</div></div>
-          <div><div className="text-[11px] text-muted">median</div><div className="font-semibold">{v.p50 ? ms(v.p50) : "—"}</div></div>
-          <div><div className="text-[11px] text-muted">p95</div><div className={cn("font-semibold", v.slowMs && v.p95 > v.slowMs && "text-warn")}>{v.p95 ? ms(v.p95) : "—"}</div></div>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            [Activity, "24 h", pct(v.uptime24h), ""],
+            [Gauge, "median", v.p50 ? ms(v.p50) : "—", ""],
+            [Zap, "p95", v.p95 ? ms(v.p95) : "—", v.slowMs && v.p95 > v.slowMs ? "text-warn" : ""],
+          ] as const).map(([Icon, l, val, cls]) => (
+            <div key={l} className="rounded-xl bg-surface2/60 px-3 py-2">
+              <div className="flex items-center gap-1 text-[11px] text-muted"><Icon size={11} />{l}</div>
+              <div className={cn("text-sm font-semibold tabular-nums", cls)}>{val}</div>
+            </div>
+          ))}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -190,6 +213,7 @@ function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; o
           <span key={s.location} title={s.error || (s.ts ? `HTTP ${s.code} · ${relTime(s.ts)}` : "No result yet")}
             className={cn("inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs", s.status === "down" && "border-crit/40 text-crit")}>
             <span className={cn("h-1.5 w-1.5 rounded-full", s.status === "up" ? "bg-ok" : s.status === "down" ? "bg-crit" : "bg-muted")} />
+            {s.location === "dashboard" ? <MapPin size={11} className="text-muted" /> : <ServerIcon size={11} className="text-muted" />}
             {locName(s.location, name)}
             <span className="text-muted">{s.status === "up" ? ms(s.latencyMs ?? 0) : s.status === "down" ? (s.code ? `HTTP ${s.code}` : "no answer") : "…"}</span>
           </span>
@@ -204,7 +228,7 @@ function Suggestions({ onAdd, known }: { onAdd: (s: Suggestion) => void; known: 
   if (!data?.length) return null;
   return (
     <Card>
-      <SectionTitle title="Your sites without a check" sub="Found in Caddy and on your apps. One click to watch them." />
+      <SectionTitle icon={<Sparkles size={15} />} title="Your sites without a check" sub="Found in Caddy and on your apps. One click to watch them." />
       <div className="flex flex-wrap gap-2">
         {data.slice(0, 12).map((s) => (
           <Button key={s.url} size="sm" variant="secondary" onClick={() => onAdd(s)}><Plus size={13} /> {s.name}</Button>
@@ -279,7 +303,7 @@ function CheckDrawer({ view, onClose }: { view: View | null; onClose: () => void
   const h = useApi<History>(view ? `/api/uptime/${view.id}/history?range=${range}&t=${tick}` : "/api/health");
   const data = view && h.data && "points" in h.data ? h.data : null;
   return (
-    <Drawer open={!!view} onClose={onClose} title={view?.name ?? ""}>
+    <Drawer open={!!view} onClose={onClose} title={<span className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface2"><Globe size={16} /></span>{view?.name ?? ""}</span>}>
       {view && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -307,11 +331,11 @@ function CheckDrawer({ view, onClose }: { view: View | null; onClose: () => void
                 </Table>
               </Card>
               <Card>
-                <SectionTitle title="Recent failures" sub={data.failures.length ? undefined : "None in this range."} />
+                <SectionTitle icon={<AlertTriangle size={15} />} title="Recent failures" sub={data.failures.length ? undefined : "None in this range."} />
                 <ul className="divide-y divide-line">
                   {data.failures.map((f, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-2 py-2 text-sm">
-                      <span className="text-xs text-muted" title={dateTime(f.ts)}>{relTime(f.ts)}</span>
+                      <span className="inline-flex items-center gap-1 text-xs text-muted" title={dateTime(f.ts)}><Clock size={11} />{relTime(f.ts)}</span>
                       <span className="font-medium">{locName(f.location, (id) => getServer(id)?.name)}</span>
                       <span className="min-w-0 flex-1 break-words text-muted">{f.error || `HTTP ${f.status}`}</span>
                     </li>
