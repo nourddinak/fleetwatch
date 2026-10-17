@@ -131,7 +131,8 @@ func TestAgentPairingEndToEnd(t *testing.T) {
 	agentSend(t, ws, proto.TypeHello, proto.Hello{Protocol: proto.Protocol, AgentVersion: "test", Hostname: "vps1", OS: "Ubuntu 24.04", CPUCores: 2, MemTotal: 4 << 30, DiskTotal: 80 << 30})
 	agentSend(t, ws, proto.TypeMetrics, proto.Metrics{CPU: 12.5, MemUsed: 1 << 30, MemTotal: 4 << 30, DiskUsed: 20 << 30, DiskTotal: 80 << 30, NetRxBps: 125000, Load1: 0.5, Uptime: 3600})
 
-	waitFor(t, "server online", func() bool { return c.server(id)["status"] == "online" })
+	// Online comes with the hello; the metrics frame can land a moment later.
+	waitFor(t, "server online with metrics", func() bool { s := c.server(id); return s["status"] == "online" && s["cpu"] == 12.5 })
 	s := c.server(id)
 	if s["cpu"] != 12.5 || s["ram"] != 25.0 || s["disk"] != 25.0 || s["netRx"] != 1.0 || s["hostname"] != "vps1" || s["ramGb"] != 4.0 {
 		t.Fatalf("view: %v", s)
