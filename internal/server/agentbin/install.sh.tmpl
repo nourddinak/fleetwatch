@@ -38,4 +38,7 @@ cat > /etc/systemd/system/ops-agent.service <<'UNIT'
 systemctl daemon-reload
 systemctl enable ops-agent >/dev/null 2>&1
 systemctl restart ops-agent
+
+# Caddy publishes the sites deployed from the dashboard.
+/usr/local/bin/ops-agent install-caddy || echo "Caddy was not installed (see above); the dashboard tries again when you deploy a site."
 echo "ops-agent is installed and running. Check it with: systemctl status ops-agent"

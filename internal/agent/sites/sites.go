@@ -165,6 +165,9 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 		fmt.Fprintln(log, "No address of its own: files only")
 		return nil
 	}
+	if err := InstallCaddy(ctx, log); err != nil {
+		return err
+	}
 	if err := applyCaddy(req.Name, site); err != nil {
 		return err
 	}
@@ -259,7 +262,7 @@ func prune(name, liveRel string) {
 func applyCaddy(name, site string) error {
 	main, err := os.ReadFile(Caddyfile)
 	if err != nil {
-		return fmt.Errorf("Caddy is not installed on this server (%s is missing): sudo apt install caddy", Caddyfile)
+		return fmt.Errorf("Caddy is not set up on this server (%s is missing)", Caddyfile)
 	}
 	if out, err := validate(); err != nil {
 		return fmt.Errorf("the current Caddy configuration already has an error, so the site was not added: %s", lastLine(out, err))

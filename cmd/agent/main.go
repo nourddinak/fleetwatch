@@ -17,6 +17,7 @@ import (
 	"fleetwatch/internal/agent/config"
 	"fleetwatch/internal/agent/conn"
 	"fleetwatch/internal/agent/inventory"
+	"fleetwatch/internal/agent/sites"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -28,6 +29,7 @@ commands:
   run                                    connect to the server (default; used by ops-agent.service)
   enroll --server URL --token TOKEN      pair this host using a one-time token from the dashboard
   inventory [--roots /var/www,/srv]      print what the agent discovers, as JSON
+  install-caddy                          install Caddy (for sites) if it is missing
   version                                print the version
 
 Config: /etc/ops-agent/config.json (override with OPS_AGENT_CONFIG).
@@ -51,6 +53,8 @@ func main() {
 		err = enroll(path, args)
 	case "inventory":
 		err = printInventory(args)
+	case "install-caddy":
+		err = sites.InstallCaddy(context.Background(), os.Stdout)
 	case "version":
 		fmt.Println(version)
 	default:
