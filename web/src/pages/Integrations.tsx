@@ -215,7 +215,7 @@ function GrantPermissions({ app, installations }: { app: App; installations: Ins
       <div className="font-semibold">Sites need more permissions than this app has ({missing.join(", ")})</div>
       <ol className="list-decimal space-y-1 pl-5 text-fg">
         <li>Open <a className="underline" href={`${settings}/permissions`} target="_blank" rel="noreferrer">the app's permissions on GitHub</a>.</li>
-        <li>Under <b>Repository permissions</b> set <b>Contents</b>, <b>Workflows</b> and <b>Secrets</b> to <b>Read and write</b>, and <b>Actions</b> to <b>Read-only</b>. Press <b>Save changes</b>.</li>
+        <li>Under <b>Repository permissions</b> set <b>Contents</b>, <b>Workflows</b>, <b>Secrets</b> and <b>Actions</b> to <b>Read and write</b>. Press <b>Save changes</b>.</li>
         <li>
           Accept them for your account:{" "}
           {installations.map((i) => (

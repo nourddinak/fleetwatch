@@ -218,7 +218,7 @@ func (s *Service) Tarball(repo, sha string) string {
 // missing names the app permissions deploys need that an installation lacks.
 func missing(perms map[string]string) []string {
 	var out []string
-	for _, p := range []struct{ name, level string }{{"contents", "write"}, {"workflows", "write"}, {"secrets", "write"}, {"actions", "read"}} {
+	for _, p := range []struct{ name, level string }{{"contents", "write"}, {"workflows", "write"}, {"secrets", "write"}, {"actions", "write"}} {
 		have := perms[p.name]
 		if have != p.level && !(p.level == "read" && have == "write") {
 			out = append(out, fmt.Sprintf("%s: %s", p.name, p.level))

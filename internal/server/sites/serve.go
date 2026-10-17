@@ -92,6 +92,9 @@ func relay(w http.ResponseWriter, r *http.Request, name, host, file string) {
 			http.Error(w, "The site's server did not answer.", http.StatusBadGateway)
 		},
 	}
+	for _, k := range []string{"Content-Security-Policy", "Referrer-Policy", "X-Frame-Options"} {
+		w.Header().Del(k) // the dashboard's own policy would block the site's CDNs, fonts and APIs
+	}
 	p.ServeHTTP(w, r)
 }
 

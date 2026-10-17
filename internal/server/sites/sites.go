@@ -404,7 +404,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 
 // ErrPermissions: the GitHub app was created without the permissions sites need (apps
 // made before sites existed only read).
-var ErrPermissions = valid.Error("the GitHub app is not allowed to add the build workflow yet: grant it the new permissions (Settings → Integrations shows how), then press Retry")
+var ErrPermissions = valid.Error("the GitHub app is missing permissions sites need (Contents, Workflows, Secrets and Actions: read and write): grant them (Settings → Integrations shows how), then press Retry")
 
 func permissionError(err error) error {
 	if err != nil && (strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "not accessible by integration")) {

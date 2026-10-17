@@ -229,7 +229,7 @@ func (s *Service) Manifest(publicURL, org, by string) (action, manifest string, 
 		// actions: they follow the builds.
 		"default_permissions": map[string]string{
 			"contents": "write", "metadata": "read", "deployments": "write", "statuses": "write", "pull_requests": "read",
-			"workflows": "write", "secrets": "write", "actions": "read",
+			"workflows": "write", "secrets": "write", "actions": "write",
 		},
 		"default_events": []string{"push", "pull_request", "workflow_run"},
 		// GitHub only reaches a public HTTPS address; elsewhere the webhook stays off.

@@ -109,7 +109,11 @@ func TestRelayRemoteSite(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/sites/shop/assets/app.js?v=1", nil)
 	req.Header.Set("Cookie", "session=secret")
 	w := httptest.NewRecorder()
+	w.Header().Set("Content-Security-Policy", "default-src 'self'") // the dashboard's, set by its middleware
 	h.ServeHTTP(w, req)
+	if csp := w.Header().Values("Content-Security-Policy"); len(csp) != 1 || !strings.HasPrefix(csp[0], "sandbox") {
+		t.Fatalf("policies: %q", csp)
+	}
 	if w.Code != 200 || got == nil {
 		t.Fatalf("%d %q", w.Code, w.Body.String())
 	}
