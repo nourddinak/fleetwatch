@@ -37,6 +37,9 @@ func Measure(ctx context.Context, appID, root string) proto.StorageResult {
 		res.Error = "refusing to measure " + root + ": not an application folder"
 		return res
 	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
 	fi, err := os.Lstat(root)
 	if err != nil || !fi.IsDir() {
 		res.Error = "not a directory: " + root

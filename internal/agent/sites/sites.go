@@ -169,6 +169,7 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	if err := InstallCaddy(ctx, log); err != nil {
 		return err
 	}
+	OpenWebPorts(ctx, log)
 	if err := applyCaddy(req.Name, site); err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,3 +80,66 @@ func InstallCaddy(ctx context.Context, log io.Writer) error {
 }
 
 func has(cmd string) bool { _, err := exec.LookPath(cmd); return err == nil }
+
+// OpenWebPorts lets ports 80 and 443 in through the firewalls this server runs (ufw,
+// firewalld, or plain iptables rules such as Oracle Cloud images ship). Rules that are
+// already there are left alone. A provider's own firewall (security lists, security
+// groups) is outside the server and still has to be opened there.
+func OpenWebPorts(ctx context.Context, log io.Writer) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	run := func(name string, args ...string) (string, error) {
+		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run("ufw", "status"); err == nil && strings.Contains(out, "Status: active") {
+		for _, p := range []string{"80/tcp", "443/tcp"} {
+			if out, err := run("ufw", "allow", p); err != nil {
+				fmt.Fprintf(log, "ufw: %s\n", lastLine([]byte(out), err))
+			}
+		}
+		fmt.Fprintln(log, "Firewall (ufw): ports 80 and 443 are open")
+		return // ufw owns the iptables rules
+	}
+	if out, err := run("firewall-cmd", "--state"); err == nil && strings.Contains(out, "running") {
+		run("firewall-cmd", "--permanent", "--add-service=http", "--add-service=https")
+		run("firewall-cmd", "--reload")
+		fmt.Fprintln(log, "Firewall (firewalld): ports 80 and 443 are open")
+		return
+	}
+	saved := false
+	for _, ipt := range []string{"iptables", "ip6tables"} {
+		if !has(ipt) {
+			continue
+		}
+		for _, port := range []string{"80", "443"} {
+			rule := []string{"INPUT", "-p", "tcp", "--dport", port, "-j", "ACCEPT"}
+			if _, err := run(ipt, append([]string{"-C"}, rule...)...); err == nil {
+				continue // already allowed
+			}
+			// First in the chain, ahead of a closing REJECT rule.
+			if out, err := run(ipt, append([]string{"-I", rule[0], "1"}, rule[1:]...)...); err != nil {
+				fmt.Fprintf(log, "%s: %s\n", ipt, lastLine([]byte(out), err))
+				continue
+			}
+			saved = true
+		}
+	}
+	if !saved {
+		return
+	}
+	// Keep the rules after a reboot.
+	switch {
+	case has("netfilter-persistent"):
+		run("netfilter-persistent", "save")
+	case fileExists("/etc/iptables/rules.v4"):
+		for ipt, file := range map[string]string{"iptables-save": "/etc/iptables/rules.v4", "ip6tables-save": "/etc/iptables/rules.v6"} {
+			if out, err := run(ipt); err == nil && fileExists(file) {
+				os.WriteFile(file, []byte(out), 0o640)
+			}
+		}
+	}
+	fmt.Fprintln(log, "Firewall (iptables): ports 80 and 443 are open")
+}
+
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
