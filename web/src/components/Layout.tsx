@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, Plus, Radar, Radio, Rocket, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
+import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Radar, Radio, Rocket, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -28,15 +28,25 @@ function Force2FA() {
   );
 }
 
-export function Logo({ className }: { className?: string }) {
+export function Logo({ className, compact }: { className?: string; compact?: boolean }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
-      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-accent text-accent-fg">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-accent text-accent-fg">
         <Activity size={18} strokeWidth={2.6} />
       </div>
-      <span className="text-[17px] font-semibold tracking-tight">Fleetwatch</span>
+      {!compact && <span className="text-[17px] font-semibold tracking-tight">Fleetwatch</span>}
     </div>
   );
+}
+
+// The sidebar's folded state is remembered per browser.
+const FOLD_KEY = "fw.sidebar.folded";
+function loadFolded() {
+  try {
+    return localStorage.getItem(FOLD_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function ThemeToggle({ className }: { className?: string }) {
@@ -68,12 +78,26 @@ function Shell() {
   const nav = useNavigate();
   const loc = useLocation();
   const [mobile, setMobile] = useState(false);
+  const [folded, setFolded] = useState(loadFolded);
+  // The folded bar's labels, drawn outside it (the bar clips and scrolls).
+  const [tip, setTip] = useState<{ label: string; y: number } | null>(null);
+  const fold = () => {
+    setFolded(!folded);
+    try {
+      localStorage.setItem(FOLD_KEY, folded ? "0" : "1");
+    } catch {
+      /* private mode: just this visit */
+    }
+  };
   const [palette, setPalette] = useState(false);
   const [addMenu, setAddMenu] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => setMobile(false), [loc.pathname]);
+  useEffect(() => {
+    setMobile(false);
+    setTip(null);
+  }, [loc.pathname]);
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [loc.pathname]);
@@ -82,6 +106,10 @@ function Shell() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((p) => !p);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        document.getElementById("fold-sidebar")?.click();
       }
     };
     window.addEventListener("keydown", h);
@@ -101,59 +129,93 @@ function Shell() {
   const active = incidents.filter((i) => i.status === "active").length;
   const unread = notifications.filter((n) => !n.read).length;
   const owner = !me || me.role === "owner";
-  const nodes = [
-    { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
-    { to: "/servers", label: "Servers", icon: Server },
-    { to: "/applications", label: "Applications", icon: Boxes },
-    { to: "/logs", label: "Logs", icon: ScrollText },
-    { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
-    { to: "/team", label: "Team", icon: Users },
-    { to: "/sites", label: "Sites", icon: Rocket },
-    { to: "/uptime", label: "Uptime", icon: Gauge },
-    { to: "/domains", label: "Domains", icon: Globe },
-    ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),
-    { to: "/security", label: "Security", icon: ShieldCheck },
-    { to: "/discoveries", label: "Discoveries", icon: Radar, badge: discoveries.length },
-    { to: "/metrics", label: "Metrics", icon: Activity },
-    { to: "/notifications", label: "Notifications", icon: Bell, badge: unread },
-    { to: "/settings", label: "Settings", icon: Settings },
+  type NavItem = { to: string; label: string; icon: typeof Server; end?: boolean; badge?: number; crit?: boolean };
+  const groups: { title: string; items: NavItem[] }[] = [
+    { title: "", items: [{ to: "/", label: "Overview", icon: LayoutDashboard, end: true }] },
+    { title: "Infrastructure", items: [
+      { to: "/servers", label: "Servers", icon: Server },
+      { to: "/applications", label: "Applications", icon: Boxes },
+      { to: "/sites", label: "Sites", icon: Rocket },
+      { to: "/domains", label: "Domains", icon: Globe },
+    ] },
+    { title: "Observe", items: [
+      { to: "/metrics", label: "Metrics", icon: Activity },
+      { to: "/logs", label: "Logs", icon: ScrollText },
+      { to: "/uptime", label: "Uptime", icon: Gauge },
+      { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
+      { to: "/discoveries", label: "Discoveries", icon: Radar, badge: discoveries.length },
+    ] },
+    { title: "Protect & share", items: [
+      { to: "/security", label: "Security", icon: ShieldCheck },
+      ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),
+      { to: "/team", label: "Team", icon: Users },
+      { to: "/notifications", label: "Notifications", icon: Bell, badge: unread },
+    ] },
   ];
   const offline = servers.filter((s) => s.status === "disconnected").length;
   const version = useApi<{ version: string }>("/api/health").data?.version;
 
-  const sidebar = (
-    <div className="flex h-full flex-col gap-6 p-5">
-      <div className="flex items-center justify-between">
-        <Logo />
+  const link = (n: NavItem, compact: boolean) => (
+    <NavLink key={n.to} to={n.to} end={n.end} aria-label={compact ? n.label : undefined}
+      onMouseEnter={compact ? (e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ label: n.badge ? `${n.label} · ${n.badge}` : n.label, y: r.top + r.height / 2 }); } : undefined}
+      onMouseLeave={compact ? () => setTip(null) : undefined}
+      className={({ isActive }) => cn("relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-full text-sm transition", compact ? "h-10 w-10 justify-center" : "px-4 py-2.5",
+        isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:bg-surface2 hover:text-fg")}>
+      <n.icon size={17} className="shrink-0" />
+      {!compact && <span className="flex-1">{n.label}</span>}
+      {!!n.badge && (compact
+        ? <span className={cn("absolute right-1 top-1 h-2 w-2 rounded-full ring-2 ring-surface", n.crit ? "bg-crit" : "bg-fg/60")} />
+        : <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", n.crit ? "bg-crit text-white dark:text-black" : "bg-neutral-soft text-fg")}>{n.badge}</span>)}
+    </NavLink>
+  );
+  const sidebar = (compact: boolean) => (
+    <div className={cn("flex h-full flex-col gap-5", compact ? "items-center px-3 py-5" : "p-5")}>
+      <div className={cn("flex items-center", compact ? "flex-col gap-3" : "justify-between")}>
+        <Logo compact={compact} />
         <button className="text-muted lg:hidden" onClick={() => setMobile(false)} aria-label="Close menu">
           <X size={20} />
         </button>
+        <button id="fold-sidebar" onClick={fold} title={compact ? "Expand the sidebar (Ctrl B)" : "Collapse the sidebar (Ctrl B)"} aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
+          className="hidden h-8 w-8 items-center justify-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg lg:flex">
+          {compact ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        </button>
       </div>
-      <nav className="flex flex-1 flex-col gap-1">
-        {nodes.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => cn("flex items-center gap-3 rounded-full px-4 py-2.5 text-sm transition", isActive ? "bg-accent font-medium text-accent-fg" : "text-muted hover:bg-surface2 hover:text-fg")}>
-            <n.icon size={17} />
-            <span className="flex-1">{n.label}</span>
-            {!!n.badge && <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", n.crit ? "bg-crit text-white dark:text-black" : "bg-neutral-soft text-fg")}>{n.badge}</span>}
-          </NavLink>
+      <nav className={cn("-mx-1 flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", compact ? "items-center gap-1" : "gap-0.5")}>
+        {groups.map((g, i) => (
+          <div key={i} className={cn("flex flex-col", compact ? "items-center gap-1" : "gap-0.5", i > 0 && (compact ? "mt-2 border-t border-line pt-3" : "mt-3"))}>
+            {g.title && !compact && <div className="whitespace-nowrap px-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted/70">{g.title}</div>}
+            {g.items.map((n) => link(n, compact))}
+          </div>
         ))}
-      </nav>
-      <div className="rounded-2xl bg-surface2 p-4 text-xs text-muted">
-        <div className="mb-1 flex items-center gap-2 font-medium text-fg">
-          <span className={cn("h-2 w-2 rounded-full", offline ? "bg-warn" : "bg-ok")} /> {offline ? `${offline} agent offline` : "All agents connected"}
+        <div className={cn("mt-auto flex flex-col pt-3", compact && "items-center")}>
+          {link({ to: "/settings", label: "Settings", icon: Settings }, compact)}
         </div>
-        Central server {version ? `v${version}` : "…"}
-      </div>
+      </nav>
+      {compact ? (
+        <span title={`${offline ? `${offline} agent offline` : "All agents connected"} · v${version ?? "…"}`} className={cn("h-2.5 w-2.5 rounded-full", offline ? "bg-warn" : "bg-ok")} />
+      ) : (
+        <div className="whitespace-nowrap rounded-2xl bg-surface2 p-4 text-xs text-muted">
+          <div className="mb-1 flex items-center gap-2 font-medium text-fg">
+            <span className={cn("h-2 w-2 rounded-full", offline ? "bg-warn" : "bg-ok")} /> {offline ? `${offline} agent offline` : "All agents connected"}
+          </div>
+          Central server {version ? `v${version}` : "…"}
+        </div>
+      )}
     </div>
   );
 
   return (
     <div className="min-h-screen bg-bg lg:flex">
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-line bg-surface lg:block">{sidebar}</aside>
+      <aside className={cn("sticky top-0 z-40 hidden h-screen shrink-0 border-r border-line bg-surface transition-[width] duration-200 lg:block", folded ? "w-[76px]" : "w-64")}>
+        <div className="h-full overflow-hidden">{sidebar(folded)}</div>
+      </aside>
+      {folded && tip && (
+        <span style={{ top: tip.y }} className="pointer-events-none fixed left-[86px] z-[80] hidden -translate-y-1/2 whitespace-nowrap rounded-lg bg-fg px-2.5 py-1 text-xs font-medium text-bg shadow-lg lg:block">{tip.label}</span>
+      )}
       {mobile && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobile(false)} />
-          <div className="fade-in absolute left-0 top-0 h-full w-72 bg-surface">{sidebar}</div>
+          <div className="fade-in absolute left-0 top-0 h-full w-72 overflow-y-auto bg-surface">{sidebar(false)}</div>
         </div>
       )}
       <div className="min-w-0 flex-1">
