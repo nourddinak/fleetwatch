@@ -21,6 +21,7 @@ type Plan struct {
 	Node      string `json:"node"`      // build: .nvmrc | .node-version | "" (latest LTS)
 	SPA       bool   `json:"spa"`       // unknown paths fall back to /index.html
 	Note      string `json:"note,omitempty"`
+	BasePath  string `json:"basePath,omitempty"` // build: served under this path (<dashboard>/sites/<name>/)
 }
 
 // framework: package → name, output folder, single-page app. Earlier rows win.
@@ -28,20 +29,56 @@ var frameworks = []struct {
 	pkg, name, out string
 	spa            bool
 	note           string
+	baseFlag       string // build option that sets the base path ("" = set by env or config)
+	baseNote       string // what the project must do itself to live under a path
 }{
-	{"next", "Next.js (static export)", "out", false, "Needs output: 'export' in next.config.js: Next.js sites with a server cannot be static."},
-	{"astro", "Astro", "dist", false, ""},
-	{"@sveltejs/kit", "SvelteKit (static)", "build", false, "Needs @sveltejs/adapter-static."},
-	{"gatsby", "Gatsby", "public", false, ""},
-	{"@docusaurus/core", "Docusaurus", "build", false, ""},
-	{"vitepress", "VitePress", "docs/.vitepress/dist", false, "Check the output folder: it follows your VitePress folder."},
-	{"@11ty/eleventy", "Eleventy", "_site", false, ""},
-	{"nuxt", "Nuxt (generate)", ".output/public", false, "Needs `nuxt generate` as the build script."},
-	{"react-scripts", "Create React App", "build", true, ""},
-	{"@angular/core", "Angular", "dist", true, "Angular writes to dist/<project>/browser: set the output folder to that."},
-	{"@vue/cli-service", "Vue CLI", "dist", true, ""},
-	{"vite", "Vite", "dist", true, ""},
-	{"parcel", "Parcel", "dist", true, ""},
+	{"next", "Next.js (static export)", "out", false, "Needs output: 'export' in next.config.js: Next.js sites with a server cannot be static.", "",
+		"In next.config.js set basePath to process.env.BASE_PATH without its last slash."},
+	{"astro", "Astro", "dist", false, "", "--base=", ""},
+	{"@sveltejs/kit", "SvelteKit (static)", "build", false, "Needs @sveltejs/adapter-static.", "",
+		"In svelte.config.js set kit.paths.base to process.env.BASE_PATH without its last slash."},
+	{"gatsby", "Gatsby", "public", false, "", "", "Set pathPrefix in gatsby-config.js and build with --prefix-paths."},
+	{"@docusaurus/core", "Docusaurus", "build", false, "", "", "Set baseUrl in docusaurus.config.js to process.env.BASE_PATH."},
+	{"vitepress", "VitePress", "docs/.vitepress/dist", false, "Check the output folder: it follows your VitePress folder.", "--base=", ""},
+	{"@11ty/eleventy", "Eleventy", "_site", false, "", "--pathprefix=", ""},
+	{"nuxt", "Nuxt (generate)", ".output/public", false, "Needs `nuxt generate` as the build script.", "", ""}, // NUXT_APP_BASE_URL
+	{"react-scripts", "Create React App", "build", true, "", "", ""},                                           // PUBLIC_URL
+	{"@angular/core", "Angular", "dist", true, "Angular writes to dist/<project>/browser: set the output folder to that.", "--base-href=", ""},
+	{"@vue/cli-service", "Vue CLI", "dist", true, "", "", "In vue.config.js set publicPath: process.env.BASE_PATH."},
+	{"vite", "Vite", "dist", true, "", "--base=", ""},
+	{"parcel", "Parcel", "dist", true, "", "--public-url=", ""},
+}
+
+// underPath fits a build plan to live at base (<dashboard>/sites/<name>/): the build
+// option or environment the framework understands, and a note when the project's own
+// configuration must do it.
+func underPath(p Plan, base string) Plan {
+	p.BasePath = base
+	for _, f := range frameworks {
+		if f.name == p.Framework && f.baseNote != "" && !strings.Contains(p.Note, f.baseNote) {
+			p.Note = strings.TrimSpace(p.Note + " " + f.baseNote)
+		}
+	}
+	if p.SPA {
+		p.Note = strings.TrimSpace(p.Note + " A router needs the same base: in React Router, <BrowserRouter basename={import.meta.env.BASE_URL}>.")
+	}
+	return p
+}
+
+// buildArgs is the base path option to add to the build command, if the framework has one.
+func buildArgs(p Plan) string {
+	if p.BasePath == "" {
+		return ""
+	}
+	for _, f := range frameworks {
+		if f.name == p.Framework && f.baseFlag != "" {
+			if strings.HasPrefix(p.Build, "npm ") {
+				return " -- " + f.baseFlag + shellQuote(p.BasePath)
+			}
+			return " " + f.baseFlag + shellQuote(p.BasePath)
+		}
+	}
+	return ""
 }
 
 // Detect looks at the top of a repository (and its package.json) to choose the plan.
@@ -156,8 +193,8 @@ jobs:
           FLEETWATCH_ENV: ${{ secrets.FLEETWATCH_ENV }}
         run: if [ -n "$FLEETWATCH_ENV" ]; then printf '%s\n' "$FLEETWATCH_ENV" > .env; fi
       - run: ` + p.Install + `
-      - run: ` + p.Build + `
-      - name: Publish to ` + BuildBranch + `
+      - run: ` + p.Build + buildArgs(p) + `
+` + baseEnv(p) + `      - name: Publish to ` + BuildBranch + `
         run: |
           out=` + shellQuote(p.Output) + `
           test -f "$out/index.html" || { echo "::error::no index.html in $out: check the output folder in Fleetwatch"; exit 1; }
@@ -170,6 +207,16 @@ jobs:
           git commit -qm "Build of ${GITHUB_SHA}"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ` + BuildBranch + `
 `
+}
+
+// baseEnv tells every framework the base path through the environment (for configs that
+// read it: BASE_PATH, Create React App's PUBLIC_URL, Nuxt's NUXT_APP_BASE_URL).
+func baseEnv(p Plan) string {
+	if p.BasePath == "" {
+		return ""
+	}
+	return "        env:\n          BASE_PATH: " + yamlQuote(p.BasePath) + "\n          PUBLIC_URL: " + yamlQuote(strings.TrimSuffix(p.BasePath, "/")) +
+		"\n          NUXT_APP_BASE_URL: " + yamlQuote(p.BasePath) + "\n"
 }
 
 func yamlQuote(s string) string  { return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"` }

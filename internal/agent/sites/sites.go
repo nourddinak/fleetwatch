@@ -152,7 +152,17 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 		site += "\tfile_server\n}\n"
 		res.Caddy = "generated"
 	default:
-		fmt.Fprintln(log, "No address: files only, Caddy unchanged")
+		// No address of its own (served by the dashboard at /sites/<name>/): an older
+		// Caddy site for it goes away.
+		if _, err := os.Stat(siteFile(req.Name)); err == nil {
+			os.Remove(siteFile(req.Name))
+			if out, err := validate(); err == nil {
+				reload()
+			} else {
+				fmt.Fprintf(log, "Caddy: %s\n", lastLine(out, err))
+			}
+		}
+		fmt.Fprintln(log, "No address of its own: files only")
 		return nil
 	}
 	if err := applyCaddy(req.Name, site); err != nil {

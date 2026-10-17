@@ -165,6 +165,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	})
+	if d.Sites != nil {
+		mux.Handle("/sites/", d.Sites.Files()) // sites on this server, at <dashboard>/sites/<name>/
+	}
 	mux.Handle("/", static(d.UI))
 	var h http.Handler = mux
 	if d.Status != nil {

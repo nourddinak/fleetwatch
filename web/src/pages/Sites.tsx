@@ -35,6 +35,7 @@ interface Site {
   error?: string;
   buildUrl?: string;
   createdAt: number;
+  local: boolean;
 }
 interface Deploy {
   ts: number;
@@ -89,7 +90,7 @@ export function Sites() {
 function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
   const { getServer, me, toast } = useStore();
   const [tone, label] = STATUS[site.status];
-  const urls = [site.preview, ...site.domains].filter(Boolean);
+  const urls = [site.local ? `${location.host}/sites/${site.name}/` : site.preview, ...site.domains].filter(Boolean);
   const redeploy = async () => {
     try {
       await api("POST", `/api/sites/${site.id}/redeploy`);
@@ -121,13 +122,21 @@ function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
           </a>
         ))}
         {urls.length === 0 && <span className="text-xs text-muted">No address yet: add your domain in its settings (the server has no public IPv4 for a preview address).</span>}
+        {site.local && <span className="self-center text-[11px] text-muted">Sandboxed under the dashboard's domain: no cookies or localStorage. Add your own domain for those.</span>}
       </div>
       <div className="mt-3 text-xs text-muted">
         {site.commit ? <>Deployed <span className="font-mono">{site.commit.slice(0, 7)}</span> {site.message ? `“${site.message}”` : ""} {relTime(site.deployedAt)}</> : "Not deployed yet"}
         {site.buildUrl && site.plan.kind === "build" && <> · <a className="underline" href={site.buildUrl} target="_blank" rel="noreferrer">last build</a></>}
         {!site.autoDeploy && " · automatic deploys off"}
       </div>
-      {site.error && <p className="mt-2 text-sm text-crit">{site.error}</p>}
+      {site.error && (
+        <p className="mt-2 text-sm text-crit">
+          {site.error}
+          {site.error.includes("permissions") && me?.role !== "viewer" && (
+            <> · <Link to="/settings/integrations" className="underline">How to grant them</Link> · <button className="underline" onClick={redeploy}>Retry</button></>
+          )}
+        </p>
+      )}
     </Card>
   );
 }
@@ -154,6 +163,7 @@ function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: S
   const repos = useApi<{ repo: { fullName: string; defaultBranch: string } }[]>("/api/integrations/github/repos");
   const [f, setF] = useState({ repo: "", serverId: "", branch: "", name: "", domains: "", env: "" });
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [exampleFile, setExampleFile] = useState("");
   const [busy, setBusy] = useState("");
   const enrolled = servers.filter((s) => s.enrolled);
   useEffect(() => {
@@ -164,9 +174,11 @@ function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: S
     if (!repo) return;
     setBusy("detect");
     try {
-      const r = await api<{ plan: Plan; branch: string }>("POST", "/api/sites/detect", { repo, branch });
+      const r = await api<{ plan: Plan; branch: string; exampleFile: string; example: string }>("POST", "/api/sites/detect", { repo, branch });
       setPlan(r.plan);
-      setF((x) => ({ ...x, branch: r.branch }));
+      setExampleFile(r.exampleFile);
+      // The repository's .env template, to fill in.
+      setF((x) => ({ ...x, branch: r.branch, env: x.env || r.example }));
     } catch (e) {
       toast((e as ApiError).message, "err");
     }
@@ -219,7 +231,7 @@ function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: S
             {plan.note && <p className="text-xs text-warn">{plan.note}</p>}
             <PlanFields plan={plan} onChange={setPlan} />
             {plan.kind === "build" && (
-              <Field label=".env for the build" hint="Stored encrypted here and as the FLEETWATCH_ENV secret on GitHub; written to .env before building. Anything it holds ends up in the public JavaScript, so no server secrets.">
+              <Field label=".env for the build" hint={`${exampleFile ? `Filled from ${exampleFile}: put in your values. ` : ""}Stored encrypted here and as the FLEETWATCH_ENV secret on GitHub; written to .env before building. Anything it holds ends up in the public JavaScript, so no server secrets.`}>
                 <Textarea rows={4} value={f.env} onChange={(e) => setF({ ...f, env: e.target.value })} placeholder="VITE_API_URL=https://api.example.com" />
               </Field>
             )}
@@ -238,7 +250,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { me, getServer, toast } = useStore();
   const owner = !me || me.role === "owner";
   const data = useApi<{ site: Site; history: Deploy[] }>(`/api/sites/${id}`);
-  const env = useApi<{ env: string }>(owner ? `/api/sites/${id}/env` : `/api/sites/${id}`);
+  const env = useApi<{ env: string; exampleFile?: string; example?: string }>(owner ? `/api/sites/${id}/env` : `/api/sites/${id}`);
   const [domains, setDomains] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -253,7 +265,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
     setPlan(site.plan);
   }, [site]);
   useEffect(() => {
-    if (env.data && "env" in env.data) setEnvText(env.data.env);
+    if (env.data && "env" in env.data) setEnvText(env.data.env || env.data.example || "");
   }, [env.data]);
   if (!site || domains === null || !plan) return <Drawer open onClose={onClose} title="Site"><LoadingState /></Drawer>;
   const ip = getServer(site.serverId)?.ip;
@@ -292,7 +304,9 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         {owner && (
           <section className="space-y-3">
             <SectionTitle title="Addresses" />
-            {site.preview && <p className="text-xs text-muted">Preview address (always on): <a className="underline" href={`https://${site.preview}`} target="_blank" rel="noreferrer">{site.preview}</a></p>}
+            {site.local ? (
+              <p className="text-xs text-muted">Always at <a className="underline" href={`/sites/${site.name}/`} target="_blank" rel="noreferrer">{location.host}/sites/{site.name}/</a> (this dashboard's domain).</p>
+            ) : site.preview && <p className="text-xs text-muted">Preview address (always on): <a className="underline" href={`https://${site.preview}`} target="_blank" rel="noreferrer">{site.preview}</a></p>}
             <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" />
             <p className="text-xs text-muted">One domain per line. In your DNS, add an A record for each pointing to {ip || "the server's IP"}.</p>
             <ToggleRow label="Deploy every push" desc={site.plan.kind === "build" ? "Each build GitHub Actions finishes goes live." : `Each push to ${site.branch} goes live.`} checked={auto} onChange={setAuto} />
@@ -302,9 +316,14 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         )}
         {owner && site.plan.kind === "build" && envText !== null && (
           <section className="space-y-2">
-            <SectionTitle title=".env" sub="Used when building (and so visible in the site's JavaScript)." />
+            <SectionTitle title=".env" sub={`Used when building (and so visible in the site's JavaScript).${env.data && "env" in env.data && !env.data.env && env.data.exampleFile ? ` Filled from ${env.data.exampleFile}: put in your values and save.` : ""}`} />
             <Textarea rows={5} value={envText} onChange={(e) => setEnvText(e.target.value)} className="font-mono text-xs" />
-            <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}>Save and rebuild</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}>Save and rebuild</Button>
+              {env.data && "env" in env.data && env.data.example && envText !== env.data.example && (
+                <Button size="sm" variant="ghost" onClick={() => setEnvText(env.data && "example" in env.data ? env.data.example ?? "" : "")}>Load {env.data.exampleFile}</Button>
+              )}
+            </div>
           </section>
         )}
         <section>

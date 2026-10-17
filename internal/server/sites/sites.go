@@ -56,6 +56,7 @@ type Site struct {
 	EnvKeys    []string `json:"envKeys"`
 
 	Status     string `json:"status"` // building | deploying | live | failed | waiting
+	Local      bool   `json:"local"`  // on the dashboard's own server: at <dashboard>/sites/<name>/
 	Commit     string `json:"commit"` // deployed commit of the branch (for builds: of the source)
 	Message    string `json:"message"`
 	DeployedAt int64  `json:"deployedAt"`
@@ -104,6 +105,9 @@ type Service struct {
 	AgentVersion func(serverID string) string
 	PublicIP     func(serverID string) string
 	Notify       func(title, body, severity string)
+	// IsLocal reports whether a server is the dashboard's own machine: its sites are
+	// served at <dashboard>/sites/<name>/ instead of a preview address.
+	IsLocal func(serverID string) bool
 
 	mu      sync.Mutex
 	running map[string]pending // run ID → what it was for
@@ -116,7 +120,7 @@ type pending struct {
 
 func New(d *sql.DB, box *secret.Box, bus *live.Bus, gh GitHub) *Service {
 	return &Service{db: d, box: box, Bus: bus, Now: time.Now, GitHub: gh, running: map[string]pending{},
-		Notify: func(string, string, string) {}, PublicIP: func(string) string { return "" }}
+		Notify: func(string, string, string) {}, PublicIP: func(string) string { return "" }, IsLocal: func(string) bool { return false }}
 }
 
 // ---------- storage ----------
@@ -133,6 +137,8 @@ func (s *Service) Get(id string) (Site, error) {
 	}
 	err = json.Unmarshal([]byte(raw), &st)
 	st.tried = tried
+	st.Local = s.IsLocal(st.ServerID)
+	st.Preview = s.preview(st.Name, st.ServerID)
 	return st, err
 }
 
@@ -306,6 +312,15 @@ func preview(name, ip string) string {
 	return name + "." + strings.ReplaceAll(a.String(), ".", "-") + ".sslip.io"
 }
 
+// preview is the sslip.io address, only for sites that are not on the dashboard's own
+// server (those are at <dashboard>/sites/<name>/).
+func (s *Service) preview(name, serverID string) string {
+	if s.IsLocal(serverID) {
+		return ""
+	}
+	return preview(name, s.PublicIP(serverID))
+}
+
 // Create adds a site and starts its first deploy (or build).
 func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error) {
 	if err := s.supported(in.ServerID); err != nil {
@@ -344,6 +359,10 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	if err := checkPlan(plan); err != nil {
 		return Site{}, err
 	}
+	local := s.IsLocal(in.ServerID)
+	if local && plan.Kind == "build" {
+		plan = underPath(plan, "/sites/"+name+"/")
+	}
 	domains, err := checkDomains(in.Domains)
 	if err != nil {
 		return Site{}, err
@@ -358,7 +377,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	b := make([]byte, 6)
 	rand.Read(b)
 	st := Site{ID: "site_" + hex.EncodeToString(b), Name: name, Repo: in.Repo, Branch: branch, ServerID: in.ServerID, Plan: plan,
-		Domains: domains, Preview: preview(name, s.PublicIP(in.ServerID)), AutoDeploy: true, EnvKeys: keys,
+		Domains: domains, Preview: s.preview(name, in.ServerID), AutoDeploy: true, EnvKeys: keys,
 		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by}
 	if err := s.save(st); err != nil {
 		return Site{}, err
@@ -381,8 +400,26 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	return st, nil
 }
 
+// ErrPermissions: the GitHub app was created without the permissions sites need (apps
+// made before sites existed only read).
+var ErrPermissions = valid.Error("the GitHub app is not allowed to add the build workflow yet: grant it the new permissions (Settings → Integrations shows how), then press Retry")
+
+func permissionError(err error) error {
+	if err != nil && (strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "not accessible by integration")) {
+		return ErrPermissions
+	}
+	return err
+}
+
 // setupBuild adds (or updates) the workflow in the repository and the .env secret.
 func (s *Service) setupBuild(ctx context.Context, st Site, env string) error {
+	if err := s.setupBuildOnce(ctx, st, env); err != nil {
+		return permissionError(err)
+	}
+	return nil
+}
+
+func (s *Service) setupBuildOnce(ctx context.Context, st Site, env string) error {
 	if env != "" {
 		if err := s.GitHub.SetSecret(ctx, st.Repo, envSecret, env); err != nil {
 			return fmt.Errorf("could not store the .env on GitHub: %w", err)
@@ -456,7 +493,7 @@ func (s *Service) SetEnv(ctx context.Context, id, env string) (Site, error) {
 		return st, err
 	}
 	if err := s.GitHub.SetSecret(ctx, st.Repo, envSecret, env); err != nil {
-		return st, fmt.Errorf("could not store the .env on GitHub: %w", err)
+		return st, permissionError(fmt.Errorf("could not store the .env on GitHub: %w", err))
 	}
 	s.db.Exec(`UPDATE sites SET env_enc = ? WHERE id = ?`, s.box.Seal([]byte(env), envAD+st.ID), st.ID)
 	st.EnvKeys = keys
@@ -464,6 +501,19 @@ func (s *Service) SetEnv(ctx context.Context, id, env string) (Site, error) {
 		st.Status = "building"
 	}
 	return st, s.save(st)
+}
+
+// exampleFiles are where projects keep a template of their .env, in order.
+var exampleFiles = []string{".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults"}
+
+// EnvExample returns the repository's .env template (name and text), if it has one.
+func (s *Service) EnvExample(ctx context.Context, repo, branch string) (name, text string) {
+	for _, f := range exampleFiles {
+		if b, _, ok, err := s.GitHub.File(ctx, repo, f, branch); err == nil && ok && len(b) < 48<<10 {
+			return f, string(b)
+		}
+	}
+	return "", ""
 }
 
 // Env returns the stored .env (owner only).
@@ -515,7 +565,10 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 		return err
 	}
 	if st.Plan.Kind == "build" {
-		if err := s.GitHub.Dispatch(ctx, st.Repo, workflowFile, st.Branch); err != nil {
+		env, _ := s.Env(st.ID)
+		if err := s.setupBuild(ctx, st, env); err != nil { // adds the workflow if it is missing, else starts a build
+			st.Status, st.Error = "failed", err.Error()
+			s.save(st)
 			return err
 		}
 		st.Status, st.Error = "building", ""
@@ -557,7 +610,7 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 		return err
 	}
 	domains := slices.Clone(st.Domains)
-	if st.Preview = preview(st.Name, s.PublicIP(st.ServerID)); st.Preview != "" {
+	if st.Preview = s.preview(st.Name, st.ServerID); st.Preview != "" {
 		domains = append([]string{st.Preview}, domains...)
 	}
 	b := make([]byte, 8)
@@ -639,6 +692,16 @@ func (s *Service) Sync(ctx context.Context) {
 		return
 	}
 	for _, st := range s.List() {
+		// A built site on the dashboard's server must be built for its path (sites made
+		// before path addresses existed are moved over once).
+		if base := "/sites/" + st.Name + "/"; st.Plan.Kind == "build" && s.IsLocal(st.ServerID) && st.Plan.BasePath != base {
+			st.Plan = underPath(st.Plan, base)
+			if err := s.setupBuild(ctx, st, ""); err == nil {
+				st.Status = "building"
+			}
+			s.save(st)
+			continue
+		}
 		if !st.AutoDeploy || st.Status == "deploying" {
 			continue
 		}

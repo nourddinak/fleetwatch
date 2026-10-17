@@ -167,11 +167,7 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
           </div>
         </div>
         {!webhooks && <p className="mt-3 text-xs text-warn">Push events cannot reach {publicUrl}: sites still deploy, checked every minute. Set OPS_PUBLIC_URL to your https domain for instant deploys.</p>}
-        {status.installations.some((i) => i.missing?.length) && (
-          <p className="mt-3 rounded-2xl bg-warn-soft px-4 py-3 text-sm text-warn">
-            Sites need more permissions than this app has ({[...new Set(status.installations.flatMap((i) => i.missing ?? []))].join(", ")}). Disconnect and connect again, or add them in <a className="underline" href={`${app.htmlUrl.replace("/apps/", "/settings/apps/")}/permissions`} target="_blank" rel="noreferrer">the app's permissions</a> and accept them on GitHub.
-          </p>
-        )}
+        {status.installations.some((i) => i.missing?.length) && <GrantPermissions app={app} installations={status.installations} />}
         <div className="mt-4">
           {status.installations.length === 0 ? (
             <div className="rounded-2xl bg-surface2 p-4 text-sm">
@@ -206,6 +202,33 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
       <ConfirmDialog open={disconnect} title="Disconnect GitHub?" confirmLabel="Disconnect" danger onConfirm={remove} onCancel={() => setDisconnect(false)}
         message={<>The app is uninstalled from your accounts and its keys are deleted here. To remove the app itself from GitHub, delete it at <a className="underline" href={`${app.htmlUrl.replace("/apps/", "/settings/apps/")}/advanced`} target="_blank" rel="noreferrer">its settings</a>.</>} />
     </>
+  );
+}
+
+/** The app was created before sites existed: the steps to give it the permissions they need. */
+function GrantPermissions({ app, installations }: { app: App; installations: Installation[] }) {
+  const org = installations.find((i) => i.account === app.owner && i.accountType === "Organization");
+  const settings = org ? `https://github.com/organizations/${app.owner}/settings/apps/${app.slug}` : `https://github.com/settings/apps/${app.slug}`;
+  const missing = [...new Set(installations.flatMap((i) => i.missing ?? []))];
+  return (
+    <div className="mt-4 space-y-2 rounded-2xl bg-warn-soft px-4 py-3 text-sm text-warn">
+      <div className="font-semibold">Sites need more permissions than this app has ({missing.join(", ")})</div>
+      <ol className="list-decimal space-y-1 pl-5 text-fg">
+        <li>Open <a className="underline" href={`${settings}/permissions`} target="_blank" rel="noreferrer">the app's permissions on GitHub</a>.</li>
+        <li>Under <b>Repository permissions</b> set <b>Contents</b>, <b>Workflows</b> and <b>Secrets</b> to <b>Read and write</b>, and <b>Actions</b> to <b>Read-only</b>. Press <b>Save changes</b>.</li>
+        <li>
+          Accept them for your account:{" "}
+          {installations.map((i) => (
+            <a key={i.id} className="mr-2 underline" target="_blank" rel="noreferrer"
+              href={i.accountType === "Organization" ? `https://github.com/organizations/${i.account}/settings/installations/${i.id}` : `https://github.com/settings/installations/${i.id}`}>
+              {i.account}
+            </a>
+          ))}
+          → <b>Review request</b> → <b>Accept new permissions</b>.
+        </li>
+        <li>Come back here (this message goes away), then press <b>Retry</b> on the site.</li>
+      </ol>
+    </div>
   );
 }
 

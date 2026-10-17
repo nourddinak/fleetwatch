@@ -566,6 +566,12 @@ func serve() error {
 		}
 		return ""
 	}
+	// The dashboard's own machine: the server whose agent reports this hostname.
+	host, _ := os.Hostname()
+	siteSvc.IsLocal = func(id string) bool {
+		rec, err := hub.Reg.Get(id)
+		return err == nil && host != "" && strings.EqualFold(rec.Hostname, host)
+	}
 	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
 	ghSvc.OnPush = siteSvc.OnPush
 	serverIDs := func() []string {

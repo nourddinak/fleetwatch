@@ -46,7 +46,8 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusBadRequest, "invalid_input", capitalize(err.Error())+".")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"plan": p, "branch": branch})
+		file, example := s.Sites.EnvExample(r.Context(), in.Repo, branch)
+		writeJSON(w, http.StatusOK, map[string]any{"plan": p, "branch": branch, "exampleFile": file, "example": example})
 	}))
 	mux.HandleFunc("POST /api/sites", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in sites.Input
@@ -84,7 +85,9 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			failSite(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"env": env})
+		st, _ := s.Sites.Get(r.PathValue("id"))
+		file, example := s.Sites.EnvExample(r.Context(), st.Repo, st.Branch)
+		writeJSON(w, http.StatusOK, map[string]string{"env": env, "exampleFile": file, "example": example})
 	}))
 	mux.HandleFunc("PUT /api/sites/{id}/env", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ Env string }

@@ -23,6 +23,11 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 		http.Redirect(w, r, "/#/settings/integrations?"+query, http.StatusSeeOther)
 	}
 	mux.HandleFunc("GET /api/integrations", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if s.GitHub.Connected() {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			s.GitHub.Refresh(ctx) // permissions may have been granted on GitHub since
+			cancel()
+		}
 		pub := s.publicURL(r)
 		writeJSON(w, http.StatusOK, map[string]any{"github": s.GitHub.Status(), "publicUrl": pub,
 			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")})
