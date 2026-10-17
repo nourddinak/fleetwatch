@@ -574,6 +574,7 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
 	ghSvc.OnPush = siteSvc.OnPush
+	appSvc.IsSite = siteSvc.IsSitePath
 	serverIDs := func() []string {
 		recs, _ := hub.Reg.List()
 		ids := make([]string, 0, len(recs))

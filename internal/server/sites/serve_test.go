@@ -132,3 +132,14 @@ func TestRelayRemoteSite(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestIsSitePath(t *testing.T) {
+	s, _, _ := setup(t)
+	LocalRoot = "/var/www"
+	s.save(Site{ID: "site_1", Name: "shop", ServerID: "s1", Plan: Plan{Kind: "static"}})
+	for p, want := range map[string]bool{"/var/www/shop": true, "/var/www/.fleetwatch/shop/20261017-100000": true, "/var/www/shopping": false, "/var/www/other": false} {
+		if s.IsSitePath("s1", p) != want || s.IsSitePath("s9", p) {
+			t.Errorf("%s: want %v", p, want)
+		}
+	}
+}

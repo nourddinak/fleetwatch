@@ -36,6 +36,17 @@ func localDir(name string) string {
 	return real
 }
 
+// IsSitePath reports whether a folder on a server is one of its sites (the live link or
+// a release behind it).
+func (s *Service) IsSitePath(serverID, p string) bool {
+	for _, st := range s.List() {
+		if st.ServerID == serverID && (p == path.Join(LocalRoot, st.Name) || strings.HasPrefix(p, path.Join(LocalRoot, ".fleetwatch", st.Name)+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
 // Local reports whether a site is published on the dashboard's own server, so it is
 // reachable at <dashboard>/sites/<name>/.
 func (s *Service) Local(name string) bool { return localDir(name) != "" }

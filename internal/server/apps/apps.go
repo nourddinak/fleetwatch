@@ -51,6 +51,7 @@ type Service struct {
 	OnChange   func(serverID string)               // apps of a server were added, edited or removed
 	ErrorCount func(appID string) int              // error/critical log lines in the last 24 hours
 	OnViews    func(serverID string, views []View) // fresh views of a server's apps (incident detection)
+	IsSite     func(serverID, path string) bool    // a folder Fleetwatch Sites publishes: listed under Sites, never discovered
 
 	mu      sync.Mutex
 	inv     map[string]*proto.Inventory // latest inventory per server

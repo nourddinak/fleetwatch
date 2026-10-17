@@ -191,6 +191,9 @@ func (s *Service) reconcile(serverID string, inv *proto.Inventory, apps []App) (
 	changed := false
 	current := map[string]bool{}
 	for _, c := range candidates(inv, apps) {
+		if s.IsSite != nil && s.IsSite(serverID, c.path) {
+			continue
+		}
 		current[c.fingerprint] = true
 		data, _ := json.Marshal(c.data)
 		if e, ok := existing[c.fingerprint]; ok {
