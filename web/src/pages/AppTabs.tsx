@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Forecasts } from "../components/DiskRescue";
 import { Link, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, AlertTriangle, BarChart3, Cpu, FileKey, FileText, Flame, FlaskConical, FolderTree, FolderX, GitBranch, Globe, HardDrive, HeartPulse, History, Info, KeyRound, ListChecks, ListTree, Lock, LockKeyhole, LockOpen, MemoryStick, Pencil, Plus, RefreshCw, Save, ScrollText, Settings, SlidersHorizontal, Timer, Trash2, Unplug } from "lucide-react";
+import { Activity, AlertOctagon, AlertTriangle, BarChart3, Clock, Cpu, FileKey, FileText, Flame, FlaskConical, FolderTree, FolderX, GitBranch, Globe, HardDrive, HeartPulse, History, Info, KeyRound, ListChecks, ListTree, Lock, LockKeyhole, LockOpen, MemoryStick, Pencil, Plus, RefreshCw, Save, ScrollText, Server as ServerIcon, Settings, SlidersHorizontal, Timer, Trash2, Undo2, Unplug, UserRound } from "lucide-react";
 import { useStore } from "../store/store";
 import { useApp } from "./AppDetail";
 import { api, useApi, type ApiError } from "../api/client";
@@ -525,6 +525,105 @@ interface EnvRes {
   content: string;
 }
 
+interface EnvVersion {
+  id: number;
+  by: string;
+  ts: number;
+  content: string;
+}
+
+/** Line diff from a to b (longest common subsequence; .env files are small). */
+function lineDiff(a: string, b: string): { t: "same" | "add" | "del"; line: string }[] {
+  const x = a ? a.split("\n") : [], y = b ? b.split("\n") : [];
+  const n = x.length, m = y.length;
+  const L = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out: { t: "same" | "add" | "del"; line: string }[] = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && x[i] === y[j]) out.push({ t: "same", line: x[i++] }), j++;
+    else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) out.push({ t: "add", line: y[j++] });
+    else out.push({ t: "del", line: x[i++] });
+  }
+  return out;
+}
+
+function EnvHistory({ appId, name, pw, reloadKey, onRestore, onLocked }: { appId: string; name: string; pw: string; reloadKey: number; onRestore: (text: string) => void; onLocked: () => void }) {
+  const { toast } = useStore();
+  const [list, setList] = useState<EnvVersion[] | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
+  const [del, setDel] = useState<EnvVersion | "all" | null>(null);
+  const failed = (e: unknown) => {
+    const er = e as ApiError;
+    toast(er.message, "err");
+    if (er.code === "wrong_password") onLocked();
+  };
+  useEffect(() => {
+    let live = true;
+    setList(null);
+    api<EnvVersion[]>("POST", `/api/apps/${appId}/env/history`, { password: pw, name })
+      .then((l) => live && setList(l))
+      .catch((e) => live && (setList([]), failed(e)));
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, name, pw, reloadKey]);
+  const remove = async () => {
+    const target = del;
+    setDel(null);
+    if (!target) return;
+    try {
+      const r = await api<{ deleted: number }>("DELETE", `/api/apps/${appId}/env/history`, { password: pw, name, id: target === "all" ? 0 : target.id });
+      setList((l) => (target === "all" ? [] : (l ?? []).filter((v) => v.id !== target.id)));
+      toast(`${r.deleted} version${r.deleted === 1 ? "" : "s"} deleted`);
+    } catch (e) {
+      failed(e);
+    }
+  };
+  return (
+    <div className="mt-6 border-t border-line pt-5">
+      <SectionTitle icon={<History size={15} />} title={`History of ${name}`} sub="Every save from the dashboard, and what was on the server before it when it had been changed there. Newest first, up to 100."
+        action={list && list.length > 0 && <Button size="sm" variant="ghost" onClick={() => setDel("all")}><Trash2 size={13} /> Delete all</Button>} />
+      {!list ? <Spinner /> : list.length === 0 ? <p className="text-sm text-muted">No saved versions yet. They appear here from the next save.</p> : (
+        <ol className="relative space-y-2 before:absolute before:bottom-3 before:left-[5px] before:top-3 before:w-px before:bg-line">
+          {list.map((v, i) => {
+            const prev = list[i + 1];
+            const diff = open === v.id ? lineDiff(prev?.content ?? "", v.content) : null;
+            const changes = prev ? lineDiff(prev.content, v.content).filter((d) => d.t !== "same").length : 0;
+            return (
+              <li key={v.id} className="relative pl-6">
+                <span className={cn("absolute left-0 top-3 h-[11px] w-[11px] rounded-full border-2 border-surface", i === 0 ? "bg-ok" : "bg-muted")} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-1.5 hover:bg-surface2">
+                  <button className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm" onClick={() => setOpen(open === v.id ? null : v.id)}>
+                    <span className="inline-flex items-center gap-1.5 font-medium">{v.by === "on the server" ? <ServerIcon size={13} /> : <UserRound size={13} />}{v.by === "on the server" ? "Changed on the server" : v.by}</span>
+                    <span className="inline-flex items-center gap-1 text-xs text-muted" title={dateTime(v.ts)}><Clock size={11} />{relTime(v.ts)}</span>
+                    {i === 0 && <Badge tone="ok">newest</Badge>}
+                    {prev && <span className="text-xs text-muted">{changes} line{changes === 1 ? "" : "s"} changed</span>}
+                    {!prev && <span className="text-xs text-muted">first version</span>}
+                  </button>
+                  <Button size="sm" variant="ghost" onClick={() => { onRestore(v.content); toast("Loaded into the editor: press Save to put it back on the server"); }}><Undo2 size={13} /> Restore</Button>
+                  <button className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-crit-soft hover:text-crit" title="Delete this version" aria-label="Delete this version" onClick={() => setDel(v)}><Trash2 size={13} /></button>
+                </div>
+                {diff && (
+                  <pre className="mt-1 max-h-80 overflow-auto rounded-xl bg-surface2 p-3 font-mono text-[11px] leading-relaxed">
+                    {diff.map((d, k) => (
+                      <div key={k} className={cn(d.t === "add" && "bg-ok-soft text-ok", d.t === "del" && "bg-crit-soft text-crit line-through decoration-crit/40")}>
+                        {d.t === "add" ? "+ " : d.t === "del" ? "- " : "  "}{d.line || " "}
+                      </div>
+                    ))}
+                  </pre>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <ConfirmDialog open={!!del} danger title={del === "all" ? `Delete the whole history of ${name}?` : "Delete this version?"} confirmLabel="Delete"
+        message={del === "all" ? "Every saved version of this file is removed from the dashboard. The file on the server stays as it is." : "This saved version is removed from the dashboard. The file on the server stays as it is."}
+        onCancel={() => setDel(null)} onConfirm={remove} />
+    </div>
+  );
+}
+
 /** The app's .env files on its server: owner only, unlocked with the password. */
 export function AppEnv() {
   const a = useApp()!;
@@ -539,6 +638,7 @@ export function AppEnv() {
   const [orig, setOrig] = useState<string | null>(null); // null: the file is not there yet
   const [text, setText] = useState("");
   const [newName, setNewName] = useState("");
+  const [saves, setSaves] = useState(0); // reloads the history after a save
   if (me && me.role !== "owner") return <EmptyState icon={<Lock size={20} />} title="Only the owner can open .env files" desc="They hold the app's secrets." />;
   if (!a.path) return <EmptyState icon={<FolderX size={20} />} title="No folder on the server" desc="This app has no working directory, so it has no .env file." />;
   const locked = files === null;
@@ -567,6 +667,7 @@ export function AppEnv() {
       const r = await api<EnvRes>("PUT", `/api/apps/${a.id}/env`, { password: pw, name, content: text });
       setFiles(r.files);
       setOrig(r.content);
+      setSaves((n) => n + 1);
       toast(`${name} saved. Restart the app so it reads the change.`);
     } catch (e) {
       const er = e as ApiError;
@@ -622,6 +723,7 @@ export function AppEnv() {
           <Button size="sm" disabled={!dirty || busy} onClick={save}>{busy ? <Spinner size={13} /> : <Save size={13} />} Save {name}</Button>
         </div>
       </div>
+      <EnvHistory appId={a.id} name={name} pw={pw} reloadKey={saves} onRestore={setText} onLocked={lock} />
     </Card>
   );
 }

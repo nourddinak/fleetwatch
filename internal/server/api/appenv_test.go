@@ -14,6 +14,14 @@ func TestAppEnvNeedsOwnerAndPassword(t *testing.T) {
 	if st, _ := ops.do("POST", "/api/apps/app_x/env", map[string]string{"password": "member-password-1"}); st != 403 {
 		t.Fatalf("a member opened .env files: %d", st)
 	}
+	for _, m := range []string{"POST", "DELETE"} {
+		if st, _ := ops.do(m, "/api/apps/app_x/env/history", map[string]string{"password": "member-password-1"}); st != 403 {
+			t.Fatalf("a member reached the history (%s): %d", m, st)
+		}
+	}
+	if st, out := owner.do("DELETE", "/api/apps/app_x/env/history", map[string]string{}); st != 403 || out["code"] != "password_required" {
+		t.Fatalf("history delete without password: %d %v", st, out)
+	}
 	if st, out := owner.do("POST", "/api/apps/app_x/env", map[string]string{}); st != 403 || out["code"] != "password_required" {
 		t.Fatalf("no password: %d %v", st, out)
 	}

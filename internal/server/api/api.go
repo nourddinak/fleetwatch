@@ -77,6 +77,7 @@ type Deps struct {
 	GitHub     *github.Service
 	Sites      *sites.Service
 	EnvFiles   *envfile.Service
+	EnvHistory *envfile.History
 }
 
 type server struct{ Deps }
