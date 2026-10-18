@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Forecasts } from "../components/DiskRescue";
 import { Link, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, AlertTriangle, Cpu, Flame, FlaskConical, Globe, History, Info, ListTree, MemoryStick, Pencil, RefreshCw, ScrollText, Timer, Trash2, Unplug } from "lucide-react";
+import { Activity, AlertOctagon, AlertTriangle, BarChart3, Cpu, Flame, FlaskConical, FolderTree, GitBranch, Globe, HardDrive, HeartPulse, History, Info, ListChecks, ListTree, MemoryStick, Pencil, RefreshCw, ScrollText, Settings, SlidersHorizontal, Timer, Trash2, Unplug } from "lucide-react";
 import { useStore } from "../store/store";
 import { useApp } from "./AppDetail";
 import { api, useApi, type ApiError } from "../api/client";
@@ -301,7 +301,7 @@ export function AppHealth() {
     <div className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <SectionTitle title="Configuration" action={<div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => setEdit(true)}><Pencil size={13} /> Edit</Button><Button size="sm" onClick={checkNow} disabled={checking}>{checking ? <Spinner size={13} /> : <FlaskConical size={13} />} Check now</Button></div>} />
+          <SectionTitle icon={<SlidersHorizontal size={15} />} title="Configuration" action={<div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => setEdit(true)}><Pencil size={13} /> Edit</Button><Button size="sm" onClick={checkNow} disabled={checking}>{checking ? <Spinner size={13} /> : <FlaskConical size={13} />} Check now</Button></div>} />
           <dl className="grid grid-cols-2 gap-x-6">
             <div className="col-span-2"><KV label="URL" mono>{a.health.url}</KV></div>
             <KV label="Interval">{a.health.intervalSec}s</KV>
@@ -310,7 +310,7 @@ export function AppHealth() {
           </dl>
         </Card>
         <Card>
-          <SectionTitle title="Current state" action={<HealthBadge status={a.healthStatus} latency={a.latency} />} />
+          <SectionTitle icon={<HeartPulse size={15} />} title="Current state" action={<HealthBadge status={a.healthStatus} latency={a.latency} />} />
           <dl className="grid grid-cols-2 gap-x-6">
             <KV label="Latest result">{last ? (last.ok ? `HTTP ${last.status} OK` : last.error || `HTTP ${last.status}`) : "waiting for the first check"}</KV>
             <KV label="Latency">{last ? `${last.latencyMs} ms` : "—"}</KV>
@@ -322,7 +322,7 @@ export function AppHealth() {
         </Card>
       </div>
       <Card>
-        <SectionTitle title="Check history" sub="Newest on the right · bar height is latency · red = failed" />
+        <SectionTitle icon={<BarChart3 size={15} />} title="Check history" sub="Newest on the right · bar height is latency · red = failed" />
         {hist.length === 0 ? (
           <p className="text-sm text-muted">No results yet.</p>
         ) : (
@@ -334,7 +334,7 @@ export function AppHealth() {
         )}
       </Card>
       <Card pad={false}>
-        <div className="p-5 pb-0"><SectionTitle title="Recent results" /></div>
+        <div className="p-5 pb-0"><SectionTitle icon={<ListChecks size={15} />} title="Recent results" /></div>
         <Table head={["Time", "Result", "HTTP", "Latency", "Detail"]}>
           {hist.slice(0, 20).map((h) => (
             <Tr key={h.ts}>
@@ -391,7 +391,7 @@ export function AppStorage() {
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <Card>
-        <SectionTitle title="Folder size" />
+        <SectionTitle icon={<HardDrive size={15} />} title="Folder size" />
         <div className="text-4xl font-semibold tracking-tight tabular-nums">{scan ? fmtMB(mb(scan.totalBytes)) : "—"}</div>
         <p className="mt-1 break-all font-mono text-xs text-muted">{a.path || "no working directory"}</p>
         {scan && (
@@ -405,7 +405,7 @@ export function AppStorage() {
         </Button>
       </Card>
       <Card className="lg:col-span-2">
-        <SectionTitle title="Breakdown" sub="Largest top-level entries" />
+        <SectionTitle icon={<FolderTree size={15} />} title="Breakdown" sub="Largest top-level entries" />
         {!data ? (
           <Spinner />
         ) : !scan ? (
@@ -424,7 +424,7 @@ export function AppGit() {
   const a = useApp()!;
   return (
     <Card>
-      <SectionTitle title="Git repository" sub="Read-only inspection, refreshed every 2 minutes. Credentials in remote URLs are removed by the agent." />
+      <SectionTitle icon={<GitBranch size={15} />} title="Git repository" sub="Read-only inspection, refreshed every 2 minutes. Credentials in remote URLs are removed by the agent." />
       <GitSummary app={a} full />
     </Card>
   );
@@ -473,7 +473,7 @@ export function AppSettings() {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
-        <SectionTitle title="General" sub={`Hosted on ${servers.find((s) => s.id === a.serverId)?.name ?? "—"}`} />
+        <SectionTitle icon={<Settings size={15} />} title="General" sub={`Hosted on ${servers.find((s) => s.id === a.serverId)?.name ?? "—"}`} />
         <div className="space-y-4">
           <Field label="Display name"><Input value={f.name} maxLength={80} onChange={(e) => set("name", e.target.value)} /></Field>
           <Field label="Working directory"><Input value={f.path} onChange={(e) => set("path", e.target.value)} className="font-mono" placeholder="detected from the process" /></Field>
@@ -493,7 +493,7 @@ export function AppSettings() {
       </Card>
       <div className="space-y-6">
         <Card>
-          <SectionTitle title="Monitoring" />
+          <SectionTitle icon={<Activity size={15} />} title="Monitoring" />
           <div className="divide-y divide-line">
             {FLAG_ROWS.map(([k, l, d]) => (
               <div key={k} className="flex items-center justify-between gap-3 py-3">
@@ -508,7 +508,7 @@ export function AppSettings() {
           </div>
         </Card>
         <Card className="border-crit/30">
-          <SectionTitle title="Danger zone" />
+          <SectionTitle icon={<Trash2 size={15} />} title="Danger zone" />
           <p className="mb-4 text-sm text-muted">Removing the monitoring entry only stops Fleetwatch from tracking it. The process, files and logs on the server are not touched.</p>
           <Button variant="danger" onClick={() => setDel(true)}><Trash2 size={14} /> Delete monitoring entry</Button>
         </Card>

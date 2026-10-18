@@ -33,7 +33,7 @@ export function AlertRulesCard() {
   const quiet = !!f.quietFrom;
   return (
     <Card>
-      <SectionTitle title={<span className="flex items-center gap-2"><BellRing size={16} /> My phone alerts</span>} sub="Which dashboard alerts reach your phones. On-call pages always come through." />
+      <SectionTitle icon={<BellRing size={15} />} title="My phone alerts" sub="Which dashboard alerts reach your phones. On-call pages always come through." />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="At least">
           <Select value={f.minSeverity} onChange={(e) => setF({ ...f, minSeverity: e.target.value as Rules["minSeverity"] })}>

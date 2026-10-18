@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { Bell, Check, KeyRound, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { Bell, Check, KeyRound, LockKeyhole, Server, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, type ApiError } from "../api/client";
-import { Button, CopyButton, Field, Input, Spinner } from "../components/ui";
+import { Button, CopyButton, Field, Input, Spinner, WithIcon } from "../components/ui";
 import { Shell } from "./Login";
 import { cn } from "../utils/cn";
 
@@ -78,13 +78,13 @@ export function Setup() {
           <h1 className="text-2xl font-semibold tracking-tight">Create the admin account</h1>
           <p className="text-sm text-muted">This is the only account. You can turn on two-factor authentication right after.</p>
           <Field label="Username">
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+            <WithIcon icon={<UserRound size={15} />}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" className="pl-10" /></WithIcon>
           </Field>
           <Field label="Password" hint="At least 12 characters">
-            <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" autoFocus />
+            <WithIcon icon={<LockKeyhole size={15} />}><Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" autoFocus className="pl-10" /></WithIcon>
           </Field>
           <Field label="Repeat password">
-            <Input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" />
+            <WithIcon icon={<LockKeyhole size={15} />}><Input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" className="pl-10" /></WithIcon>
           </Field>
           {err && <div role="alert" className="rounded-2xl bg-crit-soft px-4 py-2.5 text-sm text-crit">{err}</div>}
           <div className="flex gap-2">

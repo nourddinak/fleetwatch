@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Play, Plus, ShieldAlert, Terminal, Trash2 } from "lucide-react";
+import { History, Pencil, Play, Plus, ShieldAlert, Terminal, Trash2 } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, useApi, type ApiError, type SecuritySettings } from "../api/client";
 import type { App } from "../mock/types";
@@ -197,7 +197,7 @@ export function CommandRunner({ app }: { app: App }) {
       {offline && <div className="rounded-2xl bg-warn-soft px-5 py-3 text-sm text-warn">The agent on this server is not connected. Commands can be run once it reconnects.</div>}
       <div className="grid gap-6 xl:grid-cols-5">
         <Card className="xl:col-span-2">
-          <SectionTitle title="Commands" sub={app.manager === "standalone" ? "Standalone apps have no built-in actions" : `Built-ins go through ${app.manager}`} action={<Button size="sm" variant="secondary" onClick={() => openEditor()}><Plus size={13} /> Add command</Button>} />
+          <SectionTitle icon={<Terminal size={15} />} title="Commands" sub={app.manager === "standalone" ? "Standalone apps have no built-in actions" : `Built-ins go through ${app.manager}`} action={<Button size="sm" variant="secondary" onClick={() => openEditor()}><Plus size={13} /> Add command</Button>} />
           {!commands.data ? (
             <Spinner />
           ) : list.length === 0 ? (
@@ -230,7 +230,7 @@ export function CommandRunner({ app }: { app: App }) {
         <Card className="xl:col-span-3">
           {active ? (
             <>
-              <SectionTitle title={active.name} sub={`${active.preview}${active.runAs ? ` · as ${active.runAs}` : ""}`} action={<RunStatus status={active.status} exitCode={active.exitCode} />} />
+              <SectionTitle icon={<Play size={15} />} title={active.name} sub={`${active.preview}${active.runAs ? ` · as ${active.runAs}` : ""}`} action={<RunStatus status={active.status} exitCode={active.exitCode} />} />
               <Output run={active} />
               <p className="mt-2 text-xs text-muted">Started {dateTime(active.startedAt)} by {active.initiatedBy}{active.finishedAt ? ` · took ${((active.finishedAt - active.startedAt) / 1000).toFixed(1)}s` : ""}</p>
             </>
@@ -241,7 +241,7 @@ export function CommandRunner({ app }: { app: App }) {
       </div>
 
       <Card pad={false}>
-        <div className="p-5 pb-0"><SectionTitle title="Execution history" sub="Last 50 runs, kept with their output" /></div>
+        <div className="p-5 pb-0"><SectionTitle icon={<History size={15} />} title="Execution history" sub="Last 50 runs, kept with their output" /></div>
         {(runs.data ?? []).length === 0 ? (
           <p className="p-5 text-sm text-muted">No runs yet.</p>
         ) : (

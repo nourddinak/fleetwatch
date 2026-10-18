@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, CheckCircle2, Loader2 } from "lucide-react";
+import { Check, CheckCircle2, Cloud, Cpu, HardDrive, Loader2, MemoryStick, Monitor, Network, PlugZap, Server as ServerIcon, Tag, Terminal } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, type ApiError, type EnrollInfo } from "../api/client";
 import type { Server } from "../mock/types";
-import { Button, Card, Field, Gate, Input, PageHeader, Spinner } from "../components/ui";
+import { Button, Card, Field, Gate, Input, PageHeader, Spinner, WithIcon } from "../components/ui";
 import { InstallCommand } from "../components/InstallCommand";
 import { cn } from "../utils/cn";
 
-const STEPS = ["Name", "Install agent", "Connected"];
+const STEPS: [string, typeof Tag][] = [["Name", Tag], ["Install agent", Terminal], ["Connected", PlugZap]];
 
 export function AddServer() {
   const { servers, upsertServer } = useStore();
@@ -42,9 +42,9 @@ export function AddServer() {
       <PageHeader back={{ to: "/servers", label: "All servers" }} title="Add server" sub="Pair an Ubuntu VPS by installing the Go agent" />
       <Gate>
         <ol className="mb-8 flex flex-wrap items-center gap-2 text-xs">
-          {STEPS.map((s, i) => (
+          {STEPS.map(([s, Icon], i) => (
             <li key={s} className="flex items-center gap-2">
-              <span className={cn("flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-semibold", i < step ? "border-transparent bg-ok-soft text-ok" : i === step ? "border-transparent bg-accent text-accent-fg" : "border-line text-muted")}>{i < step ? <Check size={13} /> : i + 1}</span>
+              <span className={cn("flex h-8 w-8 items-center justify-center rounded-xl border text-[11px] font-semibold", i < step ? "border-transparent bg-ok-soft text-ok" : i === step ? "border-transparent bg-accent text-accent-fg" : "border-line text-muted")}>{i < step ? <Check size={14} /> : <Icon size={14} />}</span>
               <span className={cn("hidden sm:inline", i === step ? "font-medium" : "text-muted")}>{s}</span>
               {i < STEPS.length - 1 && <span className="mx-1 h-px w-6 bg-line" />}
             </li>
@@ -54,16 +54,16 @@ export function AddServer() {
         <Card className="max-w-2xl">
           {step === 0 && (
             <form onSubmit={create} className="space-y-5">
-              <h2 className="text-lg font-semibold">Name your server</h2>
-              <Field label="Server name" hint="Shown across the dashboard. You can change it later."><Input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} placeholder="e.g. VPS-US-01" autoFocus /></Field>
-              <Field label="Provider label (optional)"><Input value={provider} maxLength={64} onChange={(e) => setProvider(e.target.value)} placeholder="e.g. Hetzner" /></Field>
+              <h2 className="flex items-center gap-3 text-lg font-semibold"><span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface2"><ServerIcon size={16} /></span>Name your server</h2>
+              <Field label="Server name" hint="Shown across the dashboard. You can change it later."><WithIcon icon={<Tag size={15} />}><Input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} placeholder="e.g. VPS-US-01" autoFocus className="pl-10" /></WithIcon></Field>
+              <Field label="Provider label (optional)"><WithIcon icon={<Cloud size={15} />}><Input value={provider} maxLength={64} onChange={(e) => setProvider(e.target.value)} placeholder="e.g. Hetzner" className="pl-10" /></WithIcon></Field>
               {err && <div role="alert" className="rounded-2xl bg-crit-soft px-4 py-2.5 text-sm text-crit">{err}</div>}
               <Button type="submit" disabled={!name.trim() || busy}>{busy && <Spinner size={14} />} Create and get install command</Button>
             </form>
           )}
           {step === 1 && created && (
             <div className="space-y-6">
-              <h2 className="text-lg font-semibold">Install the agent on {name}</h2>
+              <h2 className="flex items-center gap-3 text-lg font-semibold"><span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface2"><Terminal size={16} /></span>Install the agent on {name}</h2>
               <InstallCommand info={created.enroll} />
               <div className="flex items-center gap-3 rounded-2xl bg-surface2 px-4 py-3 text-sm">
                 <Loader2 size={16} className="spin shrink-0 text-muted" />
@@ -82,18 +82,18 @@ export function AddServer() {
                 </div>
               </div>
               <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {[
-                  ["OS", live.os || "—"],
-                  ["CPU", `${live.cpuCores} cores · ${live.arch}`],
-                  ["RAM", `${live.ramGb} GB`],
-                  ["Disk", `${live.diskGb} GB`],
-                  ["IP", live.ip || "—"],
-                  ["Provider", live.provider || "—"],
-                ].map(([k, v]) => (
-                  <div key={k} className="rounded-2xl bg-surface2 p-3"><dt className="text-[11px] uppercase tracking-wide text-muted">{k}</dt><dd className="truncate font-semibold">{v}</dd></div>
+                {([
+                  ["OS", live.os || "—", Monitor],
+                  ["CPU", `${live.cpuCores} cores · ${live.arch}`, Cpu],
+                  ["RAM", `${live.ramGb} GB`, MemoryStick],
+                  ["Disk", `${live.diskGb} GB`, HardDrive],
+                  ["IP", live.ip || "—", Network],
+                  ["Provider", live.provider || "—", Cloud],
+                ] as const).map(([k, v, Icon]) => (
+                  <div key={k} className="rounded-2xl bg-surface2 p-3"><dt className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted"><Icon size={11} />{k}</dt><dd className="truncate font-semibold">{v}</dd></div>
                 ))}
               </dl>
-              <Button onClick={() => nav(`/servers/${live.id}`)}>Go to server</Button>
+              <Button onClick={() => nav(`/servers/${live.id}`)}><ServerIcon size={14} /> Go to server</Button>
             </div>
           )}
         </Card>

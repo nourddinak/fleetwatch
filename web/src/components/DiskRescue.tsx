@@ -66,7 +66,7 @@ export function DiskRescue({ serverId, disk }: { serverId: string; disk: number 
 
   return (
     <Card className="lg:col-span-5">
-      <SectionTitle
+      <SectionTitle icon={<Eraser size={15} />}
         title="Free up space"
         sub={rep ? `Checked ${relTime(rep.at)}${total ? ` · about ${fmtBytes(total)} can be freed safely` : ""}` : "See what fills this disk and clean the safe parts with one click."}
         action={

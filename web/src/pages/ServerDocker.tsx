@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Container, FileText, Play, RefreshCw, RotateCw, Square, Trash2, Download } from "lucide-react";
+import { Container, Download, FileText, HardDrive, Layers, Package, Play, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -142,10 +142,10 @@ export function ServerDocker() {
       </div>
       {rep.error && <div className="rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">{rep.error}</div>}
       <Segmented value={tab} onChange={setTab} options={[
-        { value: "containers", label: `Containers (${rep.containers.length})` },
-        { value: "stacks", label: `Compose stacks (${rep.projects.length})` },
-        { value: "images", label: `Images (${rep.images.length})` },
-        { value: "volumes", label: `Volumes (${rep.volumes.length})` },
+        { value: "containers", label: <span className="inline-flex items-center gap-1.5"><Container size={13} />Containers ({rep.containers.length})</span> },
+        { value: "stacks", label: <span className="inline-flex items-center gap-1.5"><Layers size={13} />Compose stacks ({rep.projects.length})</span> },
+        { value: "images", label: <span className="inline-flex items-center gap-1.5"><Package size={13} />Images ({rep.images.length})</span> },
+        { value: "volumes", label: <span className="inline-flex items-center gap-1.5"><HardDrive size={13} />Volumes ({rep.volumes.length})</span> },
       ]} />
       {tab === "containers" && (
         <Card pad={false}>

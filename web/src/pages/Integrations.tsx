@@ -118,7 +118,7 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
   if (!status.connected || !status.app) {
     return (
       <Card>
-        <SectionTitle title={<span className="flex items-center gap-2"><Github size={18} /> GitHub</span>}
+        <SectionTitle icon={<Github size={15} />} title="GitHub"
           sub="Creates a private GitHub App for this dashboard in one click, then you pick the repositories it may read. No password or long-lived token is stored: the dashboard asks GitHub for one-hour tokens." />
         <ul className="mb-4 space-y-1 text-sm text-muted">
           <li>• Reads the repositories you choose</li>

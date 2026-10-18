@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Mail, Plus, Send, Trash2 } from "lucide-react";
+import { BadgeCheck, BarChart3, BellRing, Code2, FileCode2, Lock, Mail, Megaphone, Plus, Send, Sparkles, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, Field, IconButton, Input, Modal, SectionTitle, Segmented, Select, Spinner, Table, Td, Textarea, ToggleRow, Tr } from "../components/ui";
@@ -51,7 +51,7 @@ export function NoticesTab({ c, set, onNotices }: { c: Config; set: Set; onNotic
   return (
     <div className="grid gap-6">
       <Card>
-        <SectionTitle title="Automatic notices" sub="Saved with the page." />
+        <SectionTitle icon={<Sparkles size={15} />} title="Automatic notices" sub="Saved with the page." />
         <Field label="When a component goes down">
           <Segmented
             value={c.autoNotices}
@@ -74,7 +74,7 @@ export function NoticesTab({ c, set, onNotices }: { c: Config; set: Set; onNotic
       </Card>
 
       <Card>
-        <SectionTitle
+        <SectionTitle icon={<Megaphone size={15} />}
           title="Notices"
           sub="Shown at the top of the page with their timeline. Changes here take effect right away."
           action={<Button size="sm" variant="secondary" onClick={() => setForm({ mode: "new", n: blank(), notify: true })}><Plus size={14} /> Notice</Button>}
@@ -201,7 +201,7 @@ export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
   return (
     <div className="grid gap-6">
       <Card>
-        <SectionTitle title="Let visitors subscribe" sub="A “Get updates” button on the page. Subscribers hear when something goes down or comes back, and about your notices. Saved with the page." />
+        <SectionTitle icon={<BellRing size={15} />} title="Let visitors subscribe" sub="A “Get updates” button on the page. Subscribers hear when something goes down or comes back, and about your notices. Saved with the page." />
         <ToggleRow label="By email" desc={mailReady ? "They confirm by email first; every message has an unsubscribe link." : "Set up email sending first."} checked={c.subscribe} onChange={(v) => set({ subscribe: v })}>
           <Button size="sm" variant="ghost" onClick={() => setMail(true)}><Mail size={14} /> {mailReady ? "Email settings" : "Set up email"}</Button>
         </ToggleRow>
@@ -209,7 +209,7 @@ export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
       </Card>
       <Card pad={false}>
         <div className="p-5 pb-0">
-          <SectionTitle title={`Subscribers${list.data ? ` (${list.data.length})` : ""}`} />
+          <SectionTitle icon={<Users size={15} />} title={`Subscribers${list.data ? ` (${list.data.length})` : ""}`} />
         </div>
         {!list.data ? (
           <div className="p-5"><Spinner /></div>
@@ -348,7 +348,7 @@ export function EmailSettings({ onSaved }: { onSaved?: () => void }) {
 export function AccessTab({ c, set }: { c: Config; set: Set }) {
   return (
     <Card>
-      <SectionTitle title="Who can see this page" sub="Saved with the page." />
+      <SectionTitle icon={<Lock size={15} />} title="Who can see this page" sub="Saved with the page." />
       <Segmented
         value={c.access}
         onChange={(v) => set({ access: v })}
@@ -409,7 +409,7 @@ export function ShareTab({ c, set, pageUrl, savedPublic }: { c: Config; set: Set
   return (
     <div className="grid gap-6 xl:grid-cols-2">
       <Card>
-        <SectionTitle title="Badge" sub="A live status image for your website or a GitHub README." />
+        <SectionTitle icon={<BadgeCheck size={15} />} title="Badge" sub="A live status image for your website or a GitHub README." />
         {savedPublic ? (
           <div className="space-y-3">
             <img src={`/api/public/badge.svg${c.slug ? `?page=${c.slug}` : ""}`} alt="Status badge" className="h-5" />
@@ -432,7 +432,7 @@ export function ShareTab({ c, set, pageUrl, savedPublic }: { c: Config; set: Set
       </Card>
 
       <Card>
-        <SectionTitle title="Uptime report" sub="Monthly uptime of every component (UTC)." />
+        <SectionTitle icon={<BarChart3 size={15} />} title="Uptime report" sub="Monthly uptime of every component (UTC)." />
         <div className="flex flex-wrap items-center gap-2">
           <Select className="max-w-[160px]" value={month} onChange={(e) => setMonth(e.target.value)}>
             {months.map((m) => <option key={m} value={m}>{m}{m === months[0] ? " (so far)" : ""}</option>)}
@@ -479,14 +479,14 @@ export function CodeTab({ c, set }: { c: Config; set: Set }) {
   return (
     <div className="grid gap-6 xl:grid-cols-2">
       <Card>
-        <SectionTitle title="Custom CSS" sub="Saved with the page. Styles only this page." />
+        <SectionTitle icon={<Code2 size={15} />} title="Custom CSS" sub="Saved with the page. Styles only this page." />
         <Textarea rows={14} className="font-mono text-xs" spellCheck={false} maxLength={20000} value={c.customCss} placeholder={`.sp-banner { border-radius: 4px; }\n.sp-component { padding: 20px 24px; }`} onChange={(e) => set({ customCss: e.target.value })} />
         <p className="mt-2 text-xs text-muted">
           Hooks: <span className="font-mono">.sp-page .sp-header .sp-custom-header .sp-banner .sp-notice .sp-group .sp-component .sp-bars .sp-latency .sp-subscribe .sp-footer</span>. The brand colour is <span className="font-mono">var(--sp)</span>.
         </p>
       </Card>
       <Card>
-        <SectionTitle title="Custom header HTML" sub="Shown above the status, e.g. your navigation or an announcement." />
+        <SectionTitle icon={<FileCode2 size={15} />} title="Custom header HTML" sub="Shown above the status, e.g. your navigation or an announcement." />
         <Textarea rows={14} className="font-mono text-xs" spellCheck={false} maxLength={10000} value={c.headerHtml} placeholder={`<nav><a href="https://example.com">Home</a> · <a href="https://example.com/support">Support</a></nav>`} onChange={(e) => set({ headerHtml: e.target.value })} />
         <p className="mt-2 text-xs text-muted">Plain HTML: scripts, frames, forms and event handlers are removed, so it cannot run code on your visitors' browsers.</p>
       </Card>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowUp, ExternalLink, Eye, Mail, Plus, Radio, Trash2, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BadgeCheck, Boxes, Code2, ExternalLink, Eye, Globe, LayoutTemplate, Link2, Lock, Mail, Megaphone, Palette, Pencil, Plus, Radio, Trash2, Upload, Users, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
@@ -9,14 +9,14 @@ import type { Component, Config, Group } from "./statusTypes";
 import { AccessTab, CodeTab, EmailSettings, NoticesTab, ShareTab, SubscribersTab } from "./StatusEditorTabs";
 
 type Tab = "page" | "components" | "notices" | "subscribers" | "access" | "share" | "code";
-const TABS: { value: Tab; label: string }[] = [
-  { value: "page", label: "Page" },
-  { value: "components", label: "Components" },
-  { value: "notices", label: "Notices" },
-  { value: "subscribers", label: "Subscribers" },
-  { value: "access", label: "Access" },
-  { value: "share", label: "Badge & reports" },
-  { value: "code", label: "Custom code" },
+const TABS: { value: Tab; label: string; icon: typeof Globe }[] = [
+  { value: "page", label: "Page", icon: LayoutTemplate },
+  { value: "components", label: "Components", icon: Boxes },
+  { value: "notices", label: "Notices", icon: Megaphone },
+  { value: "subscribers", label: "Subscribers", icon: Users },
+  { value: "access", label: "Access", icon: Lock },
+  { value: "share", label: "Badge & reports", icon: BadgeCheck },
+  { value: "code", label: "Custom code", icon: Code2 },
 ];
 
 
@@ -113,18 +113,28 @@ export function StatusPages() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {list.data.map((p) => (
-              <Card key={p.id} className="flex flex-col gap-3">
+              <Card key={p.id} className="flex flex-col gap-3 transition hover:border-fg/25">
                 <div className="flex items-start justify-between gap-2">
-                  <Link to={`/status-page/${p.id}`} className="min-w-0 truncate font-semibold hover:underline">{p.title}</Link>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-surface2 text-fg">
+                      <Radio size={18} />
+                      <span className={`absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-surface ${p.enabled ? "bg-ok" : "bg-muted"}`} />
+                    </span>
+                    <Link to={`/status-page/${p.id}`} className="min-w-0 truncate text-[15px] font-semibold tracking-tight hover:underline">{p.title}</Link>
+                  </div>
                   <span className="flex shrink-0 gap-1">
                     {p.drafts > 0 && <Badge tone="warn">{p.drafts} draft{p.drafts === 1 ? "" : "s"}</Badge>}
                     {p.enabled ? <Badge tone="ok" dot>{p.access === "password" ? "Password" : p.access === "team" ? "Team only" : "Public"}</Badge> : <Badge>Off</Badge>}
                   </span>
                 </div>
-                <div className="truncate text-xs text-muted">{pageUrl(p.slug, p.domain)}{p.slug === "" && !p.domain ? " · main page" : ""}</div>
-                <div className="text-xs text-muted">{p.components} component{p.components === 1 ? "" : "s"} · {p.notices} notice{p.notices === 1 ? "" : "s"}</div>
+                <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted"><Link2 size={12} className="shrink-0" /><span className="truncate font-mono">{pageUrl(p.slug, p.domain)}</span>{p.slug === "" && !p.domain ? <span className="shrink-0">· main page</span> : null}</div>
+                <div className="flex flex-wrap gap-x-4 text-xs text-muted">
+                  <span className="inline-flex items-center gap-1.5"><Boxes size={12} />{p.components} component{p.components === 1 ? "" : "s"}</span>
+                  <span className="inline-flex items-center gap-1.5"><Megaphone size={12} />{p.notices} notice{p.notices === 1 ? "" : "s"}</span>
+                  <span className="inline-flex items-center gap-1.5">{p.access === "public" ? <Globe size={12} /> : <Lock size={12} />}{p.access === "password" ? "password" : p.access === "team" ? "team only" : "public"}</span>
+                </div>
                 <div className="mt-auto flex flex-wrap gap-2 pt-1">
-                  <Link to={`/status-page/${p.id}`}><Button size="sm" variant="secondary">Edit</Button></Link>
+                  <Link to={`/status-page/${p.id}`}><Button size="sm" variant="secondary"><Pencil size={13} /> Edit</Button></Link>
                   {p.enabled && <a href={`/status${p.slug ? "/" + p.slug : ""}`} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink size={14} /> Open</Button></a>}
                   <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setDel(p)}><Trash2 size={14} /></Button>
                 </div>
@@ -278,7 +288,7 @@ export function StatusEditor() {
       />
       <Gate>
         <div className="mb-5 overflow-x-auto">
-          <Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ ...t, label: t.value === "notices" && c.notices.some((n) => n.draft) ? `${t.label} •` : t.label }))} />
+          <Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: <span className="inline-flex items-center gap-1.5"><t.icon size={13} />{t.value === "notices" && c.notices.some((n) => n.draft) ? `${t.label} •` : t.label}</span> }))} />
         </div>
         <div className="pb-20">
         {tab === "notices" && <NoticesTab c={c} set={set} onNotices={onNotices} />}
@@ -289,7 +299,7 @@ export function StatusEditor() {
         {tab === "page" && (
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
-            <SectionTitle title="Publish" />
+            <SectionTitle icon={<Globe size={15} />} title="Publish" />
             <ToggleRow label="Status page is public" desc="Anyone with the address can see it, without signing in." checked={c.enabled} onChange={(v) => set({ enabled: v })} />
             <Field label="Address" className="mt-2" hint={c.slug ? undefined : "Empty: the main page, at /status."}>
               <div className="flex items-center gap-2 text-sm">
@@ -310,7 +320,7 @@ export function StatusEditor() {
           </Card>
 
           <Card>
-            <SectionTitle title="Look" />
+            <SectionTitle icon={<Palette size={15} />} title="Look" />
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Title" className="sm:col-span-2">
                 <Input value={c.title} maxLength={80} onChange={(e) => set({ title: e.target.value })} />
@@ -370,7 +380,7 @@ export function StatusEditor() {
         {tab === "components" && (
 
           <Card>
-            <SectionTitle
+            <SectionTitle icon={<Boxes size={15} />}
               title="Components"
               sub="What visitors see, in groups. Pick an app or a server and give it a public name."
               action={<Button size="sm" variant="secondary" onClick={() => set({ groups: [...c.groups, { name: c.groups.length ? "" : "Services", components: [] }] })}><Plus size={14} /> Group</Button>}

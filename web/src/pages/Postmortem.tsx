@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Activity, Bell, Copy, Download, GitCommit, MessageSquare, Siren, Wrench } from "lucide-react";
+import { Activity, Bell, Copy, Download, FileText, GitCommit, History, MessageSquare, Siren, Wrench } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import type { Incident } from "../mock/types";
@@ -116,7 +116,7 @@ export function Postmortem() {
       </div>
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card>
-          <SectionTitle title="Report" sub={pm.notes.updatedAt ? `Last edited by ${pm.notes.updatedBy} ${dateTime(pm.notes.updatedAt)}` : "Write what happened while it is fresh."} />
+          <SectionTitle icon={<FileText size={15} />} title="Report" sub={pm.notes.updatedAt ? `Last edited by ${pm.notes.updatedBy} ${dateTime(pm.notes.updatedAt)}` : "Write what happened while it is fresh."} />
           <div className="space-y-4">
             {FIELDS.map(([k, label, hint]) => (
               <Field key={k} label={label} hint={hint}>
@@ -133,7 +133,7 @@ export function Postmortem() {
           )}
         </Card>
         <Card>
-          <SectionTitle title="Timeline" sub="Built from incident changes, server and app events, deploys, notifications, dashboard actions and comments." />
+          <SectionTitle icon={<History size={15} />} title="Timeline" sub="Built from incident changes, server and app events, deploys, notifications, dashboard actions and comments." />
           <ol className="relative space-y-3 border-l border-line pl-5">
             {pm.timeline.map((m, i) => {
               const Icon = ICON[m.kind] ?? Activity;

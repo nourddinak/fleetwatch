@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { ArrowLeft, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, LockKeyhole, LogIn, ShieldCheck, UserRound } from "lucide-react";
 import { useStore } from "../store/store";
-import { Button, Field, Input, Spinner } from "../components/ui";
+import { Button, Field, Input, Spinner, WithIcon } from "../components/ui";
 import { Logo, ThemeToggle } from "../components/Layout";
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -45,23 +45,25 @@ export function Login() {
 
   return (
     <Shell>
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-surface2"><LogIn size={20} /></div>
       <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
       <p className="mt-1 text-sm text-muted">Sign in to monitor and control your VPS fleet.</p>
       <form onSubmit={submit} className="mt-6 space-y-4">
         <Field label="Username">
-          <Input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoFocus />
+          <WithIcon icon={<UserRound size={15} />}><Input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoFocus className="pl-10" /></WithIcon>
         </Field>
         <Field label="Password">
           <div className="relative">
-            <Input type={show ? "text" : "password"} value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" className="pr-11" />
+            <LockKeyhole size={15} className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-muted" />
+            <Input type={show ? "text" : "password"} value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" className="pl-10 pr-11" />
             <button type="button" onClick={() => setShow(!show)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted hover:text-fg" aria-label="Toggle password visibility">
               {show ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
         </Field>
-        {err && <div role="alert" className="rounded-2xl bg-crit-soft px-4 py-2.5 text-sm text-crit">{err}</div>}
+        {err && <div role="alert" className="flex items-center gap-2 rounded-2xl bg-crit-soft px-4 py-2.5 text-sm text-crit"><AlertTriangle size={15} className="shrink-0" />{err}</div>}
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? <Spinner /> : null} Sign in
+          {busy ? <Spinner /> : <LogIn size={15} />} Sign in
         </Button>
       </form>
     </Shell>
