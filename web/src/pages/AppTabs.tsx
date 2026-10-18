@@ -13,7 +13,8 @@ import { GitSummary, IncidentActions, StorageBreakdown } from "../components/dom
 import { CommandRunner } from "../components/CommandRunner";
 import { LogViewer } from "../components/LogViewer";
 import { MetricPanel } from "../components/MetricChart";
-import { CADDY_EXAMPLE, FileEditor } from "../components/FileEditor";
+import { CADDY_EXAMPLE, FileEditor, NGINX_EXAMPLE } from "../components/FileEditor";
+import { webServers } from "../utils/web";
 
 interface AppEventRow {
   id: number;
@@ -65,17 +66,17 @@ export function AppOverview() {
       )}
       {a.manager === "standalone" && (
         <Notice tone="neutral" icon={<Info size={16} className="text-muted" />}>
-          {a.rawStatus.startsWith("served by Caddy") ? (
+          {/^served by (Caddy|Nginx)/.test(a.rawStatus) ? (
             <>Static site, {a.rawStatus}. {a.health.enabled ? "Its health check decides whether it is up." : <><Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Turn on a health check</Link> to be alerted when it goes down.</>}</>
           ) : (
-            <>No process belongs to this app and Caddy does not serve its folder, so its state is unknown. <Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Add a health check</Link> to monitor it.</>
+            <>No process belongs to this app and no web server (Caddy or Nginx) serves its folder, so its state is unknown. <Link to={`/applications/${a.id}/health`} className="font-medium underline underline-offset-2">Add a health check</Link> to monitor it.</>
           )}
         </Notice>
       )}
       {a.suggestedDomain && (
         <Notice tone="info" icon={<Globe size={16} />}>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="min-w-0 flex-1">Caddy {a.ports.length ? "routes" : "serves this app’s folder at"} <b>{a.suggestedDomain}</b>{a.ports.length ? " to this app’s port" : ""}. Use it as the app’s domain?</span>
+            <span className="min-w-0 flex-1">The web server {a.ports.length ? "routes" : "serves this app’s folder at"} <b>{a.suggestedDomain}</b>{a.ports.length ? " to this app’s port" : ""}. Use it as the app’s domain?</span>
             <Button size="sm" variant="secondary" onClick={useDomain}>Use domain</Button>
           </div>
         </Notice>
@@ -537,12 +538,16 @@ export function AppEnv() {
 /** Web server files kept in the app's folder: its Caddyfile or nginx.conf. */
 export function AppWeb() {
   const a = useApp()!;
-  const { me } = useStore();
+  const { me, servers } = useStore();
+  const srv = servers.find((x) => x.id === a.serverId);
+  const ws = srv ? webServers(srv) : null;
+  // Only the files of the web servers this server runs (both when its agent does not say).
+  const known = ws ? ws.map((w) => (w === "Caddy" ? "Caddyfile" : "nginx.conf")) : ["Caddyfile", "nginx.conf"];
   if (me && me.role !== "owner") return <EmptyState icon={<Lock size={20} />} title="Only the owner can open these files" />;
   if (!a.path) return <EmptyState icon={<FolderX size={20} />} title="No folder on the server" desc="This app has no working directory, so it has no web server files." />;
   return (
-    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} known={["Caddyfile", "nginx.conf"]} icon={<FileCode2 size={18} />} title="Web server files of this app"
-      lockedTitle="The app's own Caddyfile and nginx.conf" lockedText="Enter your password to open the web server files in the app's folder." placeholder={CADDY_EXAMPLE}
+    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} known={known.length ? known : ["Caddyfile"]} icon={<FileCode2 size={18} />} title="Web server files of this app"
+      lockedTitle={`The app's own ${known.join(" and ") || "Caddyfile"}`} lockedText="Enter your password to open the web server files in the app's folder." placeholder={known[0] === "nginx.conf" ? NGINX_EXAMPLE : CADDY_EXAMPLE}
       saveHint="Saving keeps the previous version as {name}.bak. The web server uses it only if the server's own configuration includes it."
       savedToast="{name} saved" />
   );

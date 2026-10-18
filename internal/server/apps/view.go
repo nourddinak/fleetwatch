@@ -145,8 +145,18 @@ func match(a App, inv *proto.Inventory) (*proto.Process, *proto.Project) {
 	return p, nil
 }
 
-// servingRoute finds the Caddy route that serves files from dir (its root is dir or
-// a folder inside it, such as dir/dist).
+// WebName names the web server a route comes from.
+func WebName(r proto.Route) string { return webLabel(r.Server) }
+
+func webLabel(server string) string {
+	if server == "nginx" {
+		return "Nginx"
+	}
+	return "Caddy"
+}
+
+// servingRoute finds the Caddy or Nginx route that serves files from dir (its root is
+// dir or a folder inside it, such as dir/dist).
 func servingRoute(routes []proto.Route, dir string) *proto.Route {
 	if dir == "" || dir == "/" {
 		return nil
@@ -159,27 +169,31 @@ func servingRoute(routes []proto.Route, dir string) *proto.Route {
 	return nil
 }
 
-// staticSite fills in a process-less app that Caddy serves as a static site: its state
-// comes from Caddy and from its health check (a failing check shows as "warning" and
-// raises a Health Check Failed incident, not a second "offline" one).
+// staticSite fills in a process-less app that Caddy or Nginx serves as a static site:
+// its state comes from the web server and from its health check (a failing check shows
+// as "warning" and raises a Health Check Failed incident, not a second "offline" one).
 func staticSite(v *View, a App, routes []proto.Route) {
 	r := servingRoute(routes, v.Path)
 	if r == nil {
-		v.RawStatus = "not served by Caddy"
+		v.RawStatus = "not served by a web server"
 		return
 	}
 	v.Runtime = "Static"
 	if a.Domain == "" {
 		v.SuggestedDomain = r.Host
 	}
-	v.RawStatus = "served by Caddy from " + r.Root
+	v.RawStatus = "served by " + WebName(*r) + " from " + r.Root
 	switch {
 	case v.HealthStatus == "failed":
 		v.Status = "warning"
 	case v.HealthStatus == "healthy" || r.Live:
 		v.Status = "online"
 	default:
-		v.RawStatus += " (Caddy admin API unreachable: enable a health check to confirm the site is up)"
+		if r.Server == "nginx" {
+			v.RawStatus += " (Nginx is not running: enable a health check to confirm the site is up)"
+		} else {
+			v.RawStatus += " (Caddy admin API unreachable: enable a health check to confirm the site is up)"
+		}
 	}
 }
 

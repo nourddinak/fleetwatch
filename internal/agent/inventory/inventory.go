@@ -10,6 +10,7 @@ import (
 	"fleetwatch/internal/agent/caddy"
 	"fleetwatch/internal/agent/gitinfo"
 	"fleetwatch/internal/agent/manager"
+	"fleetwatch/internal/agent/nginx"
 	"fleetwatch/internal/agent/ports"
 	"fleetwatch/internal/agent/procs"
 	"fleetwatch/internal/agent/projects"
@@ -22,6 +23,7 @@ type Collector struct {
 	managers []manager.ProcessManager
 	tracker  procs.Tracker
 	git      *gitinfo.Cache
+	nginx    nginx.Cache
 	caddy    caddy.Cache
 	certs    caddy.CertCache
 
@@ -99,7 +101,7 @@ func (c *Collector) Collect(ctx context.Context, roots []string) proto.Inventory
 	if inv.Projects == nil {
 		inv.Projects = []proto.Project{}
 	}
-	inv.Routes = c.caddy.Routes(ctx)
+	inv.Routes = append(append([]proto.Route{}, c.caddy.Routes(ctx)...), c.nginx.Routes()...)
 	inv.Certs = c.certs.Certs(ctx, inv.Routes)
 	c.mu.Lock()
 	c.last = inv.Processes

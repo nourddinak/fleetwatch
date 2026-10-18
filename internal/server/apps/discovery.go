@@ -65,7 +65,7 @@ func (s *Service) discoveryView(id, serverID, kind, name, key, dir, state, raw s
 		}
 	}
 	if kind == "folder" && d.Domain != "" {
-		v.Headline, v.Runtime = "Static site served by Caddy", "Static"
+		v.Headline, v.Runtime = "Static site served by "+webLabel(d.Web), "Static"
 	}
 	if p := d.Process; p != nil {
 		if p.Runtime != "" {

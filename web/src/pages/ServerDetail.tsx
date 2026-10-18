@@ -14,6 +14,7 @@ import { cn } from "../utils/cn";
 import { MaintenanceControl } from "../components/Maintenance";
 import { DiskRescue, fullIn, type Forecasts } from "../components/DiskRescue";
 import { CADDY_EXAMPLE, FileEditor, NGINX_EXAMPLE } from "../components/FileEditor";
+import { webServers } from "../utils/web";
 
 function useServer() {
   const { id } = useParams();
@@ -79,7 +80,7 @@ export function ServerDetail() {
           { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
           { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
-          ...(!me || me.role === "owner" ? [{ to: `${base}/web`, label: "Web server", icon: <FileCode2 size={14} /> }] : []),
+          ...((!me || me.role === "owner") && webServers(s)?.length !== 0 ? [{ to: `${base}/web`, label: "Web server", icon: <FileCode2 size={14} /> }] : []),
           { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} />, badge: siteCount !== undefined ? <Badge>{siteCount}</Badge> : undefined },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
@@ -464,10 +465,10 @@ export function ServerSettings() {
 export function ServerWeb() {
   const s = useServer()!;
   const { me } = useStore();
-  const found = (["Caddy", "Nginx"] as const).filter((w) => s.capabilities.includes(w));
-  const offer = found.length ? found : (["Caddy", "Nginx"] as const); // older agents do not say
-  const [web, setWeb] = useState<"Caddy" | "Nginx">(offer[0]);
+  const offer = webServers(s) ?? (["Caddy", "Nginx"] as const); // older agents do not say
+  const [web, setWeb] = useState<"Caddy" | "Nginx">(offer[0] ?? "Caddy");
   if (me && me.role !== "owner") return <EmptyState icon={<FileCode2 size={20} />} title="Only the owner can open the web server configuration" />;
+  if (offer.length === 0) return <EmptyState icon={<FileCode2 size={20} />} title="No web server on this server" desc="Neither Caddy nor Nginx is installed here." />;
   const check = "On save, the web server checks it first: if it is rejected, the old file stays and you see why. Then it reloads. The previous version is kept as {name}.bak.";
   return (
     <div className="space-y-4">

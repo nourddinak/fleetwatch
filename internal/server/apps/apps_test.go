@@ -263,7 +263,7 @@ func TestStaticSites(t *testing.T) {
 	if v, _ := s.Get(site.ID); v.Status != "online" || v.Runtime != "Static" || v.SuggestedDomain != "static.example.test" || !strings.Contains(v.RawStatus, "/var/www/static-site/dist") {
 		t.Fatalf("live static site: %+v", v)
 	}
-	if v, _ := s.Get(docs.ID); v.Status != "unknown" || v.RawStatus != "not served by Caddy" {
+	if v, _ := s.Get(docs.ID); v.Status != "unknown" || v.RawStatus != "not served by a web server" {
 		t.Fatalf("unserved standalone: %s %q", v.Status, v.RawStatus)
 	}
 

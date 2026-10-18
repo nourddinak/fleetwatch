@@ -96,7 +96,7 @@ export function Domains() {
         ) : !list.data ? (
           <LoadingState />
         ) : list.data.length === 0 ? (
-          <EmptyState icon={<Globe size={20} />} title="No domains yet" desc="Domains appear here from your Caddy sites and from the domains set on applications. The first check runs shortly after start." />
+          <EmptyState icon={<Globe size={20} />} title="No domains yet" desc="Domains appear here from your Caddy and Nginx sites and from the domains set on applications. The first check runs shortly after start." />
         ) : (
           <>
           <div className="mb-4 flex flex-wrap gap-2">

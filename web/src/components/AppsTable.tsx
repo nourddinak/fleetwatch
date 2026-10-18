@@ -52,7 +52,7 @@ export function AppsTable({ apps, showServer = true }: { apps: App[]; showServer
               <Td className="whitespace-nowrap text-muted">{a.pid ? fmtDur(a.uptimeSec) : "—"}</Td>
               <Td>{a.ports.length ? <span className="flex flex-wrap gap-1">{a.ports.map((p) => <span key={p.port} className="rounded-md bg-surface2 px-1.5 py-0.5 font-mono text-[11px]">{p.port}</span>)}</span> : <span className="text-muted">—</span>}</Td>
               <Td className="max-w-[190px] text-muted">{a.domain || a.suggestedDomain ? (
-                <span className={cn("flex min-w-0 items-center gap-1.5", !a.domain && "italic")} title={a.domain ? undefined : "Detected from Caddy; confirm it on the app page"}><Globe size={12} className="shrink-0" /><span className="truncate">{a.domain ?? a.suggestedDomain}</span></span>
+                <span className={cn("flex min-w-0 items-center gap-1.5", !a.domain && "italic")} title={a.domain ? undefined : "Detected from the web server (Caddy or Nginx); confirm it on the app page"}><Globe size={12} className="shrink-0" /><span className="truncate">{a.domain ?? a.suggestedDomain}</span></span>
               ) : "—"}</Td>
               <Td className="whitespace-nowrap tabular-nums">{a.folderMB ? fmtMB(a.folderMB) : "—"}</Td>
               <Td>{inc(a.id) ? <Badge tone="crit">{inc(a.id)}</Badge> : <span className="text-muted">0</span>}</Td>

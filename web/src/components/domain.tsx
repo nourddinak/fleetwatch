@@ -301,7 +301,7 @@ export function DiscoveryCard({ d, onAdd, onIgnore, onInspect, busy }: { d: Disc
         <div className="col-span-2"><KV label="Path" mono>{d.path || "—"}</KV></div>
         <KV label="Port">{d.ports.length ? <span className="inline-flex flex-wrap items-center gap-1">{d.ports.map((p) => p.port).join(", ")}{d.public && <Badge tone="warn">public</Badge>}</span> : "—"}</KV>
         <KV label="Git">{d.git ? <Badge tone="ok">Detected</Badge> : <Badge>Not detected</Badge>}</KV>
-        {d.suggestedDomain && <div className="col-span-2"><KV label="Domain (from Caddy)">{d.suggestedDomain}</KV></div>}
+        {d.suggestedDomain && <div className="col-span-2"><KV label="Domain (from the web server)">{d.suggestedDomain}</KV></div>}
       </dl>
       <div className="mt-auto flex flex-wrap gap-2">
         <Button size="sm" onClick={onAdd} disabled={busy}><Plus size={13} /> Add application</Button>
@@ -346,7 +346,7 @@ export function InspectModal({ d, onClose, onAdd }: { d: Discovery | null; onClo
             )}
           </div>
           {d.gitRemote && <KV label="Git remote" mono>{d.gitRemote}</KV>}
-          {d.suggestedDomain && <KV label="Domain from Caddy">{d.suggestedDomain}</KV>}
+          {d.suggestedDomain && <KV label="Domain from the web server">{d.suggestedDomain}</KV>}
           {d.files.length > 0 && (
             <div>
               <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">Folder contents · {d.path}</div>

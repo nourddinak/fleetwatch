@@ -196,8 +196,9 @@ type Route struct {
 	Host     string `json:"host"`
 	Upstream string `json:"upstream"`
 	Port     int    `json:"port"`
-	Root     string `json:"root,omitempty"` // static site directory (root / file_server)
-	Live     bool   `json:"live,omitempty"` // read from the running Caddy, not just its config file
+	Root     string `json:"root,omitempty"`   // static site directory (root / file_server)
+	Live     bool   `json:"live,omitempty"`   // read from the running Caddy, not just its config file
+	Server   string `json:"server,omitempty"` // the web server it comes from: "" (Caddy) or "nginx" (agent 0.9.71+)
 }
 
 // TypeLogs carries a batch of []LogLine from agent to server.

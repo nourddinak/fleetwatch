@@ -77,6 +77,7 @@ type discoveryData struct {
 	Process *proto.Process `json:"process,omitempty"`
 	Project *proto.Project `json:"project,omitempty"`
 	Domain  string         `json:"suggestedDomain,omitempty"`
+	Web     string         `json:"web,omitempty"` // "nginx" when Nginx serves it, else Caddy
 }
 
 // Fingerprint identifies a discovery. It changes when the manager, process name or
@@ -132,7 +133,7 @@ func candidates(inv *proto.Inventory, apps []App) []candidate {
 		}
 		data := discoveryData{Project: pr}
 		if r := servingRoute(inv.Routes, path); r != nil {
-			data.Domain = r.Host // a static site served by Caddy
+			data.Domain, data.Web = r.Host, r.Server // a static site served by Caddy or Nginx
 		}
 		out = append(out, candidate{
 			fingerprint: Fingerprint("folder", path, path), kind: "folder",
@@ -140,7 +141,7 @@ func candidates(inv *proto.Inventory, apps []App) []candidate {
 			data: data,
 		})
 	}
-	// Static sites Caddy serves from a folder outside the discovery roots.
+	// Static sites Caddy or Nginx serves from a folder outside the discovery roots.
 	covered := func(dir string) bool {
 		for p := range projects {
 			if dir == p || strings.HasPrefix(dir, p+"/") {
@@ -162,7 +163,7 @@ func candidates(inv *proto.Inventory, apps []App) []candidate {
 		out = append(out, candidate{
 			fingerprint: Fingerprint("folder", r.Root, r.Root), kind: "folder",
 			name: r.Host, key: r.Root, path: r.Root,
-			data: discoveryData{Domain: r.Host},
+			data: discoveryData{Domain: r.Host, Web: r.Server},
 		})
 	}
 	return out
