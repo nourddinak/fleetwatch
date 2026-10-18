@@ -142,10 +142,10 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	var site string
 	switch {
 	case req.CaddyConfig != "":
-		site = fmt.Sprintf("# Site %s, set in the Fleetwatch dashboard. Changes here are overwritten.\n%s\n", req.Name, strings.TrimRight(req.CaddyConfig, "\n"))
+		site = fmt.Sprintf("# Site %s, set in the Fleetwatch dashboard. Changes here are overwritten.\n%s\n", req.Name, strings.TrimRight(stripPrefix(req.CaddyConfig, req.Name), "\n"))
 		res.Caddy = "custom"
 	case own != nil:
-		site = fmt.Sprintf("# Site %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, own)
+		site = fmt.Sprintf("# Site %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, stripPrefix(string(own), req.Name))
 		res.Caddy = "repository"
 	case len(req.Domains) > 0:
 		// Also answers under /sites/<name>/, the path builds are made for (the dashboard's address).
@@ -179,6 +179,34 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	res.CaddyConfig = site
 	fmt.Fprintln(log, "Caddy reloaded")
 	return nil
+}
+
+// stripPrefix adds "uri strip_prefix /sites/<name>" to each site block of a config
+// written by hand: builds point their files at /sites/<name>/ (the dashboard's
+// address), so on the site's own domains those paths must reach the folder too.
+// shortcut: a Caddyfile with a single site and no braces is left as is.
+func stripPrefix(conf, name string) string {
+	if strings.Contains(conf, "strip_prefix /sites/"+name) {
+		return conf
+	}
+	var out []string
+	depth := 0
+	for _, l := range strings.Split(conf, "\n") {
+		out = append(out, l)
+		code := strings.TrimSpace(l)
+		if strings.HasPrefix(code, "#") {
+			continue
+		}
+		if i := strings.Index(code, " #"); i >= 0 {
+			code = strings.TrimSpace(code[:i])
+		}
+		// A site block, not the global options "{", a snippet "(x) {" or a named route "&(x) {".
+		if depth == 0 && strings.HasSuffix(code, "{") && code != "{" && !strings.HasPrefix(code, "(") && !strings.HasPrefix(code, "&(") {
+			out = append(out, "\turi strip_prefix /sites/"+name)
+		}
+		depth += strings.Count(code, "{") - strings.Count(code, "}")
+	}
+	return strings.Join(out, "\n")
 }
 
 // unpack writes the files of a GitHub tarball (first path part is the snapshot folder)

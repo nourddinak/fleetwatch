@@ -130,3 +130,17 @@ func TestDeployAndRemove(t *testing.T) {
 		}
 	}
 }
+
+func TestStripPrefix(t *testing.T) {
+	conf := "{\n\temail me@x.io\n}\n(common) {\n\tencode gzip\n}\n# a.io {\na.io, www.a.io {\n\troot * /var/www/a\n\t@assets path /assets/* # cached\n\theader @assets {\n\t\tCache-Control max-age=60\n\t}\n\tfile_server\n}\nb.io {\n\timport common\n}"
+	got := stripPrefix(conf, "a")
+	if n := strings.Count(got, "uri strip_prefix /sites/a"); n != 2 {
+		t.Fatalf("%d site blocks got it:\n%s", n, got)
+	}
+	if !strings.Contains(got, "a.io, www.a.io {\n\turi strip_prefix /sites/a\n") || !strings.Contains(got, "b.io {\n\turi strip_prefix /sites/a\n") {
+		t.Fatalf("%s", got)
+	}
+	if again := stripPrefix(got, "a"); again != got {
+		t.Fatal("added twice")
+	}
+}
