@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDownToLine, ArrowUpToLine, Check, ClipboardCopy, Copy, Pause, Play, Radio, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, Check, ClipboardCopy, Clock, Copy, Pause, Play, Radio, X } from "lucide-react";
 import { api, type ApiError } from "../api/client";
 import { clock, copyText, dateTime } from "../mock/util";
 import { cn } from "../utils/cn";
@@ -275,7 +275,7 @@ export function LogViewer({ appId, serverId, showApp, canStream = true, note }: 
           <Button size="sm" variant={autoScroll ? "primary" : "secondary"} onClick={() => (autoScroll ? setAutoScroll(false) : jump())}>
             <ArrowDownToLine size={13} /> Auto-scroll {autoScroll ? "on" : "off"}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowTs(!showTs)}>{showTs ? "Hide" : "Show"} timestamps</Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowTs(!showTs)}><Clock size={13} /> {showTs ? "Hide" : "Show"} timestamps</Button>
           <div className="ml-auto flex items-center gap-2 text-xs text-muted">
             <span className="tabular-nums">{lines.length.toLocaleString()} lines loaded</span>
             {selected.size > 0 && (

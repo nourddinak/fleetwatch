@@ -339,6 +339,15 @@ export const Select = ({ className, children, ...p }: SelectHTMLAttributes<HTMLS
     {children}
   </select>
 );
+/** Puts an icon at the start of a field (give the field pl-10). */
+export function WithIcon({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-muted">{icon}</span>
+      {children}
+    </div>
+  );
+}
 export const Textarea = ({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={cn(fieldCls, "rounded-2xl", className)} />;
 
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
