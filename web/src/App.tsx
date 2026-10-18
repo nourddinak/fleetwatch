@@ -55,6 +55,7 @@ const Applications = page(() => import("./pages/Applications"), "Applications");
 const AppDetail = page(() => import("./pages/AppDetail"), "AppDetail");
 const AppCommands = page(() => import("./pages/AppTabs"), "AppCommands");
 const AppGit = page(() => import("./pages/AppTabs"), "AppGit");
+const AppEnv = page(() => import("./pages/AppTabs"), "AppEnv");
 const AppHealth = page(() => import("./pages/AppTabs"), "AppHealth");
 const AppIncidents = page(() => import("./pages/AppTabs"), "AppIncidents");
 const AppLogs = page(() => import("./pages/AppTabs"), "AppLogs");
@@ -127,6 +128,7 @@ export default function App() {
               <Route path="health" element={<AppHealth />} />
               <Route path="storage" element={<AppStorage />} />
               <Route path="git" element={<AppGit />} />
+              <Route path="env" element={<AppEnv />} />
               <Route path="settings" element={<AppSettings />} />
             </Route>
             <Route path="logs" element={<GlobalLogs />} />

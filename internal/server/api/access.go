@@ -39,6 +39,7 @@ var (
 	commandPath  = regexp.MustCompile(`^/api/commands/([^/]+)`)
 	runPath      = regexp.MustCompile(`^/api/runs/([^/]+)`)
 	sitePath     = regexp.MustCompile(`^/api/sites/([^/]+)`)
+	appEnvPath   = regexp.MustCompile(`^/api/apps/[^/]+/env$`)
 )
 
 // scope answers "may this session see that server or app?" with a small cache of
@@ -140,6 +141,9 @@ func (s *server) allowed(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		if strings.HasPrefix(p, prefix) {
 			return deny("Only the owner can do this.")
 		}
+	}
+	if appEnvPath.MatchString(p) { // an app's secrets
+		return deny("Only the owner can do this.")
 	}
 	key := r.Method + " " + p
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead

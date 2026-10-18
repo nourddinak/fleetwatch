@@ -19,6 +19,7 @@ import (
 	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
 	"fleetwatch/internal/server/github"
@@ -75,6 +76,7 @@ type Deps struct {
 	Vulns      *vulns.Service
 	GitHub     *github.Service
 	Sites      *sites.Service
+	EnvFiles   *envfile.Service
 }
 
 type server struct{ Deps }
@@ -153,6 +155,7 @@ func New(d Deps) http.Handler {
 	if d.Sites != nil {
 		s.siteRoutes(mux)
 	}
+	s.appEnvRoutes(mux) // needs EnvFiles only once the password checked out
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))

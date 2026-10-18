@@ -22,6 +22,7 @@ import (
 
 	"fleetwatch/internal/agent/config"
 	"fleetwatch/internal/agent/docker"
+	"fleetwatch/internal/agent/envfile"
 	agentexec "fleetwatch/internal/agent/exec"
 	"fleetwatch/internal/agent/health"
 	"fleetwatch/internal/agent/host"
@@ -262,6 +263,11 @@ func (r *Runner) session(ctx context.Context) error {
 				var req proto.SiteDeploy
 				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
 					go func() { r.sendCurrent(proto.TypeSiteResult, sites.Deploy(rootCtx, req)) }()
+				}
+			case proto.TypeEnvFile:
+				var req proto.EnvFile
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeEnvFileResult, envfile.Handle(req)) }()
 				}
 			case proto.TypeSiteRemove:
 				var req proto.SiteRemove

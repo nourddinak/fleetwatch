@@ -1,6 +1,6 @@
 import { Link, Outlet, useParams } from "react-router-dom";
 import { MaintenanceControl } from "../components/Maintenance";
-import { Activity, AlertOctagon, Cog, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
+import { Activity, AlertOctagon, Cog, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, KeyRound, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
 import { AppIcon } from "../components/AppsTable";
 import { useStore } from "../store/store";
 import { AppStatus, Badge, Button, EmptyState, Gate, HealthBadge, LinkTabs, LoadingState, PageHeader } from "../components/ui";
@@ -13,7 +13,7 @@ export function useApp() {
 
 export function AppDetail() {
   const a = useApp();
-  const { servers, incidents, appsLoaded } = useStore();
+  const { servers, incidents, appsLoaded, me } = useStore();
   if (!a && !appsLoaded) return <LoadingState label="Loading application…" />;
   if (!a) return <EmptyState title="Application not found" desc="It may have been removed from monitoring." action={<Link to="/applications"><Button>Back to applications</Button></Link>} />;
   const s = servers.find((x) => x.id === a.serverId);
@@ -56,6 +56,7 @@ export function AppDetail() {
           { to: `${base}/health`, label: "Health", icon: <HeartPulse size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
           { to: `${base}/git`, label: "Git", icon: <GitBranch size={14} /> },
+          ...(!me || me.role === "owner" ? [{ to: `${base}/env`, label: ".env", icon: <KeyRound size={14} /> }] : []),
           { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}
       />

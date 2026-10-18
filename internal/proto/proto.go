@@ -528,6 +528,29 @@ type SiteResult struct {
 	Caddy   string `json:"caddy,omitempty"`   // generated | repository | "" (files only)
 }
 
+// An app's .env files (agent 0.9.64+): read or write one, inside the app's folder.
+const (
+	TypeEnvFile       = "env.file"        // server → agent: EnvFile
+	TypeEnvFileResult = "env.file.result" // agent → server: EnvFileResult
+)
+
+type EnvFile struct {
+	RunID   string `json:"runId"`
+	Dir     string `json:"dir"`  // the app's working directory
+	Name    string `json:"name"` // .env or .env.<something>; "" = only list the files
+	Write   bool   `json:"write,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+type EnvFileResult struct {
+	RunID   string   `json:"runId"`
+	Name    string   `json:"name"`
+	Files   []string `json:"files"`  // the .env files in the folder
+	Exists  bool     `json:"exists"` // Name is there (else it can be created)
+	Content string   `json:"content"`
+	Error   string   `json:"error,omitempty"`
+}
+
 // Docker: containers, compose stacks, images and volumes (agent 0.9.38+).
 const (
 	TypeDockerList   = "docker.list"   // server → agent: send a DockerReport (no data)

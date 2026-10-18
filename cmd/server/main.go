@@ -35,6 +35,7 @@ import (
 	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
 	"fleetwatch/internal/server/github"
@@ -573,6 +574,9 @@ func serve() error {
 		return err == nil && host != "" && strings.EqualFold(rec.Hostname, host)
 	}
 	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
+	envSvc := envfile.New()
+	envSvc.Send, envSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
+	hub.Handlers[proto.TypeEnvFileResult] = envSvc.OnResult
 	ghSvc.OnPush = siteSvc.OnPush
 	appSvc.IsSite = siteSvc.IsSitePath
 	serverIDs := func() []string {
@@ -712,7 +716,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc,
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
