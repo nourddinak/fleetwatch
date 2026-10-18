@@ -319,3 +319,31 @@ func TestDeleteCleansGitHub(t *testing.T) {
 		t.Fatalf("left on GitHub: %v %v %v", gh.files["me/shop"], gh.secrets, gh.heads)
 	}
 }
+
+// The owner's Caddy config goes out with the next deploy; the live one comes back.
+func TestCustomCaddy(t *testing.T) {
+	s, _, sent := setup(t)
+	ctx := context.Background()
+	st, err := s.Create(ctx, Input{Repo: "me/blog", ServerID: "s1"}, "Nour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSent(t, sent, 1)
+	answer(s, (*sent)[0], true)
+	if _, err := s.SetCaddy(st.ID, "blog.example.com {\r\n\tfile_server\r\n}\r\n", "Nour"); err != nil {
+		t.Fatal(err)
+	}
+	waitSent(t, sent, 2)
+	d := (*sent)[1]
+	if d.CaddyConfig != "blog.example.com {\n\tfile_server\n}" {
+		t.Fatalf("%q", d.CaddyConfig)
+	}
+	raw, _ := json.Marshal(proto.SiteResult{RunID: d.RunID, Name: d.Name, OK: true, Caddy: "custom", CaddyConfig: "# Site blog\n" + d.CaddyConfig})
+	s.OnResult("s1", raw)
+	if got, _ := s.Get(st.ID); got.CaddySource != "custom" || !strings.Contains(got.CaddyConfig, "file_server") || got.CaddyCustom == "" {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := s.SetCaddy(st.ID, strings.Repeat("x", 70<<10), "Nour"); err == nil {
+		t.Fatal("huge config accepted")
+	}
+}

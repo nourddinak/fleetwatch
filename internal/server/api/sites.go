@@ -146,6 +146,27 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		s.audit(r, "site.env", st.ServerID, st.Name)
 		writeJSON(w, http.StatusOK, st)
 	}))
+	mux.HandleFunc("PUT /api/sites/{id}/caddy", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		var in struct{ Config string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if !sess.Owner() { // a site's Caddy config can serve any domain or folder of the server
+			writeError(w, http.StatusForbidden, "forbidden", "Only the owner can change a site's Caddy config.")
+			return
+		}
+		st, err := s.Sites.SetCaddy(r.PathValue("id"), in.Config, s.actor(r))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		what := "custom Caddy config"
+		if in.Config == "" {
+			what = "generated Caddy config"
+		}
+		s.audit(r, "site.caddy", st.ServerID, st.Name+": "+what)
+		writeJSON(w, http.StatusOK, mark(sess, st))
+	}))
 	mux.HandleFunc("POST /api/sites/{id}/redeploy", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.Sites.Redeploy(r.Context(), r.PathValue("id"), s.actor(r)); err != nil {
 			failSite(w, err)

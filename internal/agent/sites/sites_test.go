@@ -105,6 +105,16 @@ func TestDeployAndRemove(t *testing.T) {
 		t.Fatalf("%d releases kept", len(entries))
 	}
 
+	// A config set in the dashboard wins over the repository's Caddyfile, and comes back.
+	custom := "shop.example.com {\n\troot * /var/www/shop\n\theader X-Custom yes\n\tfile_server\n}"
+	res = Deploy(context.Background(), proto.SiteDeploy{RunID: "r2b", Name: "shop", Archive: srv.URL, Token: "ghs_x", Dir: "dist", Domains: req.Domains, CaddyConfig: custom})
+	if !res.OK || res.Caddy != "custom" || !strings.Contains(res.CaddyConfig, "X-Custom") {
+		t.Fatalf("%+v", res)
+	}
+	if site, _ := os.ReadFile(filepath.Join(CaddyDir, "shop.caddy")); !strings.Contains(string(site), "X-Custom") {
+		t.Fatalf("%s", site)
+	}
+
 	// A folder Fleetwatch did not make is never replaced.
 	os.MkdirAll(filepath.Join(WWW, "blog"), 0o755)
 	if res := Deploy(context.Background(), proto.SiteDeploy{RunID: "r3", Name: "blog", Archive: srv.URL, Token: "ghs_x"}); res.OK {

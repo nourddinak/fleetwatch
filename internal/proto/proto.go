@@ -512,6 +512,9 @@ type SiteDeploy struct {
 	Dir     string   `json:"dir"`     // folder of the snapshot to publish ("" = all)
 	Domains []string `json:"domains"` // addresses Caddy serves the site on
 	SPA     bool     `json:"spa"`     // unknown paths fall back to /index.html
+	// CaddyConfig set in the dashboard replaces the generated site and the repository's
+	// Caddyfile (agent 0.9.72+).
+	CaddyConfig string `json:"caddyConfig,omitempty"`
 }
 
 type SiteRemove struct {
@@ -526,7 +529,9 @@ type SiteResult struct {
 	Error   string `json:"error,omitempty"`
 	Log     string `json:"log,omitempty"`
 	Release string `json:"release,omitempty"` // the release now live
-	Caddy   string `json:"caddy,omitempty"`   // generated | repository | "" (files only)
+	Caddy   string `json:"caddy,omitempty"`   // generated | repository | custom | "" (files only)
+	// CaddyConfig is the Caddy site file now in place (agent 0.9.72+).
+	CaddyConfig string `json:"caddyConfig,omitempty"`
 }
 
 // An app's .env files (agent 0.9.64+): read or write one, inside the app's folder.

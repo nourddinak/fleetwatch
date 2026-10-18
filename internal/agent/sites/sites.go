@@ -141,6 +141,9 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	// 4. Caddy.
 	var site string
 	switch {
+	case req.CaddyConfig != "":
+		site = fmt.Sprintf("# Site %s, set in the Fleetwatch dashboard. Changes here are overwritten.\n%s\n", req.Name, strings.TrimRight(req.CaddyConfig, "\n"))
+		res.Caddy = "custom"
 	case own != nil:
 		site = fmt.Sprintf("# Site %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, own)
 		res.Caddy = "repository"
@@ -173,6 +176,7 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	if err := applyCaddy(req.Name, site); err != nil {
 		return err
 	}
+	res.CaddyConfig = site
 	fmt.Fprintln(log, "Caddy reloaded")
 	return nil
 }

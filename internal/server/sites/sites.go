@@ -57,6 +57,12 @@ type Site struct {
 
 	Status string `json:"status"` // building | deploying | live | failed | waiting
 	AtPath bool   `json:"atPath"` // at <dashboard>/sites/<name>/: served from this machine or relayed from its preview address
+	// CaddyCustom, set by the owner, replaces the generated Caddy site on every deploy.
+	CaddyCustom string `json:"caddyCustom,omitempty"`
+	// CaddyConfig is the Caddy site file the last deploy put in place, and CaddySource
+	// where it came from: generated | repository | custom.
+	CaddyConfig string `json:"caddyConfig,omitempty"`
+	CaddySource string `json:"caddySource,omitempty"`
 	// OwnerKey is who manages the site: "" (the dashboard owner) or a member ID.
 	OwnerKey   string `json:"ownerKey,omitempty"`
 	Mine       bool   `json:"mine"`   // set per request: the viewer may change it
@@ -611,6 +617,31 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 	return s.deploy(ctx, st, sha, msg, by)
 }
 
+// CustomAgent is the first agent that takes a Caddy site from the dashboard.
+const CustomAgent = "v0.9.72"
+
+// SetCaddy replaces the site's generated Caddy config with the owner's ("" goes back to
+// the generated one) and deploys the live commit again, so Caddy checks and loads it.
+func (s *Service) SetCaddy(id, config, by string) (Site, error) {
+	st, err := s.Get(id)
+	if err != nil {
+		return st, err
+	}
+	config = strings.TrimSpace(strings.ReplaceAll(config, "\r\n", "\n"))
+	if len(config) > 64<<10 {
+		return st, valid.Error("the Caddy config is larger than 64 KB")
+	}
+	if config != "" && s.AgentVersion != nil && release.Newer(CustomAgent, s.AgentVersion(st.ServerID)) {
+		return st, valid.Error("this server's agent is too old for a custom Caddy config; update the agent first")
+	}
+	st.CaddyCustom = config
+	if err := s.save(st); err != nil {
+		return st, err
+	}
+	go s.deployCurrent(st.ID, by)
+	return st, nil
+}
+
 // deployCurrent deploys the commit that is live again (after an address change).
 func (s *Service) deployCurrent(id, by string) {
 	st, err := s.Get(id)
@@ -656,7 +687,7 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 	s.running[run] = pending{st.ID, sha, message, by}
 	s.mu.Unlock()
 	if err := s.Send(st.ServerID, proto.TypeSiteDeploy, proto.SiteDeploy{RunID: run, Name: st.Name, Archive: s.GitHub.Tarball(st.Repo, sha), Token: tok,
-		Dir: dir, Domains: domains, SPA: st.Plan.SPA}); err != nil {
+		Dir: dir, Domains: domains, SPA: st.Plan.SPA, CaddyConfig: st.CaddyCustom}); err != nil {
 		s.mu.Lock()
 		delete(s.running, run)
 		s.mu.Unlock()
@@ -690,6 +721,7 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	s.remember(st.ID, Deploy{TS: s.Now().UnixMilli(), Commit: commit, Message: msg, OK: res.OK, Error: res.Error, Log: res.Log, By: p.by})
 	if res.OK {
 		st.Status, st.Commit, st.Message, st.DeployedAt, st.Error = "live", commit, msg, s.Now().UnixMilli(), ""
+		st.CaddyConfig, st.CaddySource = res.CaddyConfig, res.Caddy
 	} else {
 		st.Status, st.Error = "failed", res.Error
 		s.Notify("Site "+st.Name+" failed to deploy", res.Error, "warning")
