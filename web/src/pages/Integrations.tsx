@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Info, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
+import { Cloud, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
 import { DnsAccounts } from "../components/DnsAccounts";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton, Segmented, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -55,7 +55,9 @@ export function IntegrationsSettings() {
     if (!gh) return;
     if (gh === "installed") toast("GitHub is connected");
     else toast(params.get("message") || "GitHub could not be connected", "err");
-    setParams({}, { replace: true });
+    params.delete("github");
+    params.delete("message");
+    setParams(params, { replace: true });
   }, [params, setParams, toast]);
   useEffect(() => subscribeLive((m) => {
     if (m.type === "github") setData((d) => (d ? { ...d, github: m.data } : d));
@@ -63,14 +65,21 @@ export function IntegrationsSettings() {
   }), [subscribeLive, setData]);
   if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
   if (!data.data) return <LoadingState />;
+  const tab = params.get("tab") === "dns" ? "dns" : "github";
   return (
     <div className="space-y-6">
-      <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
-      <DnsAccounts />
-      {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
-      <Card>
-        <SectionTitle icon={<Info size={15} />} title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
-      </Card>
+      <Segmented value={tab} onChange={(v) => setParams(v === "dns" ? { tab: "dns" } : {}, { replace: true })} options={[
+        { value: "github", label: <span className="inline-flex items-center gap-1.5"><Github size={13} />GitHub{data.data.github.connected && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> },
+        { value: "dns", label: <span className="inline-flex items-center gap-1.5"><Cloud size={13} />DNS and CDN</span> },
+      ]} />
+      {tab === "dns" ? (
+        <DnsAccounts />
+      ) : (
+        <>
+          <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+          {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
+        </>
+      )}
     </div>
   );
 }
@@ -112,6 +121,7 @@ function TeamGitHub({ app, installations, publicUrl, links }: { app: App; instal
 }
 
 function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubStatus; publicUrl: string; webhooks: boolean; onChange: () => void }) {
+  const [allPushes, setAllPushes] = useState(false);
   const { toast } = useStore();
   const [org, setOrg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -217,7 +227,7 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
         <Card>
           <SectionTitle icon={<GitCommitHorizontal size={15} />} title="Recent pushes" sub="As GitHub reports them." />
           <ul className="divide-y divide-line text-sm">
-            {status.pushes.map((p, i) => (
+            {status.pushes.slice(0, allPushes ? undefined : 6).map((p, i) => (
               <li key={i} className="flex flex-wrap items-baseline gap-2 py-2">
                 <span className="font-mono text-xs">{p.repo}</span>
                 <Badge><GitBranch size={11} /> {p.branch}</Badge>
@@ -227,6 +237,9 @@ function GitHubCard({ status, publicUrl, webhooks, onChange }: { status: GitHubS
               </li>
             ))}
           </ul>
+          {status.pushes.length > 6 && (
+            <Button size="sm" variant="ghost" className="mt-2" onClick={() => setAllPushes(!allPushes)}>{allPushes ? "Show fewer" : `Show all ${status.pushes.length}`}</Button>
+          )}
         </Card>
       )}
       <ConfirmDialog open={disconnect} title="Disconnect GitHub?" confirmLabel="Disconnect" danger onConfirm={remove} onCancel={() => setDisconnect(false)}
@@ -265,18 +278,26 @@ function GrantPermissions({ app, installations }: { app: App; installations: Ins
 function Repos() {
   const { getServer } = useStore();
   const list = useApi<RepoItem[]>("/api/integrations/github/repos");
+  const [q, setQ] = useState("");
+  const [all, setAll] = useState(false);
   if (list.error) return <ErrorState message={list.error} onRetry={list.reload} />;
   if (!list.data) return <Card><LoadingState label="Asking GitHub for the repositories…" /></Card>;
+  const term = q.trim().toLowerCase();
+  const sorted = [...list.data]
+    .filter(({ repo }) => !term || repo.fullName.toLowerCase().includes(term))
+    .sort((a, b) => b.apps.length - a.apps.length || Date.parse(b.repo.pushedAt || "0") - Date.parse(a.repo.pushedAt || "0"));
+  const shown = all || term ? sorted : sorted.slice(0, 8);
   return (
     <Card pad={false}>
       <div className="p-5 pb-2">
-        <SectionTitle icon={<FolderGit2 size={15} />} title={`Repositories (${list.data.length})`} sub="Linked to your apps by the git remote of their folder." action={<Button size="sm" variant="ghost" onClick={list.reload}><RefreshCw size={14} /></Button>} />
+        <SectionTitle icon={<FolderGit2 size={15} />} title={`Repositories (${list.data.length})`} sub="The ones linked to your apps first (by the git remote of their folder), then the latest pushed." action={<Button size="sm" variant="ghost" onClick={list.reload}><RefreshCw size={14} /></Button>} />
+        {list.data.length > 8 && <SearchInput value={q} onChange={setQ} placeholder="Search repositories…" className="mb-2 sm:w-72" />}
       </div>
       {list.data.length === 0 ? (
         <div className="p-5 pt-0"><EmptyState title="No repositories" desc="Choose repositories on GitHub for the app." /></div>
       ) : (
         <Table head={["Repository", "Default branch", "Last push", "Apps here"]}>
-          {list.data.map(({ repo, apps }) => (
+          {shown.map(({ repo, apps }) => (
             <Tr key={repo.fullName}>
               <Td>
                 <a href={repo.htmlUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium hover:underline">
@@ -299,6 +320,11 @@ function Repos() {
             </Tr>
           ))}
         </Table>
+      )}
+      {!term && sorted.length > 8 && (
+        <div className="p-3 pt-1">
+          <Button size="sm" variant="ghost" onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${sorted.length}`}</Button>
+        </div>
       )}
     </Card>
   );
