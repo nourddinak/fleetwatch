@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, Bell, BellOff, Boxes, Check, Clock, Eye, EyeOff, Flame, FolderGit2, GitBranch, Info, Plus, Repeat, Server as ServerIcon, ShieldCheck, Tag, Terminal } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Boxes, Check, Clock, Cog, Eye, EyeOff, Flame, FolderGit2, GitBranch, Info, Layers, Plus, Radar, Repeat, Server as ServerIcon, ShieldCheck, Tag, Terminal } from "lucide-react";
 import type { App, Discovery, Incident, NotificationRec, Server } from "../mock/types";
 import { exposure } from "../utils/net";
 import { clock, dateTime, fmtMB, relTime } from "../mock/util";
@@ -258,7 +258,7 @@ export function NotificationItem({ n, onClick }: { n: NotificationRec; onClick?:
   const failed = n.result === "failed";
   return (
     <div onClick={onClick} className={cn("flex items-start gap-3 rounded-2xl px-3 py-3 transition", onClick && "cursor-pointer hover:bg-surface2")}>
-      <div className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full", failed ? "bg-crit-soft text-crit" : "bg-surface2 text-muted")}>
+      <div className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", failed ? "bg-crit-soft text-crit" : "bg-surface2 text-muted")}>
         <Bell size={14} />
       </div>
       <div className="min-w-0 flex-1">
@@ -282,12 +282,14 @@ export function DiscoveryCard({ d, onAdd, onIgnore, onInspect, busy }: { d: Disc
   return (
     <Card className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <FolderGit2 size={16} className="text-muted" />
-            <h3 className="truncate text-lg font-semibold">{d.name}</h3>
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-surface2 text-fg">
+            {d.kind === "pm2" ? <Layers size={18} /> : d.kind === "systemd" ? <Cog size={18} /> : <FolderGit2 size={18} />}
+          </span>
+          <div className="min-w-0">
+            <h3 className="truncate text-[15px] font-semibold tracking-tight">{d.name}</h3>
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted"><Radar size={11} className="shrink-0" /><span className="truncate">{d.headline} · {relTime(d.discoveredAt)}</span></p>
           </div>
-          <p className="mt-0.5 text-xs text-muted">{d.headline} · {relTime(d.discoveredAt)}</p>
         </div>
         <Badge tone="info" dot pulse>New</Badge>
       </div>

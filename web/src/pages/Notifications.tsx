@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bell, Check } from "lucide-react";
+import { Bell, BellDot, Boxes, Check, CheckCircle2, Clock, Send, Server as ServerIcon, XCircle } from "lucide-react";
 import { useStore } from "../store/store";
+import { cn } from "../utils/cn";
 import type { NotificationRec } from "../mock/types";
 import { dateTime, relTime } from "../mock/util";
 import { Badge, Button, Card, EmptyState, FilterBar, Gate, KV, MetricCard, Modal, PageHeader, SearchInput, Select, Table, Td, Tr } from "../components/ui";
@@ -29,10 +30,10 @@ export function Notifications() {
       <PageHeader title="Notifications" sub="Delivery history for ntfy, Telegram, Discord and webhooks" actions={<Button variant="secondary" size="sm" onClick={() => { markAllRead(); toast("All marked as read"); }}><Check size={14} /> Mark all read</Button>} />
       <Gate>
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MetricCard label="Total sent" value={notifications.length} />
-          <MetricCard label="Delivered" value={notifications.length - failed} tone="ok" sub={`${Math.round(((notifications.length - failed) / Math.max(1, notifications.length)) * 100)}% success`} />
-          <MetricCard label="Failed" value={failed} tone={failed ? "crit" : "ok"} />
-          <MetricCard label="Unread" value={notifications.filter((n) => !n.read).length} />
+          <MetricCard icon={<Send size={14} />} label="Total sent" value={notifications.length} />
+          <MetricCard icon={<CheckCircle2 size={14} />} label="Delivered" value={notifications.length - failed} tone="ok" sub={`${Math.round(((notifications.length - failed) / Math.max(1, notifications.length)) * 100)}% success`} />
+          <MetricCard icon={<XCircle size={14} />} label="Failed" value={failed} tone={failed ? "crit" : "ok"} />
+          <MetricCard icon={<BellDot size={14} />} label="Unread" value={notifications.filter((n) => !n.read).length} />
         </div>
         <FilterBar>
           <SearchInput value={q} onChange={setQ} placeholder="Search notifications…" className="lg:w-64" />
@@ -55,18 +56,26 @@ export function Notifications() {
             <Table head={["Time", "Event", "Server", "Application", "Provider", "Result"]}>
               {list.slice(0, 80).map((n) => (
                 <Tr key={n.id} onClick={() => open(n)}>
-                  <Td className="whitespace-nowrap text-xs"><div>{dateTime(n.ts)}</div><div className="text-muted">{relTime(n.ts)}</div></Td>
-                  <Td><span className="flex items-center gap-2 font-medium">{!n.read && <span className="h-1.5 w-1.5 rounded-full bg-crit" />}{n.event}</span><div className="max-w-[300px] truncate text-xs text-muted">{n.title}</div></Td>
-                  <Td className="whitespace-nowrap text-xs">{getServer(n.serverId)?.name ?? "—"}</Td>
-                  <Td className="whitespace-nowrap text-xs">{getApp(n.appId)?.name ?? "—"}</Td>
-                  <Td><Badge tone="info">{providerLabel[n.provider]}</Badge></Td>
+                  <Td className="whitespace-nowrap text-xs"><div className="flex items-center gap-1.5"><Clock size={12} className="text-muted" />{dateTime(n.ts)}</div><div className="pl-[18px] text-muted">{relTime(n.ts)}</div></Td>
+                  <Td>
+                    <div className="flex items-center gap-3">
+                      <span className={cn("relative grid h-8 w-8 shrink-0 place-items-center rounded-xl", n.result === "failed" ? "bg-crit-soft text-crit" : "bg-surface2 text-muted")}>
+                        <Bell size={14} />
+                        {!n.read && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-crit" />}
+                      </span>
+                      <div className="min-w-0"><div className="font-medium">{n.event}</div><div className="max-w-[300px] truncate text-xs text-muted">{n.title}</div></div>
+                    </div>
+                  </Td>
+                  <Td className="whitespace-nowrap text-xs">{n.serverId ? <span className="inline-flex items-center gap-1.5"><ServerIcon size={12} className="text-muted" />{getServer(n.serverId)?.name ?? "—"}</span> : "—"}</Td>
+                  <Td className="whitespace-nowrap text-xs">{n.appId ? <span className="inline-flex items-center gap-1.5"><Boxes size={12} className="text-muted" />{getApp(n.appId)?.name ?? "—"}</span> : "—"}</Td>
+                  <Td><Badge tone="info"><Send size={10} />{providerLabel[n.provider]}</Badge></Td>
                   <Td><Result r={n.result} /></Td>
                 </Tr>
               ))}
             </Table>
           </Card>
         )}
-        <Modal open={!!sel} onClose={() => setSel(null)} title="Notification details" footer={<Button onClick={() => setSel(null)}>Close</Button>}>
+        <Modal open={!!sel} onClose={() => setSel(null)} title={<span className="flex items-center gap-2"><Bell size={16} /> Notification details</span>} footer={<Button onClick={() => setSel(null)}>Close</Button>}>
           {sel && (
             <div className="space-y-4">
               <div className="rounded-2xl bg-surface2 p-4 text-sm"><div className="font-medium">{sel.title}</div><div className="whitespace-pre-wrap text-muted">{sel.message}</div></div>
@@ -79,7 +88,7 @@ export function Notifications() {
                 <KV label="Server">{sel.serverId ? <Link to={`/servers/${sel.serverId}`} className="hover:underline">{getServer(sel.serverId)?.name ?? sel.serverId}</Link> : "—"}</KV>
                 <KV label="Application">{sel.appId ? <Link to={`/applications/${sel.appId}`} className="hover:underline">{getApp(sel.appId)?.name}</Link> : "—"}</KV>
               </dl>
-              {sel.error && <div className="rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit"><b>Error:</b> {sel.error}</div>}
+              {sel.error && <div className="flex gap-2 rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit"><XCircle size={16} className="mt-0.5 shrink-0" /><span><b>Error:</b> {sel.error}</span></div>}
             </div>
           )}
         </Modal>

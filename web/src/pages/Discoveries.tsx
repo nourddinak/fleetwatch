@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { EyeOff, Radar, RefreshCw, RotateCcw, Undo2 } from "lucide-react";
+import { EyeOff, FolderSearch, Inbox, Plus, Radar, RefreshCw, RotateCcw, Undo2 } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, useApi, type ApiError } from "../api/client";
 import type { App, Discovery } from "../mock/types";
@@ -85,11 +85,11 @@ export function Discoveries() {
         }
       />
       <p className="-mt-4 mb-6 text-sm text-muted">
-        Folder scan roots: <span className="font-mono">{roots.data?.roots.join(", ") || "—"}</span> · <Link to="/settings/system" className="underline-offset-2 hover:underline">change</Link>. Agents rescan every 30 seconds.
+        <FolderSearch size={14} className="mr-1.5 inline-block align-[-2px]" />Folder scan roots: <span className="font-mono">{roots.data?.roots.join(", ") || "—"}</span> · <Link to="/settings/system" className="underline-offset-2 hover:underline">change</Link>. Agents rescan every 30 seconds.
       </p>
       <Gate>
         <div className="mb-5 flex flex-wrap items-center gap-3">
-          <Segmented value={tab} onChange={setTab} options={[{ value: "pending", label: `Pending (${discoveries.length})` }, { value: "ignored", label: `Ignored (${ignoredList.length})` }]} />
+          <Segmented value={tab} onChange={setTab} options={[{ value: "pending", label: <span className="inline-flex items-center gap-1.5"><Inbox size={13} />Pending ({discoveries.length})</span> }, { value: "ignored", label: <span className="inline-flex items-center gap-1.5"><EyeOff size={13} />Ignored ({ignoredList.length})</span> }]} />
           {tab === "ignored" && ignoredList.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => setResetOpen(true)} disabled={busy === "reset"}><RotateCcw size={13} /> Restore all ignored</Button>
           )}
@@ -110,12 +110,13 @@ export function Discoveries() {
           <div className="grid gap-3 md:grid-cols-2">
             {ignoredList.map((d) => (
               <Card key={d.id} className="flex flex-wrap items-center gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-dashed border-line text-muted"><EyeOff size={16} /></span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2"><span className="font-semibold">{d.name}</span><Badge>Ignored</Badge></div>
                   <div className="truncate text-xs text-muted">{getServer(d.serverId)?.name} · {d.kind} · <span className="font-mono">{d.path}</span> · first seen {relTime(d.discoveredAt)}</div>
                 </div>
                 <Button size="sm" variant="secondary" disabled={busy === d.id} onClick={() => restore(d)}><Undo2 size={13} /> Restore</Button>
-                <Button size="sm" disabled={busy === d.id} onClick={() => add(d)}>Add</Button>
+                <Button size="sm" disabled={busy === d.id} onClick={() => add(d)}><Plus size={13} /> Add</Button>
               </Card>
             ))}
           </div>

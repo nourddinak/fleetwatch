@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity as ActivityIcon, Moon, PhoneCall, Users } from "lucide-react";
+import { Activity as ActivityIcon, AlertOctagon, AlertTriangle, BellRing, Boxes, CheckCircle2, Clock, History, Moon, PhoneCall, Server as ServerIcon, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import type { Incident } from "../mock/types";
@@ -61,7 +61,7 @@ export function TeamPage() {
   return (
     <>
       <PageHeader title="Team" sub="What everyone did, live, and how on-call duty is going: handoffs between shifts and who carries the load." />
-      <div className="mb-5"><Segmented value={tab} onChange={setTab} options={[{ value: "activity", label: "Activity" }, { value: "oncall", label: "On call" }]} /></div>
+      <div className="mb-5"><Segmented value={tab} onChange={setTab} options={[{ value: "activity", label: <span className="inline-flex items-center gap-1.5"><ActivityIcon size={13} />Activity</span> }, { value: "oncall", label: <span className="inline-flex items-center gap-1.5"><PhoneCall size={13} />On call</span> }]} /></div>
       <Gate>{tab === "activity" ? <ActivityFeed /> : <OnCallTab />}</Gate>
     </>
   );
@@ -86,17 +86,20 @@ function ActivityFeed() {
   if (list.data.length === 0) return <EmptyState icon={<ActivityIcon size={20} />} title="Nothing yet" desc="Restarts, commands, incident handling and changes appear here as people make them." />;
   return (
     <Card>
-      <ol className="divide-y divide-line">
+      <SectionTitle icon={<ActivityIcon size={15} />} title="Activity" sub="Live, newest first." />
+      <ol className="relative space-y-4 before:absolute before:bottom-4 before:left-4 before:top-4 before:w-px before:bg-line">
         {list.data.map((a, i) => (
-          <li key={`${a.ts}-${i}`} className="flex items-start gap-3 py-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface2 text-xs font-semibold">{initials(a.actor)}</span>
-            <div className="min-w-0 flex-1 text-sm">
+          <li key={`${a.ts}-${i}`} className="relative flex items-start gap-3">
+            <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-surface bg-surface2 text-xs font-semibold">{initials(a.actor)}</span>
+            <div className="min-w-0 flex-1 pt-1 text-sm">
               <span className="font-semibold">{a.actor}</span> {a.text}
               {(a.appId || a.serverId) && (
-                <Link to={a.appId ? `/applications/${a.appId}` : `/servers/${a.serverId}`} className="ml-1 text-xs text-muted underline">open</Link>
+                <Link to={a.appId ? `/applications/${a.appId}` : `/servers/${a.serverId}`} className="ml-2 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+                  {a.appId ? <Boxes size={11} /> : <ServerIcon size={11} />} open
+                </Link>
               )}
             </div>
-            <span className="shrink-0 text-xs text-muted" title={dateTime(a.ts)}>{relTime(a.ts)}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 pt-1 text-xs text-muted" title={dateTime(a.ts)}><Clock size={11} />{relTime(a.ts)}</span>
           </li>
         ))}
       </ol>
@@ -135,7 +138,7 @@ function OnCallTab() {
     <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionTitle title="On call now" />
+          <SectionTitle icon={<PhoneCall size={15} />} title="On call now" />
           <div className="text-2xl font-semibold">{name(handoff.current.person)}</div>
           <div className="text-sm text-muted">since {dateTime(handoff.current.from)} · until {dateTime(handoff.current.to)}{handoff.current.override ? " (cover)" : ""}</div>
           <div className="mt-3"><Badge tone={handoff.openNow ? "warn" : "ok"}>{handoff.openNow} open incident{handoff.openNow === 1 ? "" : "s"}</Badge></div>
@@ -155,14 +158,14 @@ function OnCallTab() {
           </div>
         </Card>
         <Card>
-          <SectionTitle title="Last shift" sub={handoff.previous ? `${name(handoff.previous.person)} · ${dateTime(handoff.previous.from)} → ${dateTime(handoff.previous.to)}` : "No shift before this one yet."} />
+          <SectionTitle icon={<History size={15} />} title="Last shift" sub={handoff.previous ? `${name(handoff.previous.person)} · ${dateTime(handoff.previous.from)} → ${dateTime(handoff.previous.to)}` : "No shift before this one yet."} />
           {handoff.summary && (
             <>
               <div className="mb-3 flex flex-wrap gap-2">
-                <Badge>{handoff.summary.opened} incidents</Badge>
-                <Badge tone="ok">{handoff.summary.resolved} resolved</Badge>
-                {handoff.summary.stillOpen > 0 && <Badge tone="warn">{handoff.summary.stillOpen} still open</Badge>}
-                <Badge tone="info">{handoff.summary.pages} pages</Badge>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-muted"><AlertOctagon size={13} /> {handoff.summary.opened} incidents</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-ok"><CheckCircle2 size={13} /> {handoff.summary.resolved} resolved</span>
+                {handoff.summary.stillOpen > 0 && <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-warn"><AlertTriangle size={13} /> {handoff.summary.stillOpen} still open</span>}
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-info"><BellRing size={13} /> {handoff.summary.pages} pages</span>
               </div>
               <ul className="divide-y divide-line">
                 {handoff.summary.incidents.map((x) => (
@@ -179,14 +182,14 @@ function OnCallTab() {
       </div>
       <Card pad={false}>
         <div className="flex flex-wrap items-center justify-between gap-3 p-5 pb-2">
-          <SectionTitle title="Who carries the load" sub="Pages, nights and how fast each person answered." />
+          <SectionTitle icon={<Users size={15} />} title="Who carries the load" sub="Pages, nights and how fast each person answered." />
           <Segmented size="sm" value={days} onChange={setDays} options={[{ value: "7", label: "7 days" }, { value: "30", label: "30 days" }, { value: "90", label: "90 days" }]} />
         </div>
         {!report.data ? <LoadingState /> : report.data.people.length === 0 ? <div className="p-5"><EmptyState icon={<Users size={20} />} title="No one in the rotation" /></div> : (
           <Table head={["Person", "On call", "Pages", "At night", "Escalated to them", "Answered", "Missed", "Median answer"]}>
             {report.data.people.map((p) => (
               <Tr key={p.person}>
-                <Td className="font-medium">{p.name}</Td>
+                <Td className="font-medium"><span className="flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-full bg-surface2 text-[10px] font-semibold">{initials(p.name)}</span>{p.name}</span></Td>
                 <Td>{Math.round(p.hoursOnCall)} h</Td>
                 <Td>{p.pages}</Td>
                 <Td>{p.night > 0 ? <span className="inline-flex items-center gap-1"><Moon size={12} /> {p.night}</span> : 0}</Td>
@@ -201,7 +204,7 @@ function OnCallTab() {
       </Card>
       {report.data && report.data.pages.length > 0 && (
         <Card>
-          <SectionTitle title="Recent pages" />
+          <SectionTitle icon={<BellRing size={15} />} title="Recent pages" />
           <ul className="divide-y divide-line text-sm">
             {report.data.pages.map((p, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 py-2">
