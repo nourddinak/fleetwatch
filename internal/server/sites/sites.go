@@ -55,8 +55,11 @@ type Site struct {
 	AutoDeploy bool     `json:"autoDeploy"`
 	EnvKeys    []string `json:"envKeys"`
 
-	Status     string `json:"status"` // building | deploying | live | failed | waiting
-	AtPath     bool   `json:"atPath"` // at <dashboard>/sites/<name>/: served from this machine or relayed from its preview address
+	Status string `json:"status"` // building | deploying | live | failed | waiting
+	AtPath bool   `json:"atPath"` // at <dashboard>/sites/<name>/: served from this machine or relayed from its preview address
+	// OwnerKey is who manages the site: "" (the dashboard owner) or a member ID.
+	OwnerKey   string `json:"ownerKey,omitempty"`
+	Mine       bool   `json:"mine"`   // set per request: the viewer may change it
 	Commit     string `json:"commit"` // deployed commit of the branch (for builds: of the source)
 	Message    string `json:"message"`
 	DeployedAt int64  `json:"deployedAt"`
@@ -216,6 +219,7 @@ type Input struct {
 	Plan     *Plan    `json:"plan"`   // nil = detected
 	Domains  []string `json:"domains"`
 	Env      string   `json:"env"` // .env lines (build sites)
+	Owner    string   `json:"-"`   // member ID of who creates it ("" = the owner); never from the request
 }
 
 func slug(s string) string {
@@ -383,7 +387,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	rand.Read(b)
 	st := Site{ID: "site_" + hex.EncodeToString(b), Name: name, Repo: in.Repo, Branch: branch, ServerID: in.ServerID, Plan: plan,
 		Domains: domains, Preview: s.preview(name, in.ServerID), AutoDeploy: true, EnvKeys: keys,
-		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by}
+		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by, OwnerKey: in.Owner}
 	if err := s.save(st); err != nil {
 		return Site{}, err
 	}

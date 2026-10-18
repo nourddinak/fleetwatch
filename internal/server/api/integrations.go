@@ -29,7 +29,7 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 			cancel()
 		}
 		pub := s.publicURL(r)
-		writeJSON(w, http.StatusOK, map[string]any{"github": s.GitHub.Status(), "publicUrl": pub,
+		writeJSON(w, http.StatusOK, map[string]any{"github": s.GitHub.Status(), "publicUrl": pub, "links": s.GitHub.Links(),
 			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")})
 	}))
 	mux.HandleFunc("POST /api/integrations/github/manifest", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
@@ -60,7 +60,15 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		id, _ := strconv.ParseInt(r.URL.Query().Get("installation_id"), 10, 64)
-		if err := s.GitHub.Installed(ctx, id); err != nil {
+		err := s.GitHub.Installed(ctx, id)
+		// A team member installing on their own account: on to the sign-in that records it.
+		if key := s.GitHub.AfterInstall(r.URL.Query().Get("state")); key != "" {
+			if u, e := s.GitHub.SignInURL(ctx, s.publicURL(r), key); e == nil {
+				http.Redirect(w, r, u, http.StatusSeeOther)
+				return
+			}
+		}
+		if err != nil {
 			back(w, r, "github=error&message="+url.QueryEscape(err.Error()))
 			return
 		}

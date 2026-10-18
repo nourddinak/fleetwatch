@@ -1,6 +1,6 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Terminal, Trash2, Workflow } from "lucide-react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Terminal, Trash2, UserRound, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -36,7 +36,24 @@ interface Site {
   error?: string;
   buildUrl?: string;
   createdAt: number;
+  createdBy?: string;
   atPath: boolean;
+  mine: boolean; // this viewer may change it (who added it, or the owner)
+}
+interface MyGitHub {
+  connected: boolean; // the owner connected the app
+  canDeploy: boolean; // owner or operator
+  owner: boolean;
+  app?: string;
+  link?: { login: string; installations: number[]; linkedAt: number };
+}
+
+async function goGitHub(path: "connect" | "install", toast: (m: string, k?: "ok" | "err") => void) {
+  try {
+    location.href = (await api<{ url: string }>("POST", `/api/me/github/${path}`)).url;
+  } catch (e) {
+    toast((e as ApiError).message, "err");
+  }
 }
 interface Deploy {
   ts: number;
@@ -63,11 +80,43 @@ export function ServerSites() {
 }
 
 export function Sites({ serverId }: { serverId?: string } = {}) {
-  const { me, subscribeLive } = useStore();
-  const owner = !me || me.role === "owner";
+  const { subscribeLive, toast } = useStore();
   const all = useApi<Site[]>("/api/sites");
   const list = { ...all, data: serverId ? all.data?.filter((s) => s.serverId === serverId) : all.data };
-  const gh = useApi<{ github: { connected: boolean } }>(owner ? "/api/integrations" : "/api/sites");
+  const gh = useApi<MyGitHub>("/api/me/github");
+  const g = gh.data;
+  const owner = !!g?.owner;
+  const linked = !!g && (g.owner || !!g.link);
+  const canAdd = !!g && g.connected && g.canDeploy && linked;
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    // Back from GitHub's sign-in.
+    const r = params.get("github");
+    if (!r) return;
+    if (r === "linked") toast("GitHub connected: your repositories are ready to deploy");
+    else toast(params.get("message") ?? "The GitHub sign-in did not finish", "err");
+    params.delete("github");
+    params.delete("message");
+    setParams(params, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const unlink = async () => {
+    try {
+      await api("DELETE", "/api/me/github");
+      gh.reload();
+      toast("Your GitHub account is no longer linked");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  const ghChip = g?.link ? (
+    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs">
+      <Github size={13} /> <span className="font-medium">{g.link.login}</span>
+      <button className="text-muted hover:text-crit" onClick={unlink} title="Unlink your GitHub account">Unlink</button>
+    </span>
+  ) : g && !g.owner && g.connected && g.canDeploy ? (
+    <Button variant="secondary" size={serverId ? "sm" : "md"} onClick={() => goGitHub("connect", toast)}><Github size={14} /> Connect your GitHub</Button>
+  ) : null;
   const { setData } = all;
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -75,23 +124,34 @@ export function Sites({ serverId }: { serverId?: string } = {}) {
     if (m.type === "site") setData((l) => (l ? (l.some((x) => x.id === m.data.id) ? l.map((x) => (x.id === m.data.id ? m.data : x)) : [...l, m.data]) : l));
     if (m.type === "site.removed") setData((l) => l?.filter((x) => x.id !== m.data.id) ?? l);
   }), [subscribeLive, setData]);
-  const connected = !owner || (gh.data && "github" in gh.data ? gh.data.github.connected : true);
+  const connected = g?.connected ?? true;
   return (
     <>
       {serverId ? (
         <SectionTitle icon={<Rocket size={15} />} title="Sites on this server" sub="Static sites deployed here from GitHub, in /var/www."
-          action={owner && connected && <Button size="sm" onClick={() => setAdding(true)}><Plus size={13} /> New site</Button>} />
+          action={<div className="flex flex-wrap items-center gap-2">{ghChip}{canAdd && <Button size="sm" onClick={() => setAdding(true)}><Plus size={13} /> New site</Button>}</div>} />
       ) : (
         <PageHeader title="Sites" sub="Static sites from your GitHub repositories, served by Caddy from /var/www on the server you pick. Plain HTML is published as is; React, Vite, Next and the like are built by GitHub Actions. Every push deploys again."
-          actions={owner && connected && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
+          actions={<>{ghChip}{canAdd && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>}</>} />
       )}
       <Gate>
         {list.error ? <ErrorState message={list.error} onRetry={list.reload} /> : !list.data ? <LoadingState /> : !connected ? (
-          <EmptyState icon={<Rocket size={20} />} title="Connect GitHub first" desc="Sites are deployed from GitHub repositories." action={<Link to="/settings/integrations"><Button>Open Integrations</Button></Link>} />
+          owner ? (
+            <EmptyState icon={<Rocket size={20} />} title="Connect GitHub first" desc="Sites are deployed from GitHub repositories." action={<Link to="/settings/integrations"><Button>Open Integrations</Button></Link>} />
+          ) : (
+            <EmptyState icon={<Github size={20} />} title="GitHub is not set up yet" desc="The owner connects it once in Settings → Integrations. Then you link your own GitHub account here and deploy your sites." />
+          )
         ) : list.data.length === 0 ? (
-          <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc={serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={owner && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
+          <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc={serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={canAdd ? <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button> : g?.canDeploy && !linked ? <Button onClick={() => goGitHub("connect", toast)}><Github size={15} /> Connect your GitHub</Button> : undefined} />
         ) : (
           <div className="space-y-4">
+            {g && g.connected && g.canDeploy && !linked && (
+              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
+                <span className="grid h-9 w-9 place-items-center rounded-xl bg-surface2"><Github size={16} /></span>
+                <span className="min-w-0 flex-1">Link your own GitHub account to deploy your repositories here. You manage the sites you add; the owner can manage all of them.</span>
+                <Button size="sm" onClick={() => goGitHub("connect", toast)}>Connect your GitHub</Button>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 text-xs">
               {([["live", "live", CheckCircle2], ["building", "building", Workflow], ["failed", "failed", AlertTriangle]] as const).map(([k, word, Icon]) => {
                 const n = list.data!.filter((x) => (k === "building" ? x.status === "building" || x.status === "deploying" : x.status === k)).length;
@@ -103,7 +163,7 @@ export function Sites({ serverId }: { serverId?: string } = {}) {
           </div>
         )}
       </Gate>
-      {adding && <NewSite serverId={serverId} onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); all.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
+      {adding && <NewSite serverId={serverId} owner={owner} onMoreRepos={() => goGitHub("install", toast)} onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); all.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
       {open && <SiteDrawer id={open} onClose={() => setOpen(null)} />}
     </>
   );
@@ -271,9 +331,9 @@ function IconInput({ icon, prefix, className, ...p }: InputHTMLAttributes<HTMLIn
   );
 }
 
-function NewSite({ onClose, onCreated, serverId }: { onClose: () => void; onCreated: (s: Site) => void; serverId?: string }) {
+function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose: () => void; onCreated: (s: Site) => void; serverId?: string; owner?: boolean; onMoreRepos?: () => void }) {
   const { servers, toast } = useStore();
-  const repos = useApi<{ repo: { fullName: string; defaultBranch: string; private: boolean } }[]>("/api/integrations/github/repos");
+  const repos = useApi<{ repo: { fullName: string; defaultBranch: string; private: boolean } }[]>("/api/me/github/repos");
   const [f, setF] = useState({ repo: "", serverId: serverId ?? "", branch: "", name: "", domains: "", env: "" });
   const [plan, setPlan] = useState<Plan | null>(null);
   const [exampleFile, setExampleFile] = useState("");
@@ -354,7 +414,7 @@ function NewSite({ onClose, onCreated, serverId }: { onClose: () => void; onCrea
               <div className="max-h-52 overflow-y-auto p-1.5">
                 {!repos.data && <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted"><Spinner size={14} /> Loading repositories…</div>}
                 {repos.data && list.length === 0 && (
-                  <p className="px-3 py-3 text-sm text-muted">No repository matches. <Link to="/settings/integrations" className="underline">Give the app access to more</Link></p>
+                  <p className="px-3 py-3 text-sm text-muted">No repository matches. {owner ? <Link to="/settings/integrations" className="underline">Give the app access to more</Link> : <button type="button" className="underline" onClick={onMoreRepos}>Give the app access to more of your repositories</button>}</p>
                 )}
                 {list.map(({ repo }) => {
                   const [owner, rname] = repo.fullName.split("/");
@@ -476,8 +536,8 @@ function Panel({ icon, title, sub, danger, children }: { icon: ReactNode; title:
 
 function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { me, getServer, toast } = useStore();
-  const owner = !me || me.role === "owner";
   const data = useApi<{ site: Site; history: Deploy[] }>(`/api/sites/${id}`);
+  const owner = !!data.data?.site.mine; // who added it, or the dashboard owner
   const env = useApi<{ env: string; exampleFile?: string; example?: string }>(owner ? `/api/sites/${id}/env` : `/api/sites/${id}`);
   const [domains, setDomains] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
@@ -543,6 +603,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         <div className="grid gap-2 rounded-2xl bg-surface2/60 p-4 text-xs">
           <a href={`https://github.com/${site.repo}`} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 hover:underline"><Github size={13} /><span className="truncate">{site.repo}</span><ExternalLink size={11} className="text-muted" /></a>
           <span className="flex items-center gap-2"><GitBranch size={13} /><span className="font-mono">{site.branch}</span></span>
+          {site.createdBy && <span className="flex items-center gap-2"><UserRound size={13} />Added by {site.createdBy}{!site.mine && " · only they and the owner can change it"}</span>}
           <span className="flex min-w-0 items-center gap-2"><ServerIcon size={13} /><span className="truncate font-mono">{getServer(site.serverId)?.name ?? "removed server"}:/var/www/{site.name}</span></span>
           {site.commit && <span className="flex min-w-0 items-center gap-2"><GitCommitHorizontal size={13} /><span className="font-mono">{site.commit.slice(0, 7)}</span><span className="truncate text-muted">{site.message}</span><span className="ml-auto shrink-0 text-muted">{relTime(site.deployedAt)}</span></span>}
           <div className="mt-1 flex flex-wrap gap-2">

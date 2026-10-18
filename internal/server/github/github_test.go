@@ -57,6 +57,20 @@ func fakeGitHub(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 				return
 			}
 			w.WriteHeader(204)
+		case r.URL.Path == "/app" && checkJWT(r):
+			w.Write([]byte(`{"client_id":"Iv1.abc"}`))
+		case r.Method == "POST" && r.URL.Path == "/login/oauth/access_token":
+			var in map[string]string
+			json.NewDecoder(r.Body).Decode(&in)
+			if in["client_id"] != "Iv1.abc" || in["client_secret"] != "cs" || in["code"] != "user-code" {
+				w.Write([]byte(`{"error_description":"bad code"}`))
+				return
+			}
+			w.Write([]byte(`{"access_token":"ghu_member"}`))
+		case r.URL.Path == "/user" && r.Header.Get("Authorization") == "Bearer ghu_member":
+			w.Write([]byte(`{"login":"teammate"}`))
+		case r.URL.Path == "/user/installations" && r.Header.Get("Authorization") == "Bearer ghu_member":
+			w.Write([]byte(`{"installations":[{"id":7}]}`))
 		case r.Method == "DELETE" && r.URL.Path == "/app/installations/7" && checkJWT(r):
 			w.WriteHeader(204)
 		default:
@@ -156,5 +170,57 @@ func TestLocalDashboardHasNoWebhook(t *testing.T) {
 	_, manifest, err := s.Manifest("http://127.0.0.1:8090", "acme", "Nour")
 	if err != nil || !strings.Contains(manifest, `"active":false`) {
 		t.Fatal(manifest, err)
+	}
+}
+
+// A team member signs in with their own GitHub account: the link is what GitHub says
+// they can reach, never what the browser claims.
+func TestMemberSignIn(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	gh := fakeGitHub(t, key)
+	defer gh.Close()
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	s := New(d, box, live.NewBus())
+	s.API, s.Web = gh.URL, gh.URL
+	ctx := context.Background()
+	action, _, _ := s.Manifest("https://ops.example.com", "", "Nour")
+	if _, _, err := s.Created(ctx, "good-code", action[strings.Index(action, "state=")+6:]); err != nil {
+		t.Fatal(err)
+	}
+	s.Installed(ctx, 7)
+
+	if repos, _ := s.ReposOf(ctx, "mem_1"); len(repos) != 0 {
+		t.Fatal("an unlinked member sees repositories")
+	}
+	u, err := s.SignInURL(ctx, "https://ops.example.com", "mem_1")
+	if err != nil || !strings.Contains(u, "client_id=Iv1.abc") || !strings.Contains(u, "redirect_uri=https%3A%2F%2Fops.example.com%2Fapi%2Fintegrations%2Fgithub%2Foauth") {
+		t.Fatal(u, err)
+	}
+	state := u[strings.Index(u, "state=")+6:]
+	if _, _, err := s.FinishSignIn(ctx, "user-code", "forged"); err == nil {
+		t.Fatal("forged state accepted")
+	}
+	who, l, err := s.FinishSignIn(ctx, "user-code", state)
+	if err != nil || who != "mem_1" || l.Login != "teammate" || len(l.Installations) != 1 {
+		t.Fatal(who, l, err)
+	}
+	if _, _, err := s.FinishSignIn(ctx, "user-code", state); err == nil {
+		t.Fatal("state used twice")
+	}
+	if !s.CanDeploy(ctx, "mem_1", "nourddinak/shop") || s.CanDeploy(ctx, "mem_2", "nourddinak/shop") {
+		t.Fatal("deploy rights")
+	}
+	if s.Unlink("mem_1"); s.CanDeploy(ctx, "mem_1", "nourddinak/shop") {
+		t.Fatal("still linked")
+	}
+	// Installing on their own account comes back through the setup redirect.
+	iu, _ := s.InstallURL("mem_1")
+	if who := s.AfterInstall(iu[strings.Index(iu, "state=")+6:]); who != "mem_1" {
+		t.Fatalf("after install: %q", who)
 	}
 }

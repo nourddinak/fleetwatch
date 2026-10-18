@@ -30,7 +30,8 @@ var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account
 // Writes operators may also make: operate apps and handle incidents, not configure.
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +
 	`POST /api/incidents/[^/]+/[^/]+|PUT /api/maintenance|POST /api/servers/[^/]+/(disk/scan|disk/clean|security/scan)|` +
-	`POST /api/(domains/check|discoveries/scan)|POST /api/uptime/[^/]+/check|POST /api/servers/[^/]+/(docker/action|updates/scan)|POST /api/vulns/scan|POST /api/sites/[^/]+/redeploy)$`)
+	`POST /api/(domains/check|discoveries/scan)|POST /api/uptime/[^/]+/check|POST /api/servers/[^/]+/(docker/action|updates/scan)|POST /api/vulns/scan|POST /api/sites/[^/]+/redeploy|` +
+	`POST /api/sites(/detect)?|PUT /api/sites/[^/]+(/env)?|DELETE /api/sites/[^/]+|POST /api/me/github/(connect|install)|DELETE /api/me/github)$`)
 
 var (
 	serverPath   = regexp.MustCompile(`^/api/servers/([^/]+)`)

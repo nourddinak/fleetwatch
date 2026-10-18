@@ -77,6 +77,8 @@ type state struct {
 	App           App            `json:"app"`
 	Installations []Installation `json:"installations"`
 	Pushes        []Push         `json:"pushes"` // newest first
+	// Links: dashboard users (owner or member ID) and their own GitHub account.
+	Links map[string]Link `json:"links,omitempty"`
 }
 
 type keys struct {
@@ -98,9 +100,11 @@ type Service struct {
 	// OnPush is told about every push (a site may need deploying).
 	OnPush func(repo, branch, sha string)
 
-	mu      sync.Mutex
-	pending map[string]pendingState // manifest flow state → who started it
-	tokens  map[int64]token         // installation ID → token
+	mu       sync.Mutex
+	pending  map[string]pendingState // manifest flow state → who started it
+	linking  map[string]pendingState // sign-in state → which dashboard user
+	tokens   map[int64]token         // installation ID → token
+	clientID string                  // the app's OAuth client ID (from GitHub, cached)
 }
 
 type pendingState struct {
@@ -115,7 +119,7 @@ type token struct {
 
 func New(d *sql.DB, box *secret.Box, bus *live.Bus) *Service {
 	return &Service{db: d, box: box, Bus: bus, Now: time.Now, API: "https://api.github.com", Web: "https://github.com",
-		Client: &http.Client{Timeout: 30 * time.Second}, pending: map[string]pendingState{}, tokens: map[int64]token{}}
+		Client: &http.Client{Timeout: 30 * time.Second}, pending: map[string]pendingState{}, linking: map[string]pendingState{}, tokens: map[int64]token{}}
 }
 
 // ---------- storage ----------
@@ -223,8 +227,10 @@ func (s *Service) Manifest(publicURL, org, by string) (action, manifest string, 
 		"redirect_url":    publicURL + "/api/integrations/github/created",
 		"setup_url":       publicURL + "/api/integrations/github/installed",
 		"setup_on_update": true,
-		"public":          false,
-		"description":     "Fleetwatch dashboard at " + publicURL,
+		// Public: team members install it on their own GitHub accounts.
+		"public":        true,
+		"callback_urls": []string{publicURL + CallbackPath},
+		"description":   "Fleetwatch dashboard at " + publicURL,
 		// contents/workflows/secrets: deploys add a build workflow and its .env secret;
 		// actions: they follow the builds.
 		"default_permissions": map[string]string{

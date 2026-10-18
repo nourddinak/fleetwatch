@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Info, Lock, RefreshCw, TriangleAlert } from "lucide-react";
+import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Info, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton } from "../components/ui";
 
 interface App {
   id: number;
@@ -46,7 +46,7 @@ interface RepoItem {
 /** Settings → Integrations: connect services. GitHub first. */
 export function IntegrationsSettings() {
   const { subscribeLive, toast } = useStore();
-  const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean }>("/api/integrations");
+  const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean; links: Record<string, { login: string; installations: number[]; linkedAt: number }> }>("/api/integrations");
   const { setData } = data;
   const [params, setParams] = useSearchParams();
   useEffect(() => {
@@ -65,10 +65,47 @@ export function IntegrationsSettings() {
   return (
     <div className="space-y-6">
       <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+      {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
       <Card>
         <SectionTitle icon={<Info size={15} />} title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
       </Card>
     </div>
+  );
+}
+
+/** Team members link their own GitHub accounts: who did, and the app settings that allows. */
+function TeamGitHub({ app, installations, publicUrl, links }: { app: App; installations: Installation[]; publicUrl: string; links: Record<string, { login: string; installations: number[]; linkedAt: number }> }) {
+  const members = useApi<{ id: string; username: string; displayName: string }[]>("/api/members");
+  const org = installations.find((i) => i.account === app.owner && i.accountType === "Organization");
+  const settings = org ? `https://github.com/organizations/${app.owner}/settings/apps/${app.slug}` : `https://github.com/settings/apps/${app.slug}`;
+  const callback = `${publicUrl}/api/integrations/github/oauth`;
+  const who = (key: string) => (key === "owner" ? "You" : members.data?.find((m) => m.id === key)?.displayName || members.data?.find((m) => m.id === key)?.username || "A removed member");
+  const list = Object.entries(links);
+  return (
+    <Card>
+      <SectionTitle icon={<Users size={15} />} title="Team members' GitHub" sub="Each person links their own GitHub account on the Sites page and deploys from their repositories. They manage the sites they add; you can manage all of them." />
+      <div className="mb-4 space-y-2 rounded-2xl bg-surface2/60 p-4 text-sm">
+        <div className="font-medium">Once, if this app was connected before team GitHub existed:</div>
+        <ol className="list-decimal space-y-1.5 pl-5 text-muted">
+          <li>In <a className="underline" href={`${settings}/advanced`} target="_blank" rel="noreferrer">the app's advanced settings</a>, press <b>Make public</b>, so others can install it on their own accounts. Only people who sign in through this dashboard can use it.</li>
+          <li>
+            In <a className="underline" href={settings} target="_blank" rel="noreferrer">the app's general settings</a>, add this <b>Callback URL</b> and save:
+            <span className="mt-1 flex items-center gap-2"><code className="min-w-0 truncate rounded-lg bg-surface px-2 py-1 font-mono text-xs text-fg">{callback}</code><CopyButton text={callback} /></span>
+          </li>
+        </ol>
+      </div>
+      {list.length === 0 ? <p className="text-sm text-muted">Nobody has linked a GitHub account yet.</p> : (
+        <ul className="divide-y divide-line">
+          {list.map(([key, l]) => (
+            <li key={key} className="flex flex-wrap items-center gap-3 py-2.5 text-sm">
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-surface2"><Github size={14} /></span>
+              <span className="min-w-0 flex-1"><span className="font-medium">{l.login}</span> <span className="text-muted">· {who(key)}</span></span>
+              <span className="text-xs text-muted">{l.installations.length} installation{l.installations.length === 1 ? "" : "s"} · linked {relTime(l.linkedAt)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

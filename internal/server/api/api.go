@@ -154,6 +154,7 @@ func New(d Deps) http.Handler {
 	}
 	if d.GitHub != nil {
 		s.integrationRoutes(mux)
+		s.myGitHubRoutes(mux)
 	}
 	if d.Sites != nil {
 		s.siteRoutes(mux)
