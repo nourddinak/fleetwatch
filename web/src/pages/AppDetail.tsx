@@ -1,6 +1,6 @@
 import { Link, Outlet, useParams } from "react-router-dom";
 import { MaintenanceControl } from "../components/Maintenance";
-import { Activity, AlertOctagon, Cog, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, KeyRound, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
+import { Activity, AlertOctagon, Cog, FileCode2, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, KeyRound, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
 import { AppIcon } from "../components/AppsTable";
 import { useStore } from "../store/store";
 import { AppStatus, Badge, Button, EmptyState, Gate, HealthBadge, LinkTabs, LoadingState, PageHeader } from "../components/ui";
@@ -56,7 +56,7 @@ export function AppDetail() {
           { to: `${base}/health`, label: "Health", icon: <HeartPulse size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
           { to: `${base}/git`, label: "Git", icon: <GitBranch size={14} /> },
-          ...(!me || me.role === "owner" ? [{ to: `${base}/env`, label: ".env", icon: <KeyRound size={14} /> }] : []),
+          ...(!me || me.role === "owner" ? [{ to: `${base}/env`, label: ".env", icon: <KeyRound size={14} /> }, { to: `${base}/caddy`, label: "Caddyfile", icon: <FileCode2 size={14} /> }] : []),
           { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}
       />

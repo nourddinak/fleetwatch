@@ -78,6 +78,8 @@ type Deps struct {
 	Sites      *sites.Service
 	EnvFiles   *envfile.Service
 	EnvHistory *envfile.History
+	// ServerFileHistory keeps servers' Caddyfile versions.
+	ServerFileHistory *envfile.History
 }
 
 type server struct{ Deps }

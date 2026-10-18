@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Rocket, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
+import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FileCode2, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Rocket, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
 import { api, toSeries, useApi, type ApiError, type EnrollInfo, type MetricKey, type MetricPoint, type ServerEvent } from "../api/client";
 import type { Range, Server } from "../mock/types";
@@ -13,6 +13,7 @@ import { InstallCommand } from "../components/InstallCommand";
 import { cn } from "../utils/cn";
 import { MaintenanceControl } from "../components/Maintenance";
 import { DiskRescue, fullIn, type Forecasts } from "../components/DiskRescue";
+import { CADDY_EXAMPLE, FileEditor } from "../components/FileEditor";
 
 function useServer() {
   const { id } = useParams();
@@ -24,7 +25,7 @@ const seen = (s: Server) => (s.lastSeen ? relTime(s.lastSeen) : "never");
 
 export function ServerDetail() {
   const s = useServer();
-  const { apps, incidents, openAddApp, serversLoaded, subscribeLive } = useStore();
+  const { apps, incidents, openAddApp, serversLoaded, subscribeLive, me } = useStore();
   const sites = useApi<{ serverId: string }[]>("/api/sites");
   const { reload: reloadSites } = sites;
   useEffect(() => subscribeLive((m) => (m.type === "site" || m.type === "site.removed") && reloadSites()), [subscribeLive, reloadSites]);
@@ -78,6 +79,7 @@ export function ServerDetail() {
           { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
           { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
+          ...(!me || me.role === "owner" ? [{ to: `${base}/caddy`, label: "Caddy", icon: <FileCode2 size={14} /> }] : []),
           { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} />, badge: siteCount !== undefined ? <Badge>{siteCount}</Badge> : undefined },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
@@ -455,5 +457,18 @@ export function ServerSettings() {
       </Card>
       <ConfirmDialog open={del} danger title={`Delete ${s.name}?`} confirmLabel="Delete server" message="This cannot be undone. All metrics history and events for this server are deleted." onCancel={() => setDel(false)} onConfirm={remove} />
     </div>
+  );
+}
+
+/** The server's main Caddyfile: checked by Caddy before it is kept, then reloaded. */
+export function ServerCaddy() {
+  const s = useServer()!;
+  const { me } = useStore();
+  if (me && me.role !== "owner") return <EmptyState icon={<FileCode2 size={20} />} title="Only the owner can open the Caddyfile" />;
+  return (
+    <FileEditor base={`/api/servers/${s.id}/caddyfile`} dir="/etc/caddy" fixed="Caddyfile" icon={<FileCode2 size={18} />} title="Caddy configuration"
+      lockedTitle="The main Caddyfile of this server" lockedText="It decides how every site on the server is served. Enter your password to open it." placeholder={CADDY_EXAMPLE}
+      saveHint="On save, Caddy checks it first: if it is rejected, the old file stays and you see why. Then Caddy reloads. The previous version is kept as {name}.bak."
+      savedToast="Caddyfile saved and Caddy reloaded" />
   );
 }

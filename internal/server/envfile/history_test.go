@@ -44,3 +44,24 @@ func TestHistory(t *testing.T) {
 		t.Fatal("other file touched")
 	}
 }
+
+func TestServerHistory(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	d.Exec(`INSERT INTO servers (id, name, created_at) VALUES ('s1', 'web', 0)`)
+	box, _ := secret.New(make([]byte, 32))
+	h := NewServerHistory(d, box)
+	if err := h.Add("s1", "Caddyfile", "Nour", "a.com {\n}"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := h.List("s1", "Caddyfile"); len(v) != 1 || v[0].Content != "a.com {\n}" {
+		t.Fatalf("%+v", v)
+	}
+	// The app history and the server history do not mix.
+	if v, _ := NewHistory(d, box).List("s1", "Caddyfile"); len(v) != 0 {
+		t.Fatal("mixed")
+	}
+}

@@ -125,6 +125,15 @@ func (s *server) activityOf(r audit.Row) Activity {
 		a.Text = "connected GitHub (" + r.Detail + ")"
 	case r.Action == "integration.github.disconnect":
 		a.Text = "disconnected GitHub"
+	case verb == "file":
+		// Detail is "<app or server name>: <file>[, what was deleted]".
+		_, f, _ := strings.Cut(r.Detail, ": ")
+		f, what, _ := strings.Cut(f, ", ")
+		where := srv(r.Target)
+		if strings.HasPrefix(r.Target, "app_") {
+			where = app(r.Target)
+		}
+		a.Text = map[string]string{"read": "opened " + f + " of ", "write": "changed " + f + " of ", "history.delete": "deleted " + what + " of " + f + " of "}[rest] + where
 	case verb == "site":
 		a.Text = map[string]string{"create": "added the site", "delete": "removed the site", "redeploy": "redeployed the site",
 			"env": "changed the .env of the site", "update": "changed the site"}[rest] + " " + r.Detail + " on " + srv(r.Target)

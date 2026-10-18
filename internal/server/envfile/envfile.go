@@ -14,8 +14,12 @@ import (
 	"fleetwatch/internal/server/valid"
 )
 
-// MinAgent is the first agent that answers TypeEnvFile.
-const MinAgent = "v0.9.64"
+// MinAgent is the first agent that answers TypeEnvFile; CaddyAgent the first that
+// opens Caddyfiles.
+const (
+	MinAgent   = "v0.9.64"
+	CaddyAgent = "v0.9.68"
+)
 
 type Service struct {
 	Send         func(serverID, typ string, v any) error
@@ -29,8 +33,13 @@ func New() *Service { return &Service{waiting: map[string]chan proto.EnvFileResu
 
 // Do sends the request to the server's agent and waits up to 15 seconds.
 func (s *Service) Do(ctx context.Context, serverID string, req proto.EnvFile) (proto.EnvFileResult, error) {
-	if s.AgentVersion != nil && release.Newer(MinAgent, s.AgentVersion(serverID)) {
-		return proto.EnvFileResult{}, valid.Error("this server's agent is too old to open .env files; update the agent first")
+	if min := MinAgent; s.AgentVersion != nil {
+		if req.Caddy || req.Name == "Caddyfile" {
+			min = CaddyAgent
+		}
+		if release.Newer(min, s.AgentVersion(serverID)) {
+			return proto.EnvFileResult{}, valid.Error("this server's agent is too old for this; update the agent first")
+		}
 	}
 	b := make([]byte, 8)
 	rand.Read(b)

@@ -328,6 +328,17 @@ func Remove(req proto.SiteRemove) proto.SiteResult {
 	return res
 }
 
+// CheckAndReload has Caddy check its configuration, then reloads it.
+func CheckAndReload() error {
+	if out, err := validate(); err != nil {
+		return fmt.Errorf("Caddy rejected the configuration: %s", lastLine(out, err))
+	}
+	if out, err := reload(); err != nil {
+		return fmt.Errorf("could not reload Caddy: %s", lastLine(out, err))
+	}
+	return nil
+}
+
 func lastLine(out []byte, err error) string {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if l := strings.TrimSpace(lines[len(lines)-1]); l != "" {

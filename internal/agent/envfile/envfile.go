@@ -1,5 +1,5 @@
-// Package envfile reads and writes an app's .env files, only inside the app's own
-// folder and only files named .env or .env.<something>.
+// Package envfile reads and writes an app's .env files and Caddyfile, only inside the
+// app's own folder, and the server's main Caddyfile.
 package envfile
 
 import (
@@ -10,13 +10,19 @@ import (
 	"regexp"
 	"sort"
 
+	"fleetwatch/internal/agent/sites"
 	"fleetwatch/internal/agent/sysexec"
 	"fleetwatch/internal/proto"
 )
 
 const maxSize = 256 << 10
 
-var nameRe = regexp.MustCompile(`^\.env(\.[A-Za-z0-9_-]{1,40})?$`)
+var (
+	nameRe = regexp.MustCompile(`^(\.env(\.[A-Za-z0-9_-]{1,40})?|Caddyfile)$`)
+	envRe  = regexp.MustCompile(`^\.env(\.[A-Za-z0-9_-]{1,40})?$`)
+	// Checked and reloaded after the server's Caddyfile is saved; tests replace it.
+	checkCaddy = sites.CheckAndReload
+)
 
 // Handle answers one request: the list of .env files in the folder, plus the content
 // of the one asked for (after writing it, for a write).
@@ -29,6 +35,13 @@ func Handle(req proto.EnvFile) proto.EnvFileResult {
 }
 
 func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
+	if req.Caddy { // the agent decides where that one is, whatever the request says
+		req.Dir, req.Name = filepath.Dir(sites.Caddyfile), filepath.Base(sites.Caddyfile)
+		res.Name = req.Name
+		if _, err := os.Stat(sites.Caddyfile); err != nil {
+			return errors.New("Caddy is not set up on this server (" + sites.Caddyfile + " is missing)")
+		}
+	}
 	if !filepath.IsAbs(req.Dir) {
 		return errors.New("the app has no folder on the server")
 	}
@@ -37,7 +50,7 @@ func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
 		return errors.New("the app's folder does not exist on the server")
 	}
 	if req.Name != "" && !nameRe.MatchString(req.Name) {
-		return errors.New("only files named .env or .env.something can be opened")
+		return errors.New("only .env files and the Caddyfile can be opened")
 	}
 	root, err := os.OpenRoot(dir) // nothing outside the folder can be reached
 	if err != nil {
@@ -49,8 +62,19 @@ func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
 		if len(req.Content) > maxSize {
 			return errors.New("the file is larger than 256 KB")
 		}
+		var old []byte
+		if req.Caddy {
+			old, _ = root.ReadFile(req.Name)
+		}
 		if err := write(root, dir, req.Name, req.Content); err != nil {
 			return err
+		}
+		if req.Caddy {
+			if err := checkCaddy(); err != nil {
+				root.WriteFile(req.Name, old, 0o644) // Caddy keeps running on the old one
+				checkCaddy()
+				return err
+			}
 		}
 	}
 	res.Files = list(dir)
@@ -124,7 +148,7 @@ func list(dir string) []string {
 	out := []string{}
 	for _, m := range matches {
 		n := filepath.Base(m)
-		if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() && nameRe.MatchString(n) && filepath.Ext(n) != ".bak" {
+		if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() && envRe.MatchString(n) && filepath.Ext(n) != ".bak" {
 			out = append(out, n)
 		}
 	}

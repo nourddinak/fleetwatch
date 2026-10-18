@@ -536,8 +536,9 @@ const (
 
 type EnvFile struct {
 	RunID   string `json:"runId"`
-	Dir     string `json:"dir"`  // the app's working directory
-	Name    string `json:"name"` // .env or .env.<something>; "" = only list the files
+	Dir     string `json:"dir"`             // the app's working directory
+	Name    string `json:"name"`            // .env, .env.<something> or Caddyfile; "" = only list the files
+	Caddy   bool   `json:"caddy,omitempty"` // the server's main Caddyfile instead (agent 0.9.68+): checked and reloaded on save
 	Write   bool   `json:"write,omitempty"`
 	Content string `json:"content,omitempty"`
 }

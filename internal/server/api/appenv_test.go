@@ -19,6 +19,14 @@ func TestAppEnvNeedsOwnerAndPassword(t *testing.T) {
 			t.Fatalf("a member reached the history (%s): %d", m, st)
 		}
 	}
+	for _, path := range []string{"/api/servers/srv_x/caddyfile", "/api/servers/srv_x/caddyfile/history"} {
+		if st, _ := ops.do("POST", path, map[string]string{"password": "member-password-1"}); st != 403 {
+			t.Fatalf("a member reached %s: %d", path, st)
+		}
+	}
+	if st, _ := owner.do("POST", "/api/servers/srv_x/caddyfile", map[string]string{"password": "admin-password-1"}); st != 404 {
+		t.Fatalf("unknown server: %d", st)
+	}
 	if st, out := owner.do("DELETE", "/api/apps/app_x/env/history", map[string]string{}); st != 403 || out["code"] != "password_required" {
 		t.Fatalf("history delete without password: %d %v", st, out)
 	}
