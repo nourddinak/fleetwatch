@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Rocket, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
@@ -24,7 +24,11 @@ const seen = (s: Server) => (s.lastSeen ? relTime(s.lastSeen) : "never");
 
 export function ServerDetail() {
   const s = useServer();
-  const { apps, incidents, openAddApp, serversLoaded } = useStore();
+  const { apps, incidents, openAddApp, serversLoaded, subscribeLive } = useStore();
+  const sites = useApi<{ serverId: string }[]>("/api/sites");
+  const { reload: reloadSites } = sites;
+  useEffect(() => subscribeLive((m) => (m.type === "site" || m.type === "site.removed") && reloadSites()), [subscribeLive, reloadSites]);
+  const siteCount = sites.data?.filter((x) => x.serverId === s?.id).length;
   if (!s)
     return serversLoaded ? (
       <EmptyState title="Server not found" desc="This server may have been removed." action={<Link to="/servers"><Button>Back to servers</Button></Link>} />
@@ -74,7 +78,7 @@ export function ServerDetail() {
           { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
           { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
-          { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} /> },
+          { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} />, badge: siteCount !== undefined ? <Badge>{siteCount}</Badge> : undefined },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
           { to: `${base}/agent`, label: "Agent", icon: <Bot size={14} /> },
