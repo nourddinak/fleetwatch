@@ -56,8 +56,8 @@ const AppDetail = page(() => import("./pages/AppDetail"), "AppDetail");
 const AppCommands = page(() => import("./pages/AppTabs"), "AppCommands");
 const AppGit = page(() => import("./pages/AppTabs"), "AppGit");
 const AppEnv = page(() => import("./pages/AppTabs"), "AppEnv");
-const AppCaddy = page(() => import("./pages/AppTabs"), "AppCaddy");
-const ServerCaddy = page(() => import("./pages/ServerDetail"), "ServerCaddy");
+const AppWeb = page(() => import("./pages/AppTabs"), "AppWeb");
+const ServerWeb = page(() => import("./pages/ServerDetail"), "ServerWeb");
 const AppHealth = page(() => import("./pages/AppTabs"), "AppHealth");
 const AppIncidents = page(() => import("./pages/AppTabs"), "AppIncidents");
 const AppLogs = page(() => import("./pages/AppTabs"), "AppLogs");
@@ -120,7 +120,7 @@ export default function App() {
               <Route path="incidents" element={<ServerIncidents />} />
               <Route path="agent" element={<ServerAgent />} />
               <Route path="sites" element={<ServerSites />} />
-              <Route path="caddy" element={<ServerCaddy />} />
+              <Route path="web" element={<ServerWeb />} />
               <Route path="settings" element={<ServerSettings />} />
             </Route>
             <Route path="applications" element={<Applications />} />
@@ -134,7 +134,7 @@ export default function App() {
               <Route path="storage" element={<AppStorage />} />
               <Route path="git" element={<AppGit />} />
               <Route path="env" element={<AppEnv />} />
-              <Route path="caddy" element={<AppCaddy />} />
+              <Route path="web" element={<AppWeb />} />
               <Route path="settings" element={<AppSettings />} />
             </Route>
             <Route path="logs" element={<GlobalLogs />} />

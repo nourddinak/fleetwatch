@@ -19,6 +19,7 @@ import (
 const (
 	MinAgent   = "v0.9.64"
 	CaddyAgent = "v0.9.68"
+	WebAgent   = "v0.9.70" // Caddy and Nginx configuration by name
 )
 
 type Service struct {
@@ -36,6 +37,9 @@ func (s *Service) Do(ctx context.Context, serverID string, req proto.EnvFile) (p
 	if min := MinAgent; s.AgentVersion != nil {
 		if req.Caddy || req.Name == "Caddyfile" {
 			min = CaddyAgent
+		}
+		if req.Web != "" || req.Name == "nginx.conf" {
+			min = WebAgent
 		}
 		if release.Newer(min, s.AgentVersion(serverID)) {
 			return proto.EnvFileResult{}, valid.Error("this server's agent is too old for this; update the agent first")

@@ -12,11 +12,12 @@ import (
 
 type envIn struct {
 	Password, Name, Content string
+	Web                     string // caddy | nginx, for a server's web server files
 	ID                      int64
 }
 
-// fileTarget is whose file it is: an app (.env files, its Caddyfile) or a server (its
-// main Caddyfile).
+// fileTarget is whose file it is: an app (.env files, its Caddyfile or nginx.conf) or a
+// server (its Caddy or Nginx configuration).
 type fileTarget struct {
 	id, label, serverID string
 	req                 proto.EnvFile
@@ -41,8 +42,17 @@ func (s *server) appEnvRoutes(mux *http.ServeMux) {
 		if err != nil {
 			return fileTarget{}, err
 		}
-		in.Name = "Caddyfile"
-		return fileTarget{id: rec.ID, label: rec.Name, serverID: rec.ID, req: proto.EnvFile{Caddy: true, Name: in.Name}, hist: s.ServerFileHistory}, nil
+		switch in.Web {
+		case "caddy":
+			in.Name = "Caddyfile"
+		case "nginx":
+			if in.Name == "" {
+				in.Name = "nginx.conf"
+			}
+		default:
+			return fileTarget{}, valid.Error("which web server: caddy or nginx?")
+		}
+		return fileTarget{id: rec.ID, label: rec.Name, serverID: rec.ID, req: proto.EnvFile{Web: in.Web, Name: in.Name}, hist: s.ServerFileHistory}, nil
 	}
 	// unlock checks the password and finds the target; it answers the request itself on failure.
 	unlock := func(w http.ResponseWriter, r *http.Request, in *envIn, find func(*http.Request, *envIn) (fileTarget, error)) (fileTarget, bool) {
@@ -143,8 +153,8 @@ func (s *server) appEnvRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/apps/{id}/env", file(true, app))
 	mux.HandleFunc("POST /api/apps/{id}/env/history", history(app))
 	mux.HandleFunc("DELETE /api/apps/{id}/env/history", forget(app))
-	mux.HandleFunc("POST /api/servers/{id}/caddyfile", file(false, srv))
-	mux.HandleFunc("PUT /api/servers/{id}/caddyfile", file(true, srv))
-	mux.HandleFunc("POST /api/servers/{id}/caddyfile/history", history(srv))
-	mux.HandleFunc("DELETE /api/servers/{id}/caddyfile/history", forget(srv))
+	mux.HandleFunc("POST /api/servers/{id}/web", file(false, srv))
+	mux.HandleFunc("PUT /api/servers/{id}/web", file(true, srv))
+	mux.HandleFunc("POST /api/servers/{id}/web/history", history(srv))
+	mux.HandleFunc("DELETE /api/servers/{id}/web/history", forget(srv))
 }

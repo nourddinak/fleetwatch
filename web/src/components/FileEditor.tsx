@@ -7,6 +7,7 @@ import { Badge, Button, Card, ConfirmDialog, Input, SectionTitle, Spinner, Texta
 import { cn } from "../utils/cn";
 
 export const CADDY_EXAMPLE = "example.com {\n\treverse_proxy localhost:3000\n}";
+export const NGINX_EXAMPLE = "server {\n\tlisten 80;\n\tserver_name example.com;\n\tlocation / {\n\t\tproxy_pass http://localhost:3000;\n\t}\n}";
 
 interface FileRes {
   name: string;
@@ -38,7 +39,7 @@ export function lineDiff(a: string, b: string): { t: "same" | "add" | "del"; lin
   return out;
 }
 
-function FileHistory({ base, name, pw, reloadKey, onRestore, onLocked }: { base: string; name: string; pw: string; reloadKey: number; onRestore: (text: string) => void; onLocked: () => void }) {
+function FileHistory({ base, name, pw, extra, reloadKey, onRestore, onLocked }: { base: string; name: string; pw: string; extra?: Record<string, string>; reloadKey: number; onRestore: (text: string) => void; onLocked: () => void }) {
   const { toast } = useStore();
   const [list, setList] = useState<Version[] | null>(null);
   const [open, setOpen] = useState<number | null>(null);
@@ -51,7 +52,7 @@ function FileHistory({ base, name, pw, reloadKey, onRestore, onLocked }: { base:
   useEffect(() => {
     let live = true;
     setList(null);
-    api<Version[]>("POST", `${base}/history`, { password: pw, name })
+    api<Version[]>("POST", `${base}/history`, { ...extra, password: pw, name })
       .then((l) => live && setList(l))
       .catch((e) => live && (setList([]), failed(e)));
     return () => { live = false; };
@@ -62,7 +63,7 @@ function FileHistory({ base, name, pw, reloadKey, onRestore, onLocked }: { base:
     setDel(null);
     if (!target) return;
     try {
-      const r = await api<{ deleted: number }>("DELETE", `${base}/history`, { password: pw, name, id: target === "all" ? 0 : target.id });
+      const r = await api<{ deleted: number }>("DELETE", `${base}/history`, { ...extra, password: pw, name, id: target === "all" ? 0 : target.id });
       setList((l) => (target === "all" ? [] : (l ?? []).filter((v) => v.id !== target.id)));
       toast(`${r.deleted} version${r.deleted === 1 ? "" : "s"} deleted`);
     } catch (e) {
@@ -114,13 +115,16 @@ function FileHistory({ base, name, pw, reloadKey, onRestore, onLocked }: { base:
 }
 
 /**
- * A secret or config file on a server, unlocked with the password: an app's .env files
- * (pick or create one), or one fixed file (a Caddyfile). With its history.
+ * A secret or config file on a server, unlocked with the password: an app's .env or web
+ * server files, or a server's Caddy or Nginx configuration. With its history.
  */
-export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedText, placeholder, saveHint, savedToast, actions }: {
-  base: string; // API path of the file: /api/apps/<id>/env or /api/servers/<id>/caddyfile
+export function FileEditor({ base, dir, fixed, known, newName: newRule, extra, icon, title, lockedTitle, lockedText, placeholder, saveHint, savedToast, actions }: {
+  base: string; // API path: /api/apps/<id>/env or /api/servers/<id>/web
   dir: string; // where it is, for the subtitle
-  fixed?: string; // the only file (else .env files)
+  fixed?: string; // the only file
+  known?: string[]; // files always offered (the first opens first); the server adds the ones it finds
+  newName?: { pattern: RegExp; placeholder: string; hint: string }; // files that can be created
+  extra?: Record<string, string>; // sent with every request (which web server)
   icon: ReactNode;
   title: string;
   lockedTitle: string;
@@ -137,7 +141,7 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [files, setFiles] = useState<string[] | null>(null);
-  const [name, setName] = useState(fixed ?? ".env");
+  const [name, setName] = useState(fixed ?? known?.[0] ?? ".env");
   const [orig, setOrig] = useState<string | null>(null); // null: the file is not there yet
   const [text, setText] = useState("");
   const [newName, setNewName] = useState("");
@@ -148,7 +152,7 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
     setBusy(true);
     setErr("");
     try {
-      const r = await api<FileRes>("POST", base, { password, name: n });
+      const r = await api<FileRes>("POST", base, { ...extra, password, name: n });
       setPw(password);
       setFiles(r.files ?? []);
       setName(fixed ?? n);
@@ -165,7 +169,7 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
   const save = async () => {
     setBusy(true);
     try {
-      const r = await api<FileRes>("PUT", base, { password: pw, name, content: text });
+      const r = await api<FileRes>("PUT", base, { ...extra, password: pw, name, content: text });
       setFiles(r.files ?? []);
       setOrig(r.content);
       setSaves((n) => n + 1);
@@ -198,7 +202,7 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
       </Card>
     );
   }
-  const shown = fixed ? [] : [...new Set([".env", ...files])];
+  const shown = fixed ? [] : [...new Set([...(known ?? []), ...files])];
   return (
     <Card>
       <SectionTitle icon={icon} title={title} sub={<span className="font-mono">{dir.replace(/\/$/, "")}/{name}</span>}
@@ -211,10 +215,12 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
               <FileText size={12} />{f}
             </button>
           ))}
-          <form onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (/^\.env(\.[A-Za-z0-9_-]{1,40})?$/.test(n)) { setNewName(""); open(n); } else toast("Names look like .env or .env.production", "err"); }} className="flex items-center gap-1">
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder=".env.production" className="!w-40 !py-1.5 font-mono text-xs" />
-            <Button size="sm" variant="ghost" type="submit"><Plus size={13} /> Open</Button>
-          </form>
+          {newRule && (
+            <form onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (newRule.pattern.test(n)) { setNewName(""); open(n); } else toast(newRule.hint, "err"); }} className="flex items-center gap-1">
+              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={newRule.placeholder} className="!w-48 !py-1.5 font-mono text-xs" />
+              <Button size="sm" variant="ghost" type="submit"><Plus size={13} /> Open</Button>
+            </form>
+          )}
         </div>
       )}
       {orig === null && <p className="mb-2 flex items-center gap-2 text-xs text-muted"><Info size={13} />{name} does not exist yet: saving creates it (readable by the folder's owner only).</p>}
@@ -226,7 +232,7 @@ export function FileEditor({ base, dir, fixed, icon, title, lockedTitle, lockedT
           <Button size="sm" disabled={!dirty || busy} onClick={save}>{busy ? <Spinner size={13} /> : <Save size={13} />} Save {name}</Button>
         </div>
       </div>
-      <FileHistory base={base} name={name} pw={pw} reloadKey={saves} onRestore={setText} onLocked={lock} />
+      <FileHistory base={base} name={name} pw={pw} extra={extra} reloadKey={saves} onRestore={setText} onLocked={lock} />
     </Card>
   );
 }

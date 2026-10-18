@@ -85,3 +85,52 @@ func TestServerCaddyfile(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestNginxFiles(t *testing.T) {
+	dir := t.TempDir()
+	old := NginxDir
+	NginxDir = dir
+	defer func() { NginxDir = old }()
+	if r := Handle(proto.EnvFile{RunID: "0", Web: "nginx"}); r.Error == "" {
+		t.Fatal("missing nginx.conf not reported")
+	}
+	os.MkdirAll(filepath.Join(dir, "sites-available"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "conf.d"), 0o755)
+	os.WriteFile(filepath.Join(dir, "nginx.conf"), []byte("events {}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sites-available", "shop"), []byte("server { listen 80; }\n"), 0o644)
+	accept := true
+	orig := checkNginx
+	checkNginx = func() error {
+		if !accept {
+			return errors.New("Nginx rejected the configuration: bad")
+		}
+		return nil
+	}
+	defer func() { checkNginx = orig }()
+
+	r := Handle(proto.EnvFile{RunID: "1", Web: "nginx"})
+	if r.Error != "" || r.Name != "nginx.conf" || !slices.Equal(r.Files, []string{"nginx.conf", "sites-available/shop"}) {
+		t.Fatalf("%+v", r)
+	}
+	if r := Handle(proto.EnvFile{RunID: "2", Web: "nginx", Name: "sites-available/shop", Write: true, Content: "server { listen 81; }\n"}); r.Error != "" {
+		t.Fatalf("%+v", r)
+	}
+	accept = false
+	if r := Handle(proto.EnvFile{RunID: "3", Web: "nginx", Name: "sites-available/shop", Write: true, Content: "broken"}); r.Error == "" {
+		t.Fatal("rejected change kept")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "sites-available", "shop")); string(b) != "server { listen 81; }\n" {
+		t.Fatalf("not put back: %q", b)
+	}
+	if r := Handle(proto.EnvFile{RunID: "4", Web: "nginx", Name: "conf.d/new.conf", Write: true, Content: "broken"}); r.Error == "" {
+		t.Fatal("rejected new file kept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "conf.d", "new.conf")); err == nil {
+		t.Fatal("rejected new file left behind")
+	}
+	for _, n := range []string{"../passwd", "sites-enabled/shop", "conf.d/x", "sites-available/../nginx.conf", "/etc/passwd"} {
+		if r := Handle(proto.EnvFile{RunID: "5", Web: "nginx", Name: n}); r.Error == "" {
+			t.Errorf("%s was opened", n)
+		}
+	}
+}

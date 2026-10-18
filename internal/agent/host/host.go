@@ -30,6 +30,12 @@ func Hello(version string) proto.Hello {
 	if docker() {
 		h.Capabilities = append(append([]string{}, h.Capabilities...), "Docker")
 	}
+	// Web servers whose configuration the dashboard can edit.
+	for _, w := range [][2]string{{"Caddy", "/etc/caddy/Caddyfile"}, {"Nginx", "/etc/nginx/nginx.conf"}} {
+		if _, err := os.Stat(w[1]); err == nil {
+			h.Capabilities = append(append([]string{}, h.Capabilities...), w[0])
+		}
+	}
 	if info, err := gohost.Info(); err == nil {
 		h.Hostname, h.Kernel, h.Arch, h.BootTime = info.Hostname, info.KernelVersion, info.KernelArch, int64(info.BootTime)
 		h.OS = strings.TrimSpace(info.Platform + " " + info.PlatformVersion)

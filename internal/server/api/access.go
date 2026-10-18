@@ -40,7 +40,7 @@ var (
 	commandPath  = regexp.MustCompile(`^/api/commands/([^/]+)`)
 	runPath      = regexp.MustCompile(`^/api/runs/([^/]+)`)
 	sitePath     = regexp.MustCompile(`^/api/sites/([^/]+)`)
-	appEnvPath   = regexp.MustCompile(`^/api/(apps/[^/]+/env|servers/[^/]+/caddyfile)(/history)?$`)
+	appEnvPath   = regexp.MustCompile(`^/api/(apps/[^/]+/env|servers/[^/]+/web)(/history)?$`)
 )
 
 // scope answers "may this session see that server or app?" with a small cache of

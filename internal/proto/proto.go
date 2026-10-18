@@ -539,6 +539,7 @@ type EnvFile struct {
 	Dir     string `json:"dir"`             // the app's working directory
 	Name    string `json:"name"`            // .env, .env.<something> or Caddyfile; "" = only list the files
 	Caddy   bool   `json:"caddy,omitempty"` // the server's main Caddyfile instead (agent 0.9.68+): checked and reloaded on save
+	Web     string `json:"web,omitempty"`   // or a web server's own files (agent 0.9.70+): "caddy" | "nginx"
 	Write   bool   `json:"write,omitempty"`
 	Content string `json:"content,omitempty"`
 }

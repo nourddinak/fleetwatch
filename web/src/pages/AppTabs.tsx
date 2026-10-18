@@ -526,23 +526,24 @@ export function AppEnv() {
   if (me && me.role !== "owner") return <EmptyState icon={<Lock size={20} />} title="Only the owner can open .env files" desc="They hold the app's secrets." />;
   if (!a.path) return <EmptyState icon={<FolderX size={20} />} title="No folder on the server" desc="This app has no working directory, so it has no .env file." />;
   return (
-    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} icon={<KeyRound size={18} />} title="Environment files"
+    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} known={[".env"]} newName={{ pattern: /^\.env(\.[A-Za-z0-9_-]{1,40})?$/, placeholder: ".env.production", hint: "Names look like .env or .env.production" }}
+      icon={<KeyRound size={18} />} title="Environment files"
       lockedTitle="This app's .env files hold its secrets" lockedText="Enter your password to open them." placeholder="KEY=value"
       saveHint="Saving keeps the previous version as {name}.bak. Restart the app so it reads the change." savedToast="{name} saved. Restart the app so it reads the change."
       actions={a.manager !== "standalone" && <Link to={`/applications/${a.id}/commands?run=builtin:restart`}><Button size="sm" variant="secondary"><RefreshCw size={13} /> Restart app</Button></Link>} />
   );
 }
 
-/** The Caddyfile in the app's folder. */
-export function AppCaddy() {
+/** Web server files kept in the app's folder: its Caddyfile or nginx.conf. */
+export function AppWeb() {
   const a = useApp()!;
   const { me } = useStore();
-  if (me && me.role !== "owner") return <EmptyState icon={<Lock size={20} />} title="Only the owner can open the Caddyfile" />;
-  if (!a.path) return <EmptyState icon={<FolderX size={20} />} title="No folder on the server" desc="This app has no working directory, so it has no Caddyfile." />;
+  if (me && me.role !== "owner") return <EmptyState icon={<Lock size={20} />} title="Only the owner can open these files" />;
+  if (!a.path) return <EmptyState icon={<FolderX size={20} />} title="No folder on the server" desc="This app has no working directory, so it has no web server files." />;
   return (
-    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} fixed="Caddyfile" icon={<FileCode2 size={18} />} title="Caddyfile of this app"
-      lockedTitle="The app's own Caddyfile" lockedText="Enter your password to open the Caddyfile in the app's folder." placeholder={CADDY_EXAMPLE}
-      saveHint="Saving keeps the previous version as {name}.bak. Caddy uses it only if the server's Caddyfile imports it."
+    <FileEditor base={`/api/apps/${a.id}/env`} dir={a.path} known={["Caddyfile", "nginx.conf"]} icon={<FileCode2 size={18} />} title="Web server files of this app"
+      lockedTitle="The app's own Caddyfile and nginx.conf" lockedText="Enter your password to open the web server files in the app's folder." placeholder={CADDY_EXAMPLE}
+      saveHint="Saving keeps the previous version as {name}.bak. The web server uses it only if the server's own configuration includes it."
       savedToast="{name} saved" />
   );
 }

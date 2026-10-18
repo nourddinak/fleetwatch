@@ -5,7 +5,7 @@ import { serverCounts, useStore } from "../store/store";
 import { api, toSeries, useApi, type ApiError, type EnrollInfo, type MetricKey, type MetricPoint, type ServerEvent } from "../api/client";
 import type { Range, Server } from "../mock/types";
 import { fmtDur, fmtMB, relTime, dateTime, clock } from "../mock/util";
-import { Badge, Bar, Button, Card, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, Input, KV, LinkTabs, LoadingState, MetricCard, Modal, PageHeader, SectionTitle, Select, ServerStatus, Spinner, Textarea, TimeRangeSelector, levelTone } from "../components/ui";
+import { Badge, Bar, Button, Card, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, Input, KV, LinkTabs, LoadingState, MetricCard, Modal, PageHeader, SectionTitle, Select, ServerStatus, Spinner, Textarea, TimeRangeSelector, levelTone, Segmented } from "../components/ui";
 import { AppsTable } from "../components/AppsTable";
 import { IncidentCard, IncidentDrawer, PortTable, type PortRow } from "../components/domain";
 import { MetricPanel } from "../components/MetricChart";
@@ -13,7 +13,7 @@ import { InstallCommand } from "../components/InstallCommand";
 import { cn } from "../utils/cn";
 import { MaintenanceControl } from "../components/Maintenance";
 import { DiskRescue, fullIn, type Forecasts } from "../components/DiskRescue";
-import { CADDY_EXAMPLE, FileEditor } from "../components/FileEditor";
+import { CADDY_EXAMPLE, FileEditor, NGINX_EXAMPLE } from "../components/FileEditor";
 
 function useServer() {
   const { id } = useParams();
@@ -79,7 +79,7 @@ export function ServerDetail() {
           { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
           { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
-          ...(!me || me.role === "owner" ? [{ to: `${base}/caddy`, label: "Caddy", icon: <FileCode2 size={14} /> }] : []),
+          ...(!me || me.role === "owner" ? [{ to: `${base}/web`, label: "Web server", icon: <FileCode2 size={14} /> }] : []),
           { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} />, badge: siteCount !== undefined ? <Badge>{siteCount}</Badge> : undefined },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
@@ -460,15 +460,29 @@ export function ServerSettings() {
   );
 }
 
-/** The server's main Caddyfile: checked by Caddy before it is kept, then reloaded. */
-export function ServerCaddy() {
+/** The server's web server configuration, Caddy or Nginx: checked by the web server before it is kept, then reloaded. */
+export function ServerWeb() {
   const s = useServer()!;
   const { me } = useStore();
-  if (me && me.role !== "owner") return <EmptyState icon={<FileCode2 size={20} />} title="Only the owner can open the Caddyfile" />;
+  const found = (["Caddy", "Nginx"] as const).filter((w) => s.capabilities.includes(w));
+  const offer = found.length ? found : (["Caddy", "Nginx"] as const); // older agents do not say
+  const [web, setWeb] = useState<"Caddy" | "Nginx">(offer[0]);
+  if (me && me.role !== "owner") return <EmptyState icon={<FileCode2 size={20} />} title="Only the owner can open the web server configuration" />;
+  const check = "On save, the web server checks it first: if it is rejected, the old file stays and you see why. Then it reloads. The previous version is kept as {name}.bak.";
   return (
-    <FileEditor base={`/api/servers/${s.id}/caddyfile`} dir="/etc/caddy" fixed="Caddyfile" icon={<FileCode2 size={18} />} title="Caddy configuration"
-      lockedTitle="The main Caddyfile of this server" lockedText="It decides how every site on the server is served. Enter your password to open it." placeholder={CADDY_EXAMPLE}
-      saveHint="On save, Caddy checks it first: if it is rejected, the old file stays and you see why. Then Caddy reloads. The previous version is kept as {name}.bak."
-      savedToast="Caddyfile saved and Caddy reloaded" />
+    <div className="space-y-4">
+      {offer.length > 1 && <Segmented value={web} onChange={setWeb} options={offer.map((w) => ({ value: w, label: <span className="inline-flex items-center gap-1.5"><FileCode2 size={13} />{w}</span> }))} />}
+      {web === "Caddy" ? (
+        <FileEditor key="caddy" base={`/api/servers/${s.id}/web`} extra={{ web: "caddy" }} dir="/etc/caddy" fixed="Caddyfile" icon={<FileCode2 size={18} />} title="Caddy configuration"
+          lockedTitle="The main Caddyfile of this server" lockedText="It decides how every Caddy site on the server is served. Enter your password to open it." placeholder={CADDY_EXAMPLE}
+          saveHint={check} savedToast="Caddyfile saved and Caddy reloaded" />
+      ) : (
+        <FileEditor key="nginx" base={`/api/servers/${s.id}/web`} extra={{ web: "nginx" }} dir="/etc/nginx" known={["nginx.conf"]}
+          newName={{ pattern: /^(sites-available\/[A-Za-z0-9][A-Za-z0-9._-]{0,80}|conf\.d\/[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.conf)$/, placeholder: "conf.d/shop.conf", hint: "New files go in conf.d/<name>.conf (loaded automatically) or sites-available/<name>" }}
+          icon={<FileCode2 size={18} />} title="Nginx configuration"
+          lockedTitle="The Nginx configuration of this server" lockedText="nginx.conf, sites-available and conf.d. Enter your password to open them." placeholder={NGINX_EXAMPLE}
+          saveHint={check} savedToast="{name} saved and Nginx reloaded" />
+      )}
+    </div>
   );
 }

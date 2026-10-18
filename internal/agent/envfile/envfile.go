@@ -1,14 +1,17 @@
-// Package envfile reads and writes an app's .env files and Caddyfile, only inside the
-// app's own folder, and the server's main Caddyfile.
+// Package envfile reads and writes an app's .env files and web server files, only inside
+// the app's own folder, and the server's own Caddy and Nginx configuration.
 package envfile
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"fleetwatch/internal/agent/sites"
 	"fleetwatch/internal/agent/sysexec"
@@ -18,11 +21,31 @@ import (
 const maxSize = 256 << 10
 
 var (
-	nameRe = regexp.MustCompile(`^(\.env(\.[A-Za-z0-9_-]{1,40})?|Caddyfile)$`)
-	envRe  = regexp.MustCompile(`^\.env(\.[A-Za-z0-9_-]{1,40})?$`)
+	nameRe  = regexp.MustCompile(`^(\.env(\.[A-Za-z0-9_-]{1,40})?|Caddyfile|nginx\.conf)$`)
+	nginxRe = regexp.MustCompile(`^(nginx\.conf|sites-available/[A-Za-z0-9][A-Za-z0-9._-]{0,80}|conf\.d/[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.conf)$`)
+	// NginxDir is where Nginx keeps its configuration; tests point it elsewhere.
+	NginxDir = "/etc/nginx"
+	envRe    = regexp.MustCompile(`^\.env(\.[A-Za-z0-9_-]{1,40})?$`)
 	// Checked and reloaded after the server's Caddyfile is saved; tests replace it.
 	checkCaddy = sites.CheckAndReload
+	checkNginx = func() error {
+		if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+			return fmt.Errorf("Nginx rejected the configuration: %s", lastLine(out, err))
+		}
+		if out, err := exec.Command("systemctl", "reload", "nginx").CombinedOutput(); err != nil {
+			return fmt.Errorf("could not reload Nginx: %s", lastLine(out, err))
+		}
+		return nil
+	}
 )
+
+func lastLine(out []byte, err error) string {
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if l := strings.TrimSpace(lines[len(lines)-1]); l != "" {
+		return l
+	}
+	return err.Error()
+}
 
 // Handle answers one request: the list of .env files in the folder, plus the content
 // of the one asked for (after writing it, for a write).
@@ -35,13 +58,35 @@ func Handle(req proto.EnvFile) proto.EnvFileResult {
 }
 
 func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
-	if req.Caddy { // the agent decides where that one is, whatever the request says
+	if req.Caddy {
+		req.Web = "caddy"
+	}
+	// A web server's own files: the agent decides where they are, whatever the request says.
+	var check func() error
+	switch req.Web {
+	case "caddy":
 		req.Dir, req.Name = filepath.Dir(sites.Caddyfile), filepath.Base(sites.Caddyfile)
-		res.Name = req.Name
 		if _, err := os.Stat(sites.Caddyfile); err != nil {
 			return errors.New("Caddy is not set up on this server (" + sites.Caddyfile + " is missing)")
 		}
+		check = checkCaddy
+	case "nginx":
+		req.Dir = NginxDir
+		if req.Name == "" {
+			req.Name = "nginx.conf"
+		}
+		if _, err := os.Stat(filepath.Join(NginxDir, "nginx.conf")); err != nil {
+			return errors.New("Nginx is not set up on this server (" + NginxDir + "/nginx.conf is missing)")
+		}
+		if !nginxRe.MatchString(req.Name) {
+			return errors.New("only nginx.conf, sites-available/<name> and conf.d/<name>.conf can be opened")
+		}
+		check = checkNginx
+	case "":
+	default:
+		return errors.New("unknown web server")
 	}
+	res.Name = req.Name
 	if !filepath.IsAbs(req.Dir) {
 		return errors.New("the app has no folder on the server")
 	}
@@ -49,7 +94,7 @@ func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
 	if err != nil {
 		return errors.New("the app's folder does not exist on the server")
 	}
-	if req.Name != "" && !nameRe.MatchString(req.Name) {
+	if req.Web == "" && req.Name != "" && !nameRe.MatchString(req.Name) {
 		return errors.New("only .env files and the Caddyfile can be opened")
 	}
 	root, err := os.OpenRoot(dir) // nothing outside the folder can be reached
@@ -62,22 +107,31 @@ func handle(req proto.EnvFile, res *proto.EnvFileResult) error {
 		if len(req.Content) > maxSize {
 			return errors.New("the file is larger than 256 KB")
 		}
-		var old []byte
-		if req.Caddy {
-			old, _ = root.ReadFile(req.Name)
-		}
+		old, readErr := root.ReadFile(req.Name)
 		if err := write(root, dir, req.Name, req.Content); err != nil {
 			return err
 		}
-		if req.Caddy {
-			if err := checkCaddy(); err != nil {
-				root.WriteFile(req.Name, old, 0o644) // Caddy keeps running on the old one
-				checkCaddy()
+		if check != nil {
+			if err := check(); err != nil {
+				// The web server keeps running on what it had.
+				if readErr == nil {
+					root.WriteFile(req.Name, old, 0o644)
+				} else {
+					root.Remove(req.Name)
+				}
+				check()
 				return err
 			}
 		}
 	}
-	res.Files = list(dir)
+	switch req.Web {
+	case "nginx":
+		res.Files = listNginx()
+	case "caddy":
+		res.Files = []string{}
+	default:
+		res.Files = list(dir)
+	}
 	if req.Name == "" {
 		return nil
 	}
@@ -153,5 +207,21 @@ func list(dir string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// listNginx names Nginx's configuration files: nginx.conf, sites-available and conf.d.
+func listNginx() []string {
+	out := []string{"nginx.conf"}
+	for _, pat := range []string{"sites-available/*", "conf.d/*.conf"} {
+		matches, _ := filepath.Glob(filepath.Join(NginxDir, pat))
+		for _, m := range matches {
+			rel, _ := filepath.Rel(NginxDir, m)
+			rel = filepath.ToSlash(rel)
+			if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() && nginxRe.MatchString(rel) && filepath.Ext(rel) != ".bak" {
+				out = append(out, rel)
+			}
+		}
+	}
 	return out
 }

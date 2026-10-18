@@ -56,7 +56,7 @@ export function AppDetail() {
           { to: `${base}/health`, label: "Health", icon: <HeartPulse size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
           { to: `${base}/git`, label: "Git", icon: <GitBranch size={14} /> },
-          ...(!me || me.role === "owner" ? [{ to: `${base}/env`, label: ".env", icon: <KeyRound size={14} /> }, { to: `${base}/caddy`, label: "Caddyfile", icon: <FileCode2 size={14} /> }] : []),
+          ...(!me || me.role === "owner" ? [{ to: `${base}/env`, label: ".env", icon: <KeyRound size={14} /> }, { to: `${base}/web`, label: "Web server", icon: <FileCode2 size={14} /> }] : []),
           { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}
       />
