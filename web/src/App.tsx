@@ -70,6 +70,7 @@ const TeamPage = page(() => import("./pages/TeamPage"), "TeamPage");
 const Domains = page(() => import("./pages/Domains"), "Domains");
 const Uptime = page(() => import("./pages/Uptime"), "Uptime");
 const Sites = page(() => import("./pages/Sites"), "Sites");
+const ServerSites = page(() => import("./pages/Sites"), "ServerSites");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
 const StatusPages = page(() => import("./pages/StatusEditor"), "StatusPages");
 const Security = page(() => import("./pages/Security"), "Security");
@@ -116,6 +117,7 @@ export default function App() {
               <Route path="firewall" element={<ServerFirewall />} />
               <Route path="incidents" element={<ServerIncidents />} />
               <Route path="agent" element={<ServerAgent />} />
+              <Route path="sites" element={<ServerSites />} />
               <Route path="settings" element={<ServerSettings />} />
             </Route>
             <Route path="applications" element={<Applications />} />

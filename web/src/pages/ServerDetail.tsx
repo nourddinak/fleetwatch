@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
+import { Activity, AlertOctagon, Bot, Boxes, Cloud, Container, Cpu, EthernetPort, FolderTree, Gpu, HardDrive, HeartPulse, History, KeyRound, LayoutGrid, ListChecks, MemoryStick, Monitor, Network, Plug, Plus, PowerOff, RefreshCw, Rocket, Server as ServerIcon, Settings, Shield, Timer, Trash2, Unplug } from "lucide-react";
 import { serverCounts, useStore } from "../store/store";
 import { api, toSeries, useApi, type ApiError, type EnrollInfo, type MetricKey, type MetricPoint, type ServerEvent } from "../api/client";
 import type { Range, Server } from "../mock/types";
@@ -74,6 +74,7 @@ export function ServerDetail() {
           { to: `${base}/ports`, label: "Ports", icon: <EthernetPort size={14} /> },
           { to: `${base}/firewall`, label: "Firewall", icon: <Shield size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
+          { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} /> },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
           { to: `${base}/agent`, label: "Agent", icon: <Bot size={14} /> },

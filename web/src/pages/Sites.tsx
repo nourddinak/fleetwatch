@@ -1,10 +1,10 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Plus, RefreshCw, Rocket, Server as ServerIcon, Settings2, Terminal, Trash2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, Spinner, Textarea, ToggleRow, toneDot, type Tone } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone } from "../components/ui";
 import { cn } from "../utils/cn";
 
 interface Plan {
@@ -56,12 +56,19 @@ const STATUS: Record<Site["status"], [Tone, string]> = {
   waiting: ["neutral", "Waiting"],
 };
 
-export function Sites() {
+/** The sites of one server: its Sites tab. */
+export function ServerSites() {
+  const { id } = useParams();
+  return <Sites serverId={id} />;
+}
+
+export function Sites({ serverId }: { serverId?: string } = {}) {
   const { me, subscribeLive } = useStore();
   const owner = !me || me.role === "owner";
-  const list = useApi<Site[]>("/api/sites");
+  const all = useApi<Site[]>("/api/sites");
+  const list = { ...all, data: serverId ? all.data?.filter((s) => s.serverId === serverId) : all.data };
   const gh = useApi<{ github: { connected: boolean } }>(owner ? "/api/integrations" : "/api/sites");
-  const { setData } = list;
+  const { setData } = all;
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => subscribeLive((m) => {
@@ -71,13 +78,18 @@ export function Sites() {
   const connected = !owner || (gh.data && "github" in gh.data ? gh.data.github.connected : true);
   return (
     <>
-      <PageHeader title="Sites" sub="Static sites from your GitHub repositories, served by Caddy from /var/www on the server you pick. Plain HTML is published as is; React, Vite, Next and the like are built by GitHub Actions. Every push deploys again."
-        actions={owner && connected && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
+      {serverId ? (
+        <SectionTitle icon={<Rocket size={15} />} title="Sites on this server" sub="Static sites deployed here from GitHub, in /var/www."
+          action={owner && connected && <Button size="sm" onClick={() => setAdding(true)}><Plus size={13} /> New site</Button>} />
+      ) : (
+        <PageHeader title="Sites" sub="Static sites from your GitHub repositories, served by Caddy from /var/www on the server you pick. Plain HTML is published as is; React, Vite, Next and the like are built by GitHub Actions. Every push deploys again."
+          actions={owner && connected && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
+      )}
       <Gate>
         {list.error ? <ErrorState message={list.error} onRetry={list.reload} /> : !list.data ? <LoadingState /> : !connected ? (
           <EmptyState icon={<Rocket size={20} />} title="Connect GitHub first" desc="Sites are deployed from GitHub repositories." action={<Link to="/settings/integrations"><Button>Open Integrations</Button></Link>} />
         ) : list.data.length === 0 ? (
-          <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc="Pick a repository and a server: the site is online in a minute, at an address of its own." action={owner && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
+          <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc={serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={owner && <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button>} />
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2 text-xs">
@@ -91,7 +103,7 @@ export function Sites() {
           </div>
         )}
       </Gate>
-      {adding && <NewSite onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); list.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
+      {adding && <NewSite serverId={serverId} onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); all.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
       {open && <SiteDrawer id={open} onClose={() => setOpen(null)} />}
     </>
   );
@@ -259,10 +271,10 @@ function IconInput({ icon, prefix, className, ...p }: InputHTMLAttributes<HTMLIn
   );
 }
 
-function NewSite({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Site) => void }) {
+function NewSite({ onClose, onCreated, serverId }: { onClose: () => void; onCreated: (s: Site) => void; serverId?: string }) {
   const { servers, toast } = useStore();
   const repos = useApi<{ repo: { fullName: string; defaultBranch: string; private: boolean } }[]>("/api/integrations/github/repos");
-  const [f, setF] = useState({ repo: "", serverId: "", branch: "", name: "", domains: "", env: "" });
+  const [f, setF] = useState({ repo: "", serverId: serverId ?? "", branch: "", name: "", domains: "", env: "" });
   const [plan, setPlan] = useState<Plan | null>(null);
   const [exampleFile, setExampleFile] = useState("");
   const [busy, setBusy] = useState("");
