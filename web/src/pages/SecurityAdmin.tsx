@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Ban, Bug, Download, PackageCheck, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, Ban, Bug, Clock, Download, Flame, Globe, Info, ListOrdered, Package, PackageCheck, Plus, RefreshCw, Server as ServerIcon, ShieldCheck, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -78,7 +78,7 @@ export function BlockedIPs() {
       )}
       <Card pad={false}>
         <div className="p-5 pb-2">
-          <SectionTitle title={`Blocked addresses (${data.data.blocks.length})`} sub={data.data.enabled ? `Dropped by the firewall of every server${Object.keys(data.data.servers).length ? ` (${Object.keys(data.data.servers).length} applied the list)` : ""}.` : "Turn blocking on to enforce this list."}
+          <SectionTitle icon={<Ban size={15} />} title={`Blocked addresses (${data.data.blocks.length})`} sub={data.data.enabled ? `Dropped by the firewall of every server${Object.keys(data.data.servers).length ? ` (${Object.keys(data.data.servers).length} applied the list)` : ""}.` : "Turn blocking on to enforce this list."}
             action={owner && <Button size="sm" onClick={() => setAdd({ ip: "", hours: 0, reason: "" })}><Plus size={14} /> Block</Button>} />
         </div>
         {data.data.blocks.length === 0 ? (
@@ -87,7 +87,7 @@ export function BlockedIPs() {
           <Table head={["Address", "Why", "Since", "Until", ""]}>
             {data.data.blocks.map((b) => (
               <Tr key={b.ip}>
-                <Td className="font-mono text-xs">{b.ip}</Td>
+                <Td className="font-mono text-xs"><span className="inline-flex items-center gap-1.5"><Ban size={12} className="text-crit" />{b.ip}</span></Td>
                 <Td>
                   <div className="text-sm">{b.reason}</div>
                   <div className="text-[11px] text-muted">{b.source === "auto" ? `automatic${b.servers?.length ? ` · seen on ${b.servers.map((id) => getServer(id)?.name ?? id).join(", ")}` : ""}` : `by ${b.by ?? "hand"}`}</div>
@@ -220,7 +220,9 @@ export function Updates() {
         return (
           <Card key={s.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+              <div className="flex min-w-0 items-start gap-3">
+                <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", sec > 0 ? "bg-warn-soft text-warn" : rep && !rep.packages.length ? "bg-ok-soft text-ok" : "bg-surface2 text-fg")}><PackageCheck size={17} /></span>
+                <div className="min-w-0">
                 <Link to={`/servers/${s.id}`} className="font-semibold hover:underline">{s.name}</Link>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
                   {rep ? (
@@ -232,6 +234,7 @@ export function Updates() {
                       <span>{rep.manager} · checked {relTime(rep.at)}{rep.listsAt ? ` · lists from ${relTime(rep.listsAt)}` : ""}</span>
                     </>
                   ) : st?.scanning ? "Checking…" : s.status === "disconnected" ? "Offline" : "Not checked yet (agent v0.9.38+)"}
+                </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -364,9 +367,9 @@ export function Vulnerabilities() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          <Badge tone="crit">{count(["critical", "high"])} critical or high</Badge>
-          <Badge tone="warn">{count(["moderate"])} moderate</Badge>
-          <Badge>{count(["low", "unknown"])} low</Badge>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-crit"><Flame size={13} /> {count(["critical", "high"])} critical or high</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-warn"><AlertTriangle size={13} /> {count(["moderate"])} moderate</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-muted"><Info size={13} /> {count(["low", "unknown"])} low</span>
         </div>
         {operator && <Button size="sm" variant="secondary" onClick={scan} disabled={data.data.scanning.length > 0}>{data.data.scanning.length ? <Spinner size={14} /> : <RefreshCw size={14} />} {data.data.scanning.length ? "Checking…" : "Check now"}</Button>}
       </div>
@@ -377,9 +380,12 @@ export function Vulnerabilities() {
         data.data.apps.map((a) => (
           <Card key={a.appId} pad={false}>
             <div className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
-              <div>
-                <Link to={`/applications/${a.appId}`} className="font-semibold hover:underline">{getApp(a.appId)?.name ?? a.appId}</Link>
-                <div className="text-xs text-muted">{getServer(a.serverId)?.name ?? a.serverId} · {a.deps} dependencies · checked {relTime(a.scannedAt)}</div>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", a.vulns.length ? "bg-crit-soft text-crit" : "bg-ok-soft text-ok")}>{a.vulns.length ? <Bug size={17} /> : <ShieldCheck size={17} />}</span>
+                <div className="min-w-0">
+                  <Link to={`/applications/${a.appId}`} className="font-semibold hover:underline">{getApp(a.appId)?.name ?? a.appId}</Link>
+                  <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted"><span className="inline-flex items-center gap-1"><ServerIcon size={11} />{getServer(a.serverId)?.name ?? a.serverId}</span><span className="inline-flex items-center gap-1"><Package size={11} />{a.deps} dependencies</span><span className="inline-flex items-center gap-1"><Clock size={11} />checked {relTime(a.scannedAt)}</span></div>
+                </div>
               </div>
               {a.vulns.length === 0 ? <Badge tone="ok"><ShieldCheck size={12} /> no known vulnerabilities</Badge> : <Badge tone="crit">{new Set(a.vulns.map((v) => v.package + "@" + v.version)).size} vulnerable package{new Set(a.vulns.map((v) => v.package + "@" + v.version)).size === 1 ? "" : "s"}</Badge>}
             </div>
@@ -547,7 +553,7 @@ export function ServerFirewall() {
       </Card>
       {ufw && (
         <Card pad={false}>
-          <div className="p-5 pb-2"><SectionTitle title={`Rules (${rep.rules.length})`} /></div>
+          <div className="p-5 pb-2"><SectionTitle icon={<ListOrdered size={15} />} title={`Rules (${rep.rules.length})`} /></div>
           {rep.rules.length === 0 ? <p className="px-5 pb-5 text-sm text-muted">No rules.</p> : (
             <Table head={["#", "Port", "Action", "From", ""]}>
               {rep.rules.map((r) => (
@@ -564,7 +570,7 @@ export function ServerFirewall() {
         </Card>
       )}
       <Card pad={false}>
-        <div className="p-5 pb-2"><SectionTitle title="Which ports are open to the internet?" sub="Programs listening on a public address, checked against the firewall." /></div>
+        <div className="p-5 pb-2"><SectionTitle icon={<Globe size={15} />} title="Which ports are open to the internet?" sub="Programs listening on a public address, checked against the firewall." /></div>
         {publicPorts.length === 0 ? <p className="px-5 pb-5 text-sm text-muted">Nothing listens on a public address.</p> : (
           <Table head={["Port", "Program", "Reachable"]}>
             {publicPorts.map((p) => {

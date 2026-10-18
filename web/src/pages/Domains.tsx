@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Globe, RefreshCw } from "lucide-react";
+import { AlertTriangle, Boxes, Clock, Globe, Info, LayoutDashboard, Lock, RefreshCw, Server as ServerIcon, ShieldAlert, ShieldCheck } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
+import { cn } from "../utils/cn";
 import { Badge, Button, Card, EmptyState, ErrorState, Gate, LoadingState, PageHeader, Spinner, Table, Td, Tr, type Tone } from "../components/ui";
 import { relTime } from "../mock/util";
 
@@ -97,6 +98,19 @@ export function Domains() {
         ) : list.data.length === 0 ? (
           <EmptyState icon={<Globe size={20} />} title="No domains yet" desc="Domains appear here from your Caddy sites and from the domains set on applications. The first check runs shortly after start." />
         ) : (
+          <>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {(() => {
+              const soon = (t?: number, w = sslWarn) => { const l = daysLeft(t); return l !== null && l <= w; };
+              const problems = list.data.filter((d) => d.public.problem || soon(d.public.notAfter) || soon(d.expires, domainWarn)).length;
+              return (
+                <>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-muted"><Globe size={13} /> {list.data.length} domains</span>
+                  {problems > 0 ? <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-warn"><AlertTriangle size={13} /> {problems} need attention</span> : <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-ok"><ShieldCheck size={13} /> all certificates fine</span>}
+                </>
+              );
+            })()}
+          </div>
           <Card pad={false}>
             <Table head={["Domain", "Certificate", "On the server", "Registration", "Checked"]}>
               {list.data.map((d) => {
@@ -105,11 +119,15 @@ export function Domains() {
                 return (
                   <Tr key={d.host}>
                     <Td>
-                      <a href={`https://${d.host}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">{d.host}</a>
-                      <div className="text-xs text-muted">
-                        {app ? <Link to={`/applications/${app.id}`} className="hover:underline">{app.name}</Link> : null}
-                        {app && server ? " · " : null}
-                        {server ? <Link to={`/servers/${server.id}`} className="hover:underline">{server.name}</Link> : !app ? "this dashboard" : null}
+                      <div className="flex items-center gap-3">
+                        <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-xl", d.public.problem ? "bg-crit-soft text-crit" : "bg-surface2 text-fg")}>{d.public.problem ? <ShieldAlert size={15} /> : <Lock size={15} />}</span>
+                        <div className="min-w-0">
+                          <a href={`https://${d.host}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">{d.host}</a>
+                          <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                            {app ? <Link to={`/applications/${app.id}`} className="inline-flex items-center gap-1 hover:underline"><Boxes size={11} />{app.name}</Link> : null}
+                            {server ? <Link to={`/servers/${server.id}`} className="inline-flex items-center gap-1 hover:underline"><ServerIcon size={11} />{server.name}</Link> : !app ? <span className="inline-flex items-center gap-1"><LayoutDashboard size={11} />this dashboard</span> : null}
+                          </div>
+                        </div>
                       </div>
                     </Td>
                     <Td>
@@ -130,15 +148,16 @@ export function Domains() {
                       <Expiry at={d.expires} warn={domainWarn} error={d.domainError} />
                       <div className="text-xs text-muted">{[d.registered, d.registrar].filter(Boolean).join(" · ")}</div>
                     </Td>
-                    <Td className="whitespace-nowrap text-xs text-muted">{relTime(d.checkedAt)}</Td>
+                    <Td className="whitespace-nowrap text-xs text-muted"><span className="inline-flex items-center gap-1.5"><Clock size={12} />{relTime(d.checkedAt)}</span></Td>
                   </Tr>
                 );
               })}
             </Table>
           </Card>
+          </>
         )}
-        <p className="mt-4 text-xs text-muted">
-          "Certificate" is what visitors get (behind Cloudflare, Cloudflare's). "On the server" is what your server's own web server presents, as its agent sees it: behind a CDN, that one can expire unnoticed. Registration dates come from each registry's RDAP service; some registries do not offer one.
+        <p className="mt-4 flex gap-2 text-xs text-muted"><Info size={14} className="shrink-0" /><span>
+          "Certificate" is what visitors get (behind Cloudflare, Cloudflare's). "On the server" is what your server's own web server presents, as its agent sees it: behind a CDN, that one can expire unnoticed. Registration dates come from each registry's RDAP service; some registries do not offer one.</span>
         </p>
       </Gate>
     </>

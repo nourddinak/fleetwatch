@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Pencil, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
+import { AlertTriangle, Ban, Bug, Clock, Flame, Globe, KeyRound, Lightbulb, PackageCheck, Pencil, RefreshCw, Server as ServerIcon, ShieldAlert, ShieldCheck, Terminal, UserRound, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, Segmented, Select, Spinner, Table, Td, Toggle, Tr, type Tone } from "../components/ui";
@@ -46,7 +46,7 @@ export function Security() {
     <>
       <PageHeader title="Security" sub="Checks every server twice a day: SSH settings, waiting security updates, failed logins, open ports, the firewall, readable .env files and sites that leak .git or .env. You get a notification for anything new." />
       <div className="mb-5">
-        <Segmented value={tab} onChange={setTab} options={[{ value: "findings", label: "Findings" }, { value: "logins", label: "SSH logins" }, { value: "blocked", label: "Blocked IPs" }, { value: "updates", label: "Updates" }, { value: "vulns", label: "Vulnerable packages" }]} />
+        <Segmented value={tab} onChange={setTab} options={([["findings", "Findings", ShieldAlert], ["logins", "SSH logins", KeyRound], ["blocked", "Blocked IPs", Ban], ["updates", "Updates", PackageCheck], ["vulns", "Vulnerable packages", Bug]] as const).map(([value, label, Icon]) => ({ value, label: <span className="inline-flex items-center gap-1.5"><Icon size={13} />{label}</span> }))} />
       </div>
       <Gate>{tab === "findings" ? <Findings /> : tab === "logins" ? <Logins /> : tab === "blocked" ? <BlockedIPs /> : tab === "updates" ? <Updates /> : <Vulnerabilities />}</Gate>
     </>
@@ -87,18 +87,23 @@ function Findings() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2">
-        <Badge tone="crit">{count("critical")} critical</Badge>
-        <Badge tone="warn">{count("warning")} warnings</Badge>
-        <Badge tone="info">{count("info")} tips</Badge>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-crit"><Flame size={13} /> {count("critical")} critical</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-warn"><AlertTriangle size={13} /> {count("warning")} warnings</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-info"><Lightbulb size={13} /> {count("info")} tips</span>
       </div>
       {list.data.map((r) => {
         const s = getServer(r.serverId);
         return (
           <Card key={r.serverId}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", r.findings.some((f) => f.severity === "critical") ? "bg-crit-soft text-crit" : r.findings.some((f) => f.severity === "warning") ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok")}>
+                  {r.findings.some((f) => f.severity !== "info") ? <ShieldAlert size={17} /> : <ShieldCheck size={17} />}
+                </span>
+                <div className="min-w-0">
                 <Link to={`/servers/${r.serverId}`} className="font-semibold hover:underline">{s?.name ?? r.serverId}</Link>
-                <div className="text-xs text-muted">{r.oldAgent ? "Agent too old for security checks: update it on the server's Agent tab." : r.at ? `Checked ${relTime(r.at)}` : "Not checked yet"}</div>
+                <div className="flex items-center gap-1.5 text-xs text-muted"><Clock size={11} />{r.oldAgent ? "Agent too old for security checks: update it on the server's Agent tab." : r.at ? `Checked ${relTime(r.at)}` : "Not checked yet"}</div>
+                </div>
               </div>
               <Button size="sm" variant="secondary" disabled={r.scanning || r.oldAgent || s?.status === "disconnected"} onClick={() => scan(r.serverId)}>
                 {r.scanning ? <Spinner size={14} /> : <RefreshCw size={14} />} {r.scanning ? "Checking…" : "Check now"}
@@ -110,14 +115,18 @@ function Findings() {
               <ul className="divide-y divide-line">
                 {r.findings.map((f) => (
                   <li key={f.id} className="py-3">
-                    <div className="flex flex-wrap items-start gap-2">
-                      <Badge tone={SEV[f.severity]} className="capitalize">{f.severity === "info" ? "tip" : f.severity}</Badge>
-                      <span className="min-w-0 flex-1 text-sm font-medium">{f.title}</span>
-                      {f.id.startsWith("port:") && <Button size="sm" variant="ghost" onClick={() => expect(r.serverId, f)}>It's meant to be public</Button>}
+                    <div className="flex flex-wrap items-start gap-3">
+                      {(() => {
+                        const Icon = f.severity === "critical" ? Flame : f.severity === "warning" ? AlertTriangle : Lightbulb;
+                        return <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-lg", { critical: "bg-crit-soft text-crit", warning: "bg-warn-soft text-warn", info: "bg-info-soft text-info" }[f.severity])}><Icon size={14} /></span>;
+                      })()}
+                      <span className="min-w-0 flex-1 pt-1 text-sm font-medium">{f.title} <Badge tone={SEV[f.severity]} className="ml-1 capitalize">{f.severity === "info" ? "tip" : f.severity}</Badge></span>
+                      {f.id.startsWith("port:") && <Button size="sm" variant="ghost" onClick={() => expect(r.serverId, f)}><Globe size={13} /> It's meant to be public</Button>}
                     </div>
-                    {f.detail && <p className="mt-1 text-sm text-muted">{f.detail}</p>}
+                    {f.detail && <p className="mt-1 pl-10 text-sm text-muted">{f.detail}</p>}
                     {f.fix && (
-                      <div className="relative mt-2 rounded-xl bg-surface2 p-3 pr-10">
+                      <div className="relative ml-10 mt-2 rounded-xl bg-surface2 p-3 pr-10">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-muted"><Terminal size={11} /> Fix</div>
                         <pre className="whitespace-pre-wrap break-words font-mono text-xs">{f.fix}</pre>
                         <CopyButton text={f.fix} className="absolute right-2 top-2" />
                       </div>
@@ -184,9 +193,9 @@ function Logins() {
           <Table head={["When", "Server", "User", "From", "How"]}>
             {items.map((l, i) => (
               <Tr key={i} className={cn(l.automated && "opacity-60")}>
-                <Td className="whitespace-nowrap text-xs" title={new Date(l.ts).toLocaleString()}>{relTime(l.ts)}</Td>
-                <Td><Link to={`/servers/${l.serverId}`} className="hover:underline">{getServer(l.serverId)?.name ?? l.serverId}</Link></Td>
-                <Td className="font-mono text-xs">{l.user}</Td>
+                <Td className="whitespace-nowrap text-xs" title={new Date(l.ts).toLocaleString()}><span className="inline-flex items-center gap-1.5"><Clock size={12} className="text-muted" />{relTime(l.ts)}</span></Td>
+                <Td><Link to={`/servers/${l.serverId}`} className="inline-flex items-center gap-1.5 hover:underline"><ServerIcon size={12} className="text-muted" />{getServer(l.serverId)?.name ?? l.serverId}</Link></Td>
+                <Td className="font-mono text-xs"><span className="inline-flex items-center gap-1.5"><UserRound size={12} className="text-muted" />{l.user}</span></Td>
                 <Td>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {l.source === "github" ? (
@@ -201,7 +210,7 @@ function Logins() {
                 </Td>
                 <Td>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    {l.method === "publickey" ? "key" : <Badge tone="warn">{l.method}</Badge>}
+                    {l.method === "publickey" ? <span className="inline-flex items-center gap-1"><KeyRound size={12} className="text-muted" />key</span> : <Badge tone="warn">{l.method}</Badge>}
                     {l.key && <span className="max-w-[200px] truncate font-mono text-muted" title={l.key}>{l.label ? `“${l.label}”` : l.key}</span>}
                     {l.newKey && <Badge tone="warn">new key</Badge>}
                     {l.key && (
