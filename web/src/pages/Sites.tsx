@@ -3,9 +3,8 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { providerName } from "../components/DnsAccounts";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone } from "../components/ui";
 import { cn } from "../utils/cn";
 
 interface Plan {
@@ -43,7 +42,6 @@ interface Site {
   caddyConfig?: string; // the Caddy site file the last deploy put in place
   caddySource?: "generated" | "repository" | "custom" | "";
   caddyCustom?: string; // the owner's own config, used on every deploy
-  dns?: Record<string, { provider: string; zone: string; status: "pointed" | "updated" | "error"; error?: string; proxied?: boolean; previous?: string; created?: boolean }>;
 }
 interface MyGitHub {
   connected: boolean; // the owner connected the app
@@ -595,68 +593,6 @@ function SiteCaddy({ site, editing, setEditing, onSaved }: { site: Site; editing
   );
 }
 
-/** How each of a site's domains stands with its owner's DNS accounts. */
-function SiteDNS({ site, onChange }: { site: Site; onChange: (s: Site) => void }) {
-  const { toast } = useStore();
-  const [busy, setBusy] = useState("");
-  if (site.domains.length === 0) return null;
-  const proxy = async (domain: string, on: boolean) => {
-    setBusy(domain);
-    try {
-      onChange(await api<Site>("PUT", `/api/sites/${site.id}/dns/proxy`, { domain, on }));
-      toast(on ? `${domain} goes through Cloudflare now: your server's IP is hidden` : `${domain} points straight at the server now`);
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setBusy("");
-  };
-  const again = async () => {
-    setBusy("again");
-    try {
-      await api("POST", `/api/sites/${site.id}/dns`);
-      toast("Pointing the domains again: this takes a few seconds");
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setBusy("");
-  };
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted">
-        <span>DNS of your domains</span>
-        {site.mine && <button className="inline-flex items-center gap-1 hover:text-fg" disabled={busy === "again"} onClick={again}><RefreshCw size={11} /> Point again</button>}
-      </div>
-      <ul className="space-y-1.5">
-        {site.domains.map((d) => {
-          const st = site.dns?.[d];
-          return (
-            <li key={d} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-xs">
-              <Globe size={12} className="shrink-0 text-muted" />
-              <span className="min-w-0 flex-1 truncate font-mono">{d}</span>
-              {!st ? (
-                <span className="text-muted">Not managed: add the A record yourself, or connect your DNS account in Settings</span>
-              ) : st.status === "error" ? (
-                <span className="flex items-center gap-1 text-crit" title={st.error}><AlertTriangle size={12} />{providerName(st.provider)}: {st.error}</span>
-              ) : (
-                <>
-                  <Badge tone="ok"><Check size={11} />{providerName(st.provider)}{st.status === "updated" && st.previous ? ` · moved from ${st.previous}` : ""}</Badge>
-                  {st.provider === "cloudflare" && (
-                    <span className="flex items-center gap-1.5">
-                      {!st.proxied && <span className="text-warn" title="Anyone can see which server it runs on">IP visible</span>}
-                      <span className="text-muted">Proxy</span>
-                      {site.mine ? (busy === d ? <Spinner size={12} /> : <Toggle checked={!!st.proxied} onChange={(on) => proxy(d, on)} />) : <span>{st.proxied ? "on" : "off"}</span>}
-                    </span>
-                  )}
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
 function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { me, getServer, toast } = useStore();
   const data = useApi<{ site: Site; history: Deploy[] }>(`/api/sites/${id}`);
@@ -755,7 +691,6 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" className="pl-10 font-mono text-[12px]" />
               </div>
             </Field>
-            <SiteDNS site={site} onChange={(st) => data.setData({ ...data.data!, site: st })} />
           </Panel>
         )}
 

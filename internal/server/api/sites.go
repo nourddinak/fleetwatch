@@ -146,32 +146,6 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		s.audit(r, "site.env", st.ServerID, st.Name)
 		writeJSON(w, http.StatusOK, st)
 	}))
-	mux.HandleFunc("POST /api/sites/{id}/dns", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-		if _, ok := own(w, r, sess); !ok {
-			return
-		}
-		go s.Sites.SyncDNS(r.PathValue("id"), nil, true)
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	mux.HandleFunc("PUT /api/sites/{id}/dns/proxy", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-		var in struct {
-			Domain string
-			On     bool
-		}
-		if !decode(w, r, &in) {
-			return
-		}
-		if _, ok := own(w, r, sess); !ok {
-			return
-		}
-		st, err := s.Sites.SetProxied(r.Context(), r.PathValue("id"), in.Domain, in.On)
-		if err != nil {
-			failSite(w, err)
-			return
-		}
-		s.audit(r, "site.proxy", st.ServerID, st.Name+": "+in.Domain)
-		writeJSON(w, http.StatusOK, mark(sess, st))
-	}))
 	mux.HandleFunc("PUT /api/sites/{id}/caddy", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		var in struct{ Config string }
 		if !decode(w, r, &in) {

@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Cloud, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
+import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { DnsAccounts } from "../components/DnsAccounts";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton, Segmented, SearchInput } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -65,21 +64,10 @@ export function IntegrationsSettings() {
   }), [subscribeLive, setData]);
   if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
   if (!data.data) return <LoadingState />;
-  const tab = params.get("tab") === "dns" ? "dns" : "github";
   return (
     <div className="space-y-6">
-      <Segmented value={tab} onChange={(v) => setParams(v === "dns" ? { tab: "dns" } : {}, { replace: true })} options={[
-        { value: "github", label: <span className="inline-flex items-center gap-1.5"><Github size={13} />GitHub{data.data.github.connected && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> },
-        { value: "dns", label: <span className="inline-flex items-center gap-1.5"><Cloud size={13} />DNS and CDN</span> },
-      ]} />
-      {tab === "dns" ? (
-        <DnsAccounts />
-      ) : (
-        <>
-          <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
-          {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
-        </>
-      )}
+      <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+      {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
     </div>
   );
 }

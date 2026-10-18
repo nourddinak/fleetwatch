@@ -83,7 +83,6 @@ type Service struct {
 	Send            func(serverID, typ string, v any) error
 	AgentVersion    func(serverID string) string
 	BroadcastConfig func()                             // send every agent its config (with the block list)
-	OnBlocks        func()                             // the block list changed (Cloudflare mirrors it)
 	Protected       func() []string                    // never block: servers' own and recently used addresses
 	Notify          func(title, body, severity string) // a notification to the team
 
@@ -228,9 +227,6 @@ func (s *Service) save(b Block) error {
 	}
 	s.Bus.Publish("blocks", s.Blocked())
 	s.BroadcastConfig()
-	if s.OnBlocks != nil {
-		go s.OnBlocks()
-	}
 	return nil
 }
 
@@ -241,9 +237,6 @@ func (s *Service) Unblock(ip string) error {
 	}
 	s.Bus.Publish("blocks", s.Blocked())
 	s.BroadcastConfig()
-	if s.OnBlocks != nil {
-		go s.OnBlocks()
-	}
 	return nil
 }
 
@@ -256,9 +249,6 @@ func (s *Service) Sweep() {
 	if n, _ := res.RowsAffected(); n > 0 {
 		s.Bus.Publish("blocks", s.Blocked())
 		s.BroadcastConfig()
-		if s.OnBlocks != nil {
-			go s.OnBlocks()
-		}
 	}
 	s.mu.Lock()
 	cut := s.Now().Add(-24 * time.Hour)

@@ -33,7 +33,6 @@ import (
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/disk"
-	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/envfile"
@@ -575,20 +574,6 @@ func serve() error {
 		return err == nil && host != "" && strings.EqualFold(rec.Hostname, host)
 	}
 	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
-	dnsSvc := dns.New(d, box, bus)
-	siteSvc.DNS = dnsSvc
-	// Cloudflare accounts that ask for it block the dashboard's blocked addresses too:
-	// on every change, and every 15 minutes to catch up after errors.
-	syncBlocks := func() {
-		on, ips := admin.BlockedIPs()
-		if !on {
-			ips = nil
-		}
-		c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		dnsSvc.SyncBlocks(c, ips)
-	}
-	admin.OnBlocks = syncBlocks
 	envSvc := envfile.New()
 	envSvc.Send, envSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
 	hub.Handlers[proto.TypeEnvFileResult] = envSvc.OnResult
@@ -731,7 +716,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -750,18 +735,6 @@ func serve() error {
 	go upSvc.Run(ctx)
 	go vulnSvc.Run(ctx)
 	go siteSvc.Run(ctx)
-	go func() {
-		t := time.NewTicker(15 * time.Minute)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				syncBlocks()
-			}
-		}
-	}()
 	go func() {
 		for range time.Tick(time.Minute) {
 			admin.Sweep()
