@@ -4,6 +4,7 @@ import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Info, Lock, R
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
+import { DnsAccounts } from "../components/DnsAccounts";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton } from "../components/ui";
 
 interface App {
@@ -65,6 +66,7 @@ export function IntegrationsSettings() {
   return (
     <div className="space-y-6">
       <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+      <DnsAccounts />
       {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
       <Card>
         <SectionTitle icon={<Info size={15} />} title="What it is for" sub="Sites: deploy static sites from these repositories onto your servers, again on every push." action={<Link to="/sites"><Button size="sm" variant="secondary">Open Sites</Button></Link>} />
