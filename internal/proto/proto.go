@@ -517,6 +517,27 @@ type SiteDeploy struct {
 	CaddyConfig string `json:"caddyConfig,omitempty"`
 }
 
+// Certificates renewed on demand (agent 0.9.132+): Caddy gets a fresh one now.
+const (
+	TypeCertRenew   = "cert.renew"   // server → agent: CertRenew
+	TypeCertRenewed = "cert.renewed" // agent → server: CertRenewed
+)
+
+type CertRenew struct {
+	RunID string `json:"runId"`
+	Host  string `json:"host"`
+}
+
+type CertRenewed struct {
+	RunID    string `json:"runId"`
+	Host     string `json:"host"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
+	Log      string `json:"log,omitempty"` // Caddy's lines about the host, when it failed
+	NotAfter int64  `json:"notAfter,omitempty"`
+	Issuer   string `json:"issuer,omitempty"`
+}
+
 type SiteRemove struct {
 	RunID string `json:"runId"`
 	Name  string `json:"name"`

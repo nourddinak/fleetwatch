@@ -20,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"fleetwatch/internal/agent/caddy"
 	"fleetwatch/internal/agent/config"
 	"fleetwatch/internal/agent/docker"
 	"fleetwatch/internal/agent/envfile"
@@ -263,6 +264,11 @@ func (r *Runner) session(ctx context.Context) error {
 				var req proto.SiteDeploy
 				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
 					go func() { r.sendCurrent(proto.TypeSiteResult, sites.Deploy(rootCtx, req)) }()
+				}
+			case proto.TypeCertRenew:
+				var req proto.CertRenew
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeCertRenewed, caddy.Renew(rootCtx, req)) }()
 				}
 			case proto.TypeEnvFile:
 				var req proto.EnvFile

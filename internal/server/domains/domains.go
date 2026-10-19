@@ -11,9 +11,11 @@ package domains
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,9 +30,12 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	"fleetwatch/internal/agent/caddy"
+	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/release"
+	"fleetwatch/internal/server/valid"
 )
 
 const (
@@ -94,6 +99,12 @@ type Checker struct {
 
 	running atomic.Bool
 	mu      sync.Mutex // one check at a time
+
+	// Send and AgentVersion reach a server's agent, to renew a certificate there.
+	Send         func(serverID, typ string, v any) error
+	AgentVersion func(serverID string) string
+	renewMu      sync.Mutex
+	renews       map[string]*Renewal // host → the last renewal asked for
 }
 
 func New(d *sql.DB, a *apps.Service, inc *incidents.Store, rules func() incidents.Rules, bus *live.Bus) *Checker {
@@ -422,4 +433,99 @@ func orUnknown(s string) string {
 		return "an unknown registrar"
 	}
 	return s
+}
+
+// ---------- renewing a certificate now ----------
+
+// RenewAgent is the first agent that can renew a certificate on demand.
+const RenewAgent = "v0.9.132"
+
+// Renewal is the last "renew now" of a host's certificate.
+type Renewal struct {
+	RunID    string `json:"-"`
+	At       int64  `json:"at"`
+	Running  bool   `json:"running"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
+	Log      string `json:"log,omitempty"`
+	NotAfter int64  `json:"notAfter,omitempty"`
+	By       string `json:"by"`
+}
+
+// Renew asks the server hosting a domain to get a fresh certificate for it now.
+func (c *Checker) Renew(host, by string) (Renewal, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	var d *Domain
+	for _, x := range c.List() {
+		if x.Host == host {
+			d = &x
+			break
+		}
+	}
+	switch {
+	case d == nil:
+		return Renewal{}, valid.Error("this domain is not checked here")
+	case d.ServerID == "" || c.Send == nil:
+		return Renewal{}, valid.Error("Fleetwatch does not know which server serves " + host)
+	case c.AgentVersion != nil && release.Newer(RenewAgent, c.AgentVersion(d.ServerID)):
+		return Renewal{}, valid.Error("the agent on that server is too old to renew certificates: update it first")
+	}
+	c.renewMu.Lock()
+	if c.renews == nil {
+		c.renews = map[string]*Renewal{}
+	}
+	if r := c.renews[host]; r != nil && r.Running && c.Now().Sub(time.UnixMilli(r.At)) < 5*time.Minute {
+		c.renewMu.Unlock()
+		return *r, valid.Error("a renewal of this certificate is already running")
+	}
+	b := make([]byte, 8)
+	rand.Read(b)
+	r := &Renewal{RunID: hex.EncodeToString(b), At: c.Now().UnixMilli(), Running: true, By: by}
+	c.renews[host] = r
+	c.renewMu.Unlock()
+	if err := c.Send(d.ServerID, proto.TypeCertRenew, proto.CertRenew{RunID: r.RunID, Host: host}); err != nil {
+		c.renewMu.Lock()
+		r.Running, r.Error = false, err.Error()
+		c.renewMu.Unlock()
+		return *r, err
+	}
+	c.publish()
+	return *r, nil
+}
+
+// OnRenewed takes an agent's answer; a new certificate is checked again right away.
+func (c *Checker) OnRenewed(serverID string, data json.RawMessage) {
+	var res proto.CertRenewed
+	if json.Unmarshal(data, &res) != nil {
+		return
+	}
+	c.renewMu.Lock()
+	r := c.renews[res.Host]
+	if r == nil || r.RunID != res.RunID {
+		c.renewMu.Unlock()
+		return
+	}
+	r.Running, r.OK, r.Error, r.Log, r.NotAfter = false, res.OK, res.Error, res.Log, res.NotAfter
+	c.renewMu.Unlock()
+	c.publish()
+	if res.OK {
+		c.CheckSoon()
+	}
+}
+
+// Renewals are the last renewals by host.
+func (c *Checker) Renewals() map[string]Renewal {
+	c.renewMu.Lock()
+	defer c.renewMu.Unlock()
+	out := map[string]Renewal{}
+	for h, r := range c.renews {
+		out[h] = *r
+	}
+	return out
+}
+
+func (c *Checker) publish() {
+	if c.Bus != nil {
+		c.Bus.Publish("domains", map[string]int{})
+	}
 }

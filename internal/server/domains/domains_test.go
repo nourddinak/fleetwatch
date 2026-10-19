@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -234,5 +235,44 @@ func TestShortLived(t *testing.T) {
 		if got := shortLived(c.c); got != c.want {
 			t.Errorf("case %d: %v", i, got)
 		}
+	}
+}
+
+// "Renew now" goes to the domain's server (a recent agent), and its answer is kept.
+func TestRenewNow(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	d.Exec(`INSERT INTO domain_checks (host, data, checked_at) VALUES ('shop.example.com', '{"host":"shop.example.com","serverId":"s1"}', 0)`)
+	c := New(d, nil, incidents.NewStore(d, live.NewBus()), incidents.DefaultRules, live.NewBus())
+	version := "0.9.100"
+	c.AgentVersion = func(string) string { return version }
+	var sent []proto.CertRenew
+	c.Send = func(server, typ string, v any) error {
+		if server != "s1" || typ != proto.TypeCertRenew {
+			t.Error(server, typ)
+		}
+		sent = append(sent, v.(proto.CertRenew))
+		return nil
+	}
+	if _, err := c.Renew("shop.example.com", "Nour"); err == nil || !strings.Contains(err.Error(), "too old") {
+		t.Fatal("an old agent", err)
+	}
+	version = "0.9.132"
+	if _, err := c.Renew("nope.example.com", "Nour"); err == nil {
+		t.Fatal("an unknown domain")
+	}
+	if _, err := c.Renew("Shop.Example.com", "Nour"); err != nil || len(sent) != 1 {
+		t.Fatal(err, sent)
+	}
+	if _, err := c.Renew("shop.example.com", "Nour"); err == nil {
+		t.Fatal("twice at once")
+	}
+	raw, _ := json.Marshal(proto.CertRenewed{RunID: sent[0].RunID, Host: "shop.example.com", Error: "NXDOMAIN"})
+	c.OnRenewed("s1", raw)
+	if r := c.Renewals()["shop.example.com"]; r.Running || r.OK || r.Error != "NXDOMAIN" || r.By != "Nour" {
+		t.Fatalf("%+v", r)
 	}
 }

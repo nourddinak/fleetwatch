@@ -672,6 +672,8 @@ func serve() error {
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
 	calls.domains = domainChecks
 	domainChecks.PublicURL = os.Getenv("OPS_PUBLIC_URL")
+	domainChecks.Send, domainChecks.AgentVersion = hub.Send, diskSvc.AgentVersion // "renew now", on the server
+	hub.Handlers[proto.TypeCertRenewed] = domainChecks.OnRenewed
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
 	logStore.OnStored = func(lines []logs.Line) { detector.Logs(lines, time.Now()) }
 	hub.OnMetrics = func(serverID string, m proto.Metrics) {

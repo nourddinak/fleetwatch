@@ -25,6 +25,7 @@ interface Domain {
   registrar?: string;
   domainError?: string;
   checkedAt: number;
+  renew?: { at: number; running: boolean; ok: boolean; error?: string; log?: string; notAfter?: number; by: string };
 }
 
 const DAY = 86_400_000;
@@ -56,7 +57,17 @@ function Expiry({ at, warn, problem, error, autoRenew }: { at?: number; warn: nu
 }
 
 export function Domains() {
-  const { getServer, getApp, subscribeLive, toast } = useStore();
+  const { getServer, getApp, subscribeLive, toast, me } = useStore();
+  const [showLog, setShowLog] = useState("");
+  const renew = async (host: string) => {
+    try {
+      await api("POST", `/api/domains/${encodeURIComponent(host)}/renew`);
+      toast(`Renewing ${host}: up to two minutes`);
+      list.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
   const list = useApi<Domain[]>("/api/domains");
   const rules = useApi<{ sslWarnDays: number; domainWarnDays: number }>("/api/settings/incident-rules");
   const [checking, setChecking] = useState(false);
@@ -133,6 +144,20 @@ export function Domains() {
                     <Td>
                       <Expiry at={d.public.notAfter} warn={sslWarn} problem={d.public.problem} error={d.public.error} autoRenew={d.public.autoRenew} />
                       {d.public.issuer && !d.public.problem && <div className="text-xs text-muted">{d.public.issuer}</div>}
+                      {d.renew?.running ? (
+                        <div className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted"><Spinner size={11} /> Renewing…</div>
+                      ) : d.renew ? (
+                        <div className={cn("mt-1 max-w-xs text-xs", d.renew.ok ? "text-ok" : "text-crit")}>
+                          {d.renew.ok ? `Renewed ${relTime(d.renew.at)}` : d.renew.error}
+                          {d.renew.log && <button className="ml-1 underline" onClick={() => setShowLog(showLog === d.host ? "" : d.host)}>{showLog === d.host ? "hide" : "Caddy log"}</button>}
+                          {showLog === d.host && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-surface2 p-2 font-mono text-[10px] text-muted">{d.renew.log}</pre>}
+                        </div>
+                      ) : null}
+                      {d.serverId && !d.public.autoRenew && me?.role !== "viewer" && !d.renew?.running && (d.public.problem || (daysLeft(d.public.notAfter) ?? 99) <= sslWarn) && (
+                        <button className="mt-1 flex items-center gap-1 text-xs font-medium underline" onClick={() => renew(d.host)} title="Caddy on the server gets a fresh certificate now; the old one stays if it fails">
+                          <RefreshCw size={11} /> Renew now
+                        </button>
+                      )}
                     </Td>
                     <Td>
                       {d.origin ? (

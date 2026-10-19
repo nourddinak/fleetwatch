@@ -575,11 +575,11 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				}
 				return d.pastIncidents(x, 10), nil
 			}},
-		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy; rollback to its previous deploy; purge its Cloudflare cache; on or off: Cloudflare's Under attack mode), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
+		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy; rollback to its previous deploy; purge its Cloudflare cache; on or off: Cloudflare's Under attack mode), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24), certificate (renew: get a fresh SSL certificate for a domain now, when Caddy failed to: target is the domain).",
 			Params: map[string]any{
 				"kind":   map[string]any{"type": "STRING", "enum": actionKinds},
 				"target": map[string]any{"type": "STRING", "description": "What to act on: an app, container, site, cleanup, incident id, server or IP"},
-				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "rollback", "purge", "clean", "mute", "on", "off", "block"}},
+				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "rollback", "renew", "purge", "clean", "mute", "on", "off", "block"}},
 				"server": map[string]any{"type": "STRING", "description": "The server's name, where it matters (containers, disk); without it, the incident's server"},
 				"amount": map[string]any{"type": "INTEGER", "description": "Minutes for maintenance, hours for an IP block"},
 			}, Required: []string{"kind", "target", "action"},
@@ -642,7 +642,7 @@ const (
 )
 
 // Kinds of actions, for the tool's description.
-var actionKinds = []string{"app", "container", "site", "disk", "incident", "maintenance", "ip"}
+var actionKinds = []string{"app", "container", "site", "disk", "incident", "maintenance", "ip", "certificate"}
 
 func (g *voiceActions) allowed(serverID string, ownerOnly bool) error {
 	if g.person == oncall.Owner {
@@ -771,6 +771,21 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 				return nil, err
 			}
 			return "the container is being " + action + "ed; it takes a few seconds", nil
+		}
+	case "certificate":
+		if g.d.domains == nil {
+			return nil, valid.Error("certificates are not checked here")
+		}
+		if err := g.allowed("", false); err != nil {
+			return nil, err
+		}
+		host := strings.ToLower(target)
+		a.what = "get a fresh SSL certificate for " + host + " now (Caddy on its server restarts for a second)"
+		a.run = func(ctx context.Context) (any, error) {
+			if _, err := g.d.domains.Renew(host, g.name+" (WhatsApp)"); err != nil {
+				return nil, err
+			}
+			return "renewing; it takes up to two minutes, and the old certificate stays if it fails", nil
 		}
 	case "site":
 		if action != "redeploy" && action != "rollback" && action != "purge" && action != "on" && action != "off" {

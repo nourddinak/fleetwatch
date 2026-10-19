@@ -137,7 +137,28 @@ func New(d Deps) http.Handler {
 	}
 	if d.Domains != nil {
 		mux.HandleFunc("GET /api/domains", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-			writeJSON(w, http.StatusOK, s.Domains.List())
+			type item struct {
+				domains.Domain
+				Renew *domains.Renewal `json:"renew,omitempty"` // the last "renew now"
+			}
+			renews := s.Domains.Renewals()
+			out := []item{}
+			for _, d := range s.Domains.List() {
+				it := item{Domain: d}
+				if r, ok := renews[d.Host]; ok {
+					it.Renew = &r
+				}
+				out = append(out, it)
+			}
+			writeJSON(w, http.StatusOK, out)
+		}))
+		mux.HandleFunc("POST /api/domains/{host}/renew", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+			if _, err := s.Domains.Renew(r.PathValue("host"), s.actor(r)); err != nil {
+				fail(w, err)
+				return
+			}
+			s.audit(r, "domain.renew", "", r.PathValue("host"))
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "renewing"})
 		}))
 		mux.HandleFunc("POST /api/domains/check", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 			s.Domains.CheckSoon() // results arrive over the live socket ("domains")
