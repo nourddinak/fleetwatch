@@ -27,9 +27,15 @@ type fakeGH struct {
 	dispatch    int
 	dispatchErr error
 	run         *github.Run
+	syncs       int // calls to Connected, which only Sync makes
 }
 
-func (f *fakeGH) Connected() bool { return true }
+func (f *fakeGH) Connected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncs++
+	return true
+}
 func (f *fakeGH) RepoInfo(_ context.Context, repo string) (string, bool, error) {
 	return "main", false, nil
 }
@@ -228,6 +234,18 @@ func TestBuiltSite(t *testing.T) {
 	if env, _ := s.Env(st.ID); !strings.Contains(env, "VITE_API") {
 		t.Fatal(".env not kept")
 	}
+	// Create syncs in the background, and a Sync while that one runs is skipped: wait for it.
+	for i := 0; i < 200; i++ {
+		gh.mu.Lock()
+		n := gh.syncs
+		gh.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		sleep()
+	}
+	s.syncing.Lock()
+	s.syncing.Unlock()
 	// The build finished: the build branch has a commit; it is deployed from its root.
 	gh.heads["me/shop@"+github.BuildBranchName] = "x1"
 	gh.run = &github.Run{Status: "completed", Conclusion: "success"}
