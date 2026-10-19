@@ -41,7 +41,7 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Integrations → WhatsApp: the owner links their WhatsApp and sets how each person is reached. */
 export function WhatsAppSetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[] }>("/api/integrations/whatsapp");
+  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions }>("/api/integrations/whatsapp");
   const [phone, setPhone] = useState("");
   const [byPhone, setByPhone] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -116,6 +116,7 @@ export function WhatsAppSetup() {
         )}
       </Card>
       <PeopleCard people={data.data!.people} linked={st.linked} onChange={reload} />
+      {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
       <ConfirmDialog open={unlink} title="Unlink WhatsApp?" confirmLabel="Unlink" danger
         message="The dashboard is signed out of your WhatsApp and stops sending from it. People's numbers are kept."
         onCancel={() => setUnlink(false)} onConfirm={async () => { setUnlink(false); await api("DELETE", "/api/integrations/whatsapp"); reload(); toast("WhatsApp unlinked"); }} />
@@ -225,6 +226,38 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
           <span>Call <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp, from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Calls from other numbers are declined.</span></p>
       )}
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
+    </Card>
+  );
+}
+
+interface WaOptions {
+  resolvedMessages: boolean;
+  followUpMinutes: number;
+}
+
+/** What follows a page: the "resolved" message and the follow-up call. */
+function OptionsCard({ saved, onSaved }: { saved: WaOptions; onSaved: () => void }) {
+  const { toast } = useStore();
+  const [f, setF] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  const dirty = JSON.stringify(f) !== JSON.stringify(saved);
+  return (
+    <Card>
+      <SectionTitle icon={<Send size={15} />} title="After a page" sub="What WhatsApp does once someone was paged about an incident. The dashboard also alerts you (push, email, your channels) if WhatsApp stays disconnected for 3 minutes." />
+      <div className="space-y-3">
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span><b>Message when it is resolved</b><br /><span className="text-xs text-muted">Whoever was paged gets "✅ Resolved: … after 12 min".</span></span>
+          <input type="checkbox" checked={f.resolvedMessages} onChange={(e) => setF({ ...f, resolvedMessages: e.target.checked })} />
+        </label>
+        <Field label="Call back if still open after (minutes)" hint="The AI calls whoever acknowledged it: still down, want a restart, someone else, or more time? 0 = never.">
+          <Input type="number" min={0} max={1440} value={f.followUpMinutes} onChange={(e) => setF({ ...f, followUpMinutes: Number(e.target.value) })} className="sm:w-40" />
+        </Field>
+        <div className="flex justify-end">
+          <Button size="sm" disabled={!dirty || busy} onClick={async () => { setBusy(true); try { await api("PUT", "/api/integrations/whatsapp/options", f); toast("Saved"); onSaved(); } catch (e) { toast((e as ApiError).message, "err"); } setBusy(false); }}>
+            {busy ? <Spinner size={13} /> : <Check size={13} />} Save
+          </Button>
+        </div>
+      </div>
     </Card>
   );
 }

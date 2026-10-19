@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/settings"
 	"fleetwatch/internal/server/valid"
 )
 
@@ -72,6 +73,11 @@ type Service struct {
 	// Inbound answers a call a known person makes to the linked number; nil, or a nil
 	// Talker, declines it. Calls from numbers nobody saved are always declined.
 	Inbound func(person string) Talker
+	// Alert tells the owner something went wrong with the link (the watchdog).
+	Alert func(title, body, severity string)
+
+	lostAt  time.Time // when the connection dropped (zero: connected)
+	alerted bool      // the owner was told it is down
 
 	mu        sync.Mutex
 	container *sqlstore.Container
@@ -274,7 +280,21 @@ func (s *Service) onEvent(evt any) {
 		}
 		s.lastErr = "WhatsApp was unlinked from the phone"
 		s.mu.Unlock()
-	case *events.Connected, *events.Disconnected:
+		s.alert("WhatsApp was unlinked", "The dashboard's WhatsApp was signed out (from the phone, or by WhatsApp). On-call calls and messages stop until it is linked again in Integrations → WhatsApp.", "critical")
+	case *events.Connected:
+		s.mu.Lock()
+		back := s.alerted
+		s.lostAt, s.alerted = time.Time{}, false
+		s.mu.Unlock()
+		if back {
+			s.alert("WhatsApp is back", "The dashboard's WhatsApp is connected again: on-call calls and messages work.", "info")
+		}
+	case *events.Disconnected:
+		s.mu.Lock()
+		if s.lostAt.IsZero() {
+			s.lostAt = s.Now()
+		}
+		s.mu.Unlock()
 	default:
 		return
 	}
@@ -399,4 +419,48 @@ func (p Person) Quiet(t time.Time) bool {
 		return now >= p.QuietFrom && now < p.QuietTo
 	}
 	return now >= p.QuietFrom || now < p.QuietTo // over midnight
+}
+
+// watchdogAfter is how long the link may be down before the owner is told.
+const watchdogAfter = 3 * time.Minute
+
+func (s *Service) alert(title, body, severity string) {
+	if s.Alert != nil {
+		go s.Alert(title, body, severity)
+	}
+}
+
+// Watch tells the owner when the link has been down for a while (whatsmeow keeps
+// reconnecting by itself); call it every minute or so.
+func (s *Service) Watch() {
+	s.mu.Lock()
+	down := !s.lostAt.IsZero() && s.Now().Sub(s.lostAt) > watchdogAfter && !s.alerted && s.client != nil
+	if down {
+		s.alerted = true
+	}
+	s.mu.Unlock()
+	if down {
+		s.alert("WhatsApp is disconnected", "The dashboard has not reached WhatsApp for "+watchdogAfter.String()+" (the server's network, or WhatsApp itself). On-call calls and messages wait until it is back; push and email still go out.", "warning")
+	}
+}
+
+// Options are the owner's choices for what follows a page.
+type Options struct {
+	ResolvedMessages bool `json:"resolvedMessages"` // "resolved" messages to whoever was paged
+	FollowUpMinutes  int  `json:"followUpMinutes"`  // call back the acknowledger if still open; 0 = never
+}
+
+// Options reads them (resolved messages on, follow-up after 20 minutes by default).
+func (s *Service) Options() Options {
+	o := Options{ResolvedMessages: true, FollowUpMinutes: 20}
+	settings.Load(s.db, "whatsapp.options", &o)
+	return o
+}
+
+// SetOptions saves them.
+func (s *Service) SetOptions(o Options) (Options, error) {
+	if o.FollowUpMinutes < 0 || o.FollowUpMinutes > 24*60 {
+		return o, valid.Error("the follow-up must be between 0 (never) and 1440 minutes")
+	}
+	return o, settings.Save(s.db, "whatsapp.options", o)
 }

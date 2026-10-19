@@ -29,7 +29,19 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		return out
 	}
 	mux.HandleFunc("GET /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages})
+		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options()})
+	}))
+	mux.HandleFunc("PUT /api/integrations/whatsapp/options", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in whatsapp.Options
+		if !decode(w, r, &in) {
+			return
+		}
+		o, err := s.WhatsApp.SetOptions(in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, o)
 	}))
 	mux.HandleFunc("POST /api/integrations/whatsapp/link", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ Phone string }

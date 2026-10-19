@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 
 	"fleetwatch/internal/server/db"
 )
@@ -107,5 +109,42 @@ func TestCallerOf(t *testing.T) {
 	}
 	if who, _ := s.callerOf(t.Context(), nil, types.NewJID("15551234567", types.DefaultUserServer)); who != "" {
 		t.Fatal("a stranger was taken for someone", who)
+	}
+}
+
+func TestWatchdogAndOptions(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, dir, nil)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	alerts := make(chan string, 4)
+	s.Alert = func(title, _, _ string) { alerts <- title }
+	s.client = &whatsmeow.Client{} // linked, as far as the watchdog cares
+	s.onEvent(&events.Disconnected{})
+	now = now.Add(time.Minute)
+	s.Watch()
+	now = now.Add(3 * time.Minute)
+	s.Watch()
+	s.Watch()
+	if got := <-alerts; got != "WhatsApp is disconnected" || len(alerts) != 0 {
+		t.Fatal("watchdog:", got, len(alerts))
+	}
+	s.onEvent(&events.Connected{})
+	if got := <-alerts; got != "WhatsApp is back" {
+		t.Fatal(got)
+	}
+	if o := s.Options(); !o.ResolvedMessages || o.FollowUpMinutes != 20 {
+		t.Fatal("defaults", o)
+	}
+	if _, err := s.SetOptions(Options{FollowUpMinutes: -1}); err == nil {
+		t.Fatal("a negative follow-up was accepted")
+	}
+	if o, _ := s.SetOptions(Options{FollowUpMinutes: 0}); s.Options() != o {
+		t.Fatal("not saved")
 	}
 }

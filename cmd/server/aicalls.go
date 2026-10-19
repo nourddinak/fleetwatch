@@ -60,6 +60,15 @@ func (d callDeps) inbound(person string) whatsapp.Talker {
 }
 
 func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talker {
+	return d.sessionOpening(person, incidentID, inbound, "")
+}
+
+// sessionWith is an incident call with its own opening (a follow-up).
+func (d callDeps) sessionWith(person, incidentID, opening string) whatsapp.Talker {
+	return d.sessionOpening(person, incidentID, false, opening)
+}
+
+func (d callDeps) sessionOpening(person, incidentID string, inbound bool, opening string) whatsapp.Talker {
 	left := d.ai.Remaining()
 	if left < 30*time.Second {
 		return nil
@@ -103,6 +112,9 @@ func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talk
 			talk.Tools = kit
 			talk.ProtectOpening = true
 			talk.Opening = "The call just connected. Greet " + name + " and explain fully what happened: the incident, then what the latest app and server log lines above show (in plain words, the most telling ones). Then ask if they can handle it."
+		}
+		if opening != "" {
+			talk.Opening = opening
 		}
 		lines, took, err := d.ai.Converse(ctx, talk)
 		d.ai.AddUsage(took)
@@ -434,6 +446,29 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 					recent = append(recent, b.IP+" ("+b.Reason+")")
 				}
 				return map[string]any{"findings": findings, "recentSSHLogins": logins, "blockedIPs": len(blocked), "latestBlocked": recent}, nil
+			}},
+		{Name: "call_teammate", Description: "Call a teammate on WhatsApp about the incident of this call, with the AI, while this call goes on. Use it when they ask for someone else to look at it.",
+			Params: map[string]any{"name": map[string]any{"type": "STRING", "description": "The teammate's name"}}, Required: []string{"name"},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				if incidentID == "" {
+					return nil, valid.Error("there is no incident on this call to call someone about")
+				}
+				who := ""
+				for _, p := range d.people() {
+					if strings.EqualFold(p.Name, str(args, "name")) || strings.EqualFold(p.Username, str(args, "name")) {
+						who = p.ID
+					}
+				}
+				wp, ok := d.wa.PersonOf(who)
+				if who == "" || !ok {
+					return nil, valid.Error("no teammate called " + str(args, "name") + " has a WhatsApp number saved")
+				}
+				go func() {
+					c, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+					defer cancel()
+					d.wa.Ring(c, wp.Phone, 45*time.Second, d.talker(who, incidentID))
+				}()
+				return "calling them now", nil
 			}},
 		{Name: "propose_action", Description: "Get an app action ready: start, stop, restart or reload. It runs only after the person confirms and you call do_action.",
 			Params: map[string]any{

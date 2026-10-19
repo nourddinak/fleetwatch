@@ -631,6 +631,9 @@ func serve() error {
 	}
 	sec := security.New(d)
 	calls.security = sec // the AI on calls reads security too
+	waSvc.Alert = func(title, body, severity string) {
+		notifier.Notice("WhatsApp", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
+	}
 	vulnSvc.ServerIDs = serverIDs
 	sec.Send, sec.ServerIDs, sec.AgentVersion, sec.Connected, sec.Name = hub.Send, serverIDs, diskSvc.AgentVersion, hub.Connected, serverName
 	sec.Ports, sec.Domains = appSvc.ServerPorts, appSvc.Domains
@@ -796,6 +799,8 @@ func serve() error {
 	go func() {
 		for range time.Tick(time.Minute) {
 			admin.Sweep()
+			waSvc.Watch()        // tells the owner when WhatsApp stays disconnected
+			calls.followUps(ctx) // resolved messages, follow-up calls
 			var connected []string
 			for _, id := range serverIDs() {
 				if hub.Connected(id) {
