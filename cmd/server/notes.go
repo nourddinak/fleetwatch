@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"fleetwatch/internal/server/ai"
 	"fleetwatch/internal/server/valid"
+	"fleetwatch/internal/server/whatsapp"
 )
 
 // Messages between team members through the WhatsApp AI: "text Sara that…", "call Omar
@@ -63,16 +65,56 @@ func (d callDeps) delivered(to string, notes []note) {
 		} else if k, _ := res.RowsAffected(); k == 0 {
 			continue // passed on elsewhere meanwhile
 		}
-		if wp, ok := d.wa.PersonOf(n.from); ok && wp.Phone != "" && n.from != to {
-			go func(phone, text string) {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := d.wa.Send(ctx, phone, text); err != nil {
-					slog.Warn("whatsapp note receipt", "err", err)
-				}
-			}(wp.Phone, fmt.Sprintf("✅ I passed your message on to %s: %q", d.nameOf(to), n.text))
+		if n.from != to {
+			d.tell(n.from, fmt.Sprintf("✅ I passed your message on to %s: %q", d.nameOf(to), n.text))
 		}
 	}
+}
+
+// onCalls holds the AI calls going on now, by person, to tell them news as it happens.
+var onCalls = struct {
+	sync.Mutex
+	m map[string]chan string
+}{m: map[string]chan string{}}
+
+// onCall registers a call with someone until done.
+func onCall(person string) (<-chan string, func()) {
+	ch := make(chan string, 8)
+	onCalls.Lock()
+	onCalls.m[person] = ch
+	onCalls.Unlock()
+	return ch, func() {
+		onCalls.Lock()
+		if onCalls.m[person] == ch {
+			delete(onCalls.m, person)
+		}
+		onCalls.Unlock()
+	}
+}
+
+// tell lets someone know: said on their call when they are on one, else a WhatsApp text.
+func (d callDeps) tell(person, text string) {
+	onCalls.Lock()
+	ch := onCalls.m[person]
+	onCalls.Unlock()
+	if ch != nil {
+		select {
+		case ch <- text:
+			return
+		default: // a backlog: text it instead
+		}
+	}
+	wp, ok := d.wa.PersonOf(person)
+	if !ok || wp.Phone == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := d.wa.Send(ctx, wp.Phone, text); err != nil {
+			slog.Warn("whatsapp tell", "err", err)
+		}
+	}()
 }
 
 func (d callDeps) nameOf(person string) string {
@@ -126,15 +168,28 @@ func (d callDeps) passMessage(from string) ai.Tool {
 				if err := d.leaveNote(from, to, msg); err != nil { // the call passes it on; unanswered, it waits for later
 					return nil, err
 				}
-				go func() {
+				go func() { // runs alongside this call: how it goes is told to the sender as it happens
 					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 					defer cancel()
-					opening := "The call just connected. You are calling " + d.nameOf(to) + " to pass on a message from " + sender + ". Greet them, say who it is from, and tell them the message. Then ask if they want to reply or need anything else."
-					if answered, err := d.wa.Ring(ctx, wp.Phone, 45*time.Second, d.sessionOpening(to, "", false, opening)); err != nil || !answered {
-						slog.Info("whatsapp note call not answered: kept for later", "to", to)
+					them := d.nameOf(to)
+					opening := "The call just connected. You are calling " + them + " to pass on a message from " + sender + ". Greet them, say who it is from, and tell them the message. Then ask if they want to reply or need anything else."
+					talker := d.sessionOpening(to, "", false, opening)
+					if talker == nil {
+						d.tell(from, "I cannot call "+them+" now (no AI call minutes left); I kept the message and will tell them when they call or write.")
+						return
+					}
+					picked := func(ctx context.Context, m whatsapp.Media) {
+						d.tell(from, them+" picked up; I am telling them your message now.")
+						talker(ctx, m)
+					}
+					switch answered, err := d.wa.Ring(ctx, wp.Phone, 45*time.Second, picked); {
+					case err != nil:
+						d.tell(from, "The call to "+them+" did not go out ("+err.Error()+"); I kept the message and will tell them when they call or write.")
+					case !answered:
+						d.tell(from, them+" did not answer; I kept the message and will tell them when they call or write.")
 					}
 				}()
-				return "calling them now; if they do not answer, I will tell them the next time they call or chat", nil
+				return "calling them now, while this call goes on; you will hear how it goes", nil
 			case "later":
 				if err := d.leaveNote(from, to, msg); err != nil {
 					return nil, err

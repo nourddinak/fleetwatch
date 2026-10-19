@@ -106,6 +106,9 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 ` + lang
 	return func(ctx context.Context, m whatsapp.Media) {
 		talk := ai.Talk{In: m.In, Say: m.Say, Hush: m.Hush, MaxLength: min(maxCall, left)}
+		news, done := onCall(person)
+		defer done()
+		talk.News = news
 		kit := d.toolkit(person, name, incidentID)
 		notes := d.notesFor(person)
 		switch {

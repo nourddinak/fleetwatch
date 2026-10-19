@@ -67,6 +67,9 @@ type Talk struct {
 	// ProtectOpening lets the AI's first turn play out whole: talking over it does not
 	// cut it off (an on-call call's explanation), later turns can be.
 	ProtectOpening bool
+	// News, when set, brings things that happen during the call (a teammate picked up)
+	// for the AI to tell the person at once.
+	News <-chan string
 }
 
 // Converse runs a conversation until the AI ends it, the person hangs up (In closes)
@@ -176,6 +179,19 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		case <-ctx.Done():
 		}
 	}()
+
+	if t.News != nil {
+		go func() {
+			for {
+				select {
+				case n := <-t.News:
+					send(text("user", "(News during this call, not said by them: "+n+" Tell them in a few words now.)"))
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	var lines []Line
 	add := func(who, s string) {

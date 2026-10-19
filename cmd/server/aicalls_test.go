@@ -132,3 +132,30 @@ func TestPassMessageLater(t *testing.T) {
 		t.Fatal("passed on twice")
 	}
 }
+
+// News reaches someone's call while they are on it, and not once it ended.
+func TestTellOnCall(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	deps := callDeps{db: d, wa: whatsapp.New(d, t.TempDir(), nil)}
+	news, done := onCall("mem_sara")
+	deps.tell("mem_sara", "Omar picked up")
+	select {
+	case n := <-news:
+		if n != "Omar picked up" {
+			t.Fatal(n)
+		}
+	default:
+		t.Fatal("not told on the call")
+	}
+	done()
+	deps.tell("mem_sara", "later news") // no call now: a text (no number here, so nothing)
+	select {
+	case n := <-news:
+		t.Fatal("told on an ended call", n)
+	default:
+	}
+}
