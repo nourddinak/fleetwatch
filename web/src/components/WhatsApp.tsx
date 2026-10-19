@@ -300,10 +300,10 @@ function PinField() {
   return (
     <div className="space-y-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <Field label={me.data?.hasPin ? "Action PIN (set: type a new one to replace it)" : "Action PIN"} hint="4 to 8 digits." className="flex-1">
-          <Input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="••••" autoComplete="off" />
+        <Field label={me.data?.hasPin ? "Action PIN (set: type a new one to replace it)" : "Action PIN"} hint="4 digits, not all the same (no 1111)." className="flex-1">
+          <Input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" autoComplete="off" />
         </Field>
-        <Button size="sm" disabled={busy || pin.length < 4} onClick={() => save(pin)}><Check size={13} /> Save PIN</Button>
+        <Button size="sm" disabled={busy || pin.length !== 4 || /^(\d)\1+$/.test(pin)} onClick={() => save(pin)}><Check size={13} /> Save PIN</Button>
         {me.data?.hasPin && <Button size="sm" variant="ghost" disabled={busy} onClick={() => save("")}>Remove</Button>}
       </div>
       {me.data?.requirePin && !me.data.hasPin && <p className="flex items-center gap-1.5 text-xs text-warn"><AlertTriangle size={12} />Actions need a PIN on this dashboard: set yours to restart things by voice or chat.</p>}

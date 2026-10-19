@@ -484,7 +484,7 @@ func (s *Service) SetOptions(o Options) (Options, error) {
 	return o, settings.Save(s.db, "whatsapp.options", o)
 }
 
-var pinRe = regexp.MustCompile(`^[0-9]{4,8}$`)
+var pinRe = regexp.MustCompile(`^[0-9]{4}$`)
 
 type pinHash struct {
 	Salt string `json:"salt"`
@@ -504,7 +504,10 @@ func (s *Service) SetPIN(person, pin string) error {
 		return err
 	}
 	if !pinRe.MatchString(pin) {
-		return valid.Error("a PIN is 4 to 8 digits")
+		return valid.Error("a PIN is 4 digits")
+	}
+	if strings.Count(pin, pin[:1]) == len(pin) {
+		return valid.Error("a PIN can't be the same digit four times, like 1111")
 	}
 	b := make([]byte, 16)
 	rand.Read(b)

@@ -176,3 +176,21 @@ func TestBriefingDue(t *testing.T) {
 		t.Fatal("a late-evening briefing")
 	}
 }
+
+func TestPINRules(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, dir, nil)
+	for _, bad := range []string{"0000", "5555", "123", "12345", "12a4"} {
+		if s.SetPIN("owner", bad) == nil {
+			t.Fatal("accepted", bad)
+		}
+	}
+	if err := s.SetPIN("owner", "4821"); err != nil || !s.HasPIN("owner") {
+		t.Fatal(err)
+	}
+}
