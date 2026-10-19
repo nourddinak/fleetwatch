@@ -52,7 +52,8 @@ type Security struct {
 	SessionTimeoutMin int  `json:"sessionTimeoutMin"`
 	LockoutAfter      int  `json:"lockoutAfter"`
 	ReauthForCommands bool `json:"reauthForCommands"`
-	Require2FA        bool `json:"require2FA"` // team members must turn on 2FA before anything else
+	Require2FA        bool `json:"require2FA"`    // team members must turn on 2FA before anything else
+	NoGitHubLogin     bool `json:"noGitHubLogin"` // the owner turned "Continue with GitHub" off
 }
 
 func DefaultSecurity() Security { return Security{SessionTimeoutMin: 60, LockoutAfter: 5} }

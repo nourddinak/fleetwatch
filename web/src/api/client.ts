@@ -81,6 +81,7 @@ export interface SecuritySettings {
   lockoutAfter: number;
   reauthForCommands: boolean;
   require2FA: boolean;
+  noGitHubLogin?: boolean;
 }
 
 export interface AuditRow {

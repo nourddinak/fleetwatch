@@ -99,12 +99,23 @@ func (s *server) myGitHubRoutes(mux *http.ServeMux) {
 
 const githubLoginCookie = "fw_github_login"
 
+const errGitHubLoginOff = "signing in with GitHub is turned off on this dashboard"
+
+// githubLoginOn: the GitHub app is connected and the owner has not turned the sign-in off.
+func (s *server) githubLoginOn() bool {
+	return s.GitHub.Connected() && !s.Auth.Security().NoGitHubLogin
+}
+
 // Signing in to the dashboard with GitHub, for whoever linked their GitHub account.
 func (s *server) githubLoginRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/methods", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"github": s.GitHub.Connected()})
+		writeJSON(w, http.StatusOK, map[string]bool{"github": s.githubLoginOn()})
 	})
 	mux.HandleFunc("GET /api/auth/github", func(w http.ResponseWriter, r *http.Request) {
+		if !s.githubLoginOn() {
+			http.Redirect(w, r, "/#/login?error="+url.QueryEscape(errGitHubLoginOff), http.StatusSeeOther)
+			return
+		}
 		u, state, err := s.GitHub.LoginURL(r.Context(), s.publicURL(r))
 		if err != nil {
 			http.Redirect(w, r, "/#/login?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
@@ -126,6 +137,11 @@ func (s *server) finishGitHubLogin(ctx context.Context, w http.ResponseWriter, r
 	http.SetCookie(w, &http.Cookie{Name: githubLoginCookie, Path: github.CallbackPath, MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	if err != nil || c.Value != state { // started in another browser: never sign this one in
 		back("this GitHub sign-in was started in another browser: start again here")
+		return
+	}
+	if !s.githubLoginOn() { // turned off while this one was under way
+		s.GitHub.FinishLogin(ctx, "", state) // uses the state up
+		back(errGitHubLoginOff)
 		return
 	}
 	key, login, err := s.GitHub.FinishLogin(ctx, r.URL.Query().Get("code"), state)
