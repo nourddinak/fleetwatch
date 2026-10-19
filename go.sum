@@ -45,6 +45,8 @@ github.com/mattn/go-sqlite3 v1.14.52 h1:wVbm2Qnf4OXkqhBTSPuCRZDRnxfbVrrmiCEroVdo
 github.com/mattn/go-sqlite3 v1.14.52/go.mod h1:6JTjA44L93a0QCyJef5YvlPoKXntQPjzWv5gtm9sB6w=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
+github.com/pedrobartolini/meowcaller v0.0.0-20260814015627-3494d987fa8d h1:B3YNdYrjZRz9VhRMpfkuK8v12W2RT12U1hAwgofE/wg=
+github.com/pedrobartolini/meowcaller v0.0.0-20260814015627-3494d987fa8d/go.mod h1:kSME01MaSkwul6tSmExmgBWUOmfkw3DNpfnozsn01eE=
 github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b h1:OzNsuVdSWGwXvWKTtChx9ve89k4cFJ6NxYM4Aw4/f+E=
 github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b/go.mod h1:pxMtw7cyUw6B2bRH0ZBANSPg+AoSud1I1iyJHI69jH4=
 github.com/pion/datachannel v1.6.0 h1:XecBlj+cvsxhAMZWFfFcPyUaDZtd7IJvrXqlXD/53i0=
@@ -63,8 +65,6 @@ github.com/pion/transport/v4 v4.0.1 h1:sdROELU6BZ63Ab7FrOLn13M6YdJLY20wldXW2Cu2k
 github.com/pion/transport/v4 v4.0.1/go.mod h1:nEuEA4AD5lPdcIegQDpVLgNoDGreqM/YqmEx3ovP4jM=
 github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 h1:jL3a8soXdzuTCcRnKhOmtcsVOObdDTFf4O2B403HPRU=
 github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
-github.com/purpshell/meowcaller v0.0.0-20260811012811-27a3c6b18657 h1:RBP68e6jhDKkWIi0+TvKuLxlp3ntZi2qgh9HWaTYpxI=
-github.com/purpshell/meowcaller v0.0.0-20260811012811-27a3c6b18657/go.mod h1:kSME01MaSkwul6tSmExmgBWUOmfkw3DNpfnozsn01eE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rs/zerolog v1.35.1 h1:m7xQeoiLIiV0BCEY4Hs+j2NG4Gp2o2KPKmhnnLiazKI=

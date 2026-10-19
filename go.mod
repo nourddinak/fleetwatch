@@ -55,3 +55,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// meowcaller with its pull request #26 (bind every offered relay): without it, callers'
+// voices stop after a few silent packets (meowcaller issues #21, #22). Drop once merged.
+replace github.com/purpshell/meowcaller => github.com/pedrobartolini/meowcaller v0.0.0-20260814015627-3494d987fa8d
