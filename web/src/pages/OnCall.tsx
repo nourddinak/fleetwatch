@@ -92,6 +92,9 @@ export function OnCallPage() {
   const next = v.data.schedule?.find((s) => s.person !== v.data!.now && s.from > Date.now());
   const fresh = c.rotation.length === 0;
   const weekly = !c.fixedOrder;
+  // With weekly shifts off (as saved), a shift that runs to the end of the schedule has no real end.
+  const sched = v.data.schedule ?? [];
+  const endless = (s: Shift) => !!v.data!.config.fixedOrder && !s.override && s === sched[sched.length - 1];
 
   return (
     <div className="pb-24">
@@ -111,7 +114,7 @@ export function OnCallPage() {
                 <span className="grid h-14 w-14 place-items-center rounded-2xl bg-accent text-lg font-semibold text-accent-fg">{initials(name(v.data.now))}</span>
                 <div className="min-w-0 flex-1">
                   <div className="text-xl font-semibold">{name(v.data.now)}</div>
-                  <div className="text-sm text-muted">{current ? `until ${when(current.to)}` : ""}{next ? ` · next: ${name(next.person)}` : ""}</div>
+                  <div className="text-sm text-muted">{current ? (endless(current) ? "always on call, no weekly shifts" : `until ${when(current.to)}`) : ""}{next ? ` · next: ${name(next.person)}` : ""}</div>
                   <Reach {...ways(v.data.now)} />
                 </div>
               </div>
@@ -218,14 +221,14 @@ export function OnCallPage() {
           <Overrides c={c} people={people} name={name} set={set} />
           {(v.data.schedule?.length ?? 0) > 0 && (
             <Card>
-              <SectionTitle icon={<CalendarDays size={15} />} title="Coming weeks" />
+              <SectionTitle icon={<CalendarDays size={15} />} title={v.data.config.fixedOrder ? "Schedule" : "Coming weeks"} />
               <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[15px] before:top-2 before:w-px before:bg-line">
                 {v.data.schedule.map((s, i) => (
                   <li key={i} className="relative flex items-center gap-3">
                     <span className={cn("z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-surface text-[11px] font-semibold", i === 0 ? "bg-accent text-accent-fg" : "bg-surface2")}>{initials(name(s.person))}</span>
                     <div className="min-w-0 text-sm">
                       <div className="font-medium">{name(s.person)} {s.override && <Badge tone="info">cover</Badge>}{i === 0 && <Badge tone="ok">now</Badge>}</div>
-                      <div className="text-xs text-muted">{day(s.from)} → {day(s.to)}</div>
+                      <div className="text-xs text-muted">{endless(s) ? `from ${day(s.from)}, ongoing` : `${day(s.from)} → ${day(s.to)}`}</div>
                     </div>
                   </li>
                 ))}
