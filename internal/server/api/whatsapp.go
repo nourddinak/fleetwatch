@@ -31,7 +31,7 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		return out
 	}
 	mux.HandleFunc("GET /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options()})
+		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options(), "canSpeak": whatsapp.CanSpeak()})
 	}))
 	mux.HandleFunc("PUT /api/integrations/whatsapp/options", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in whatsapp.Options
@@ -139,7 +139,7 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		p, _ := s.WhatsApp.PersonOf(linkKey(sess))
 		writeJSON(w, http.StatusOK, map[string]any{"available": s.WhatsApp.Linked(), "person": p, "languages": whatsapp.Languages,
 			"hasPin": s.WhatsApp.HasPIN(linkKey(sess)), "requirePin": s.WhatsApp.Options().RequirePIN,
-			"number": s.WhatsApp.Status().Number}) // whom to call to talk with the AI
+			"number": s.WhatsApp.Status().Number, "canSpeak": whatsapp.CanSpeak()}) // whom to call to talk with the AI; voice replies need ffmpeg
 	}))
 	mux.HandleFunc("PUT /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		var in whatsapp.Person

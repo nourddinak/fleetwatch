@@ -91,8 +91,9 @@ func TestVoiceActionGate(t *testing.T) {
 	g.pending = &voiceAction{what: "x", at: time.Now(), run: func(context.Context) (any, error) { return "ok", nil }}
 	g.do(said, "0000")
 	g.do(said, "0000")
-	if _, err := g.do(said, "4821"); err == nil || !strings.Contains(err.Error(), "too many") {
-		t.Fatal("three wrong PINs must end actions", err)
+	g.do(said, "0000")
+	if _, err := g.do(said, "4821"); err == nil || !strings.Contains(err.Error(), "locked") {
+		t.Fatal("three wrong PINs in a row lock actions", err)
 	}
 }
 

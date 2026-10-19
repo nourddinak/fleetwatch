@@ -413,6 +413,7 @@ func serve() error {
 	waSvc.Talker = func(person, incident string) whatsapp.Talker { return calls.talker(person, incident) }
 	waSvc.Inbound = func(person string) whatsapp.Talker { return calls.inbound(person) }
 	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes
+	waSvc.Speak = aiSvc.Speak       // and get voice notes back, if they like
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

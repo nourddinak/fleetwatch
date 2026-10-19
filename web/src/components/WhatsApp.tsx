@@ -12,6 +12,8 @@ export interface WaPerson {
   quietTo?: string;
   timeZone?: string;
   briefing?: string;
+  weekly?: boolean;
+  replies?: "" | "voice" | "always";
 }
 interface WaStatus {
   linked: boolean;
@@ -42,7 +44,7 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Integrations → WhatsApp: the owner links their WhatsApp and sets how each person is reached. */
 export function WhatsAppSetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions }>("/api/integrations/whatsapp");
+  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions; canSpeak: boolean }>("/api/integrations/whatsapp");
   const [phone, setPhone] = useState("");
   const [byPhone, setByPhone] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -116,7 +118,7 @@ export function WhatsAppSetup() {
           </div>
         )}
       </Card>
-      <PeopleCard people={data.data!.people} linked={st.linked} onChange={reload} />
+      <PeopleCard people={data.data!.people} linked={st.linked} canSpeak={data.data!.canSpeak} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
       {st.linked && <MessagesCard />}
       {st.linked && <RemindersCard />}
@@ -128,19 +130,19 @@ export function WhatsAppSetup() {
   );
 }
 
-function PeopleCard({ people, linked, onChange }: { people: (WaPerson & { id: string; name: string })[]; linked: boolean; onChange: () => void }) {
+function PeopleCard({ people, linked, canSpeak, onChange }: { people: (WaPerson & { id: string; name: string })[]; linked: boolean; canSpeak: boolean; onChange: () => void }) {
   return (
     <Card>
       <SectionTitle icon={<Users size={15} />} title="Who gets WhatsApp alerts"
         sub={<>Add each person's number the first time; they can change it later in their account. Who is alerted, in which order and for which incidents is set in <Link to="/oncall" className="underline">On-call</Link>.</>} />
       <div className="space-y-3">
-        {people.map((p) => <PersonRow key={p.id} id={p.id} name={p.name} saved={p} linked={linked} onSaved={onChange} />)}
+        {people.map((p) => <PersonRow key={p.id} id={p.id} name={p.name} saved={p} linked={linked} canSpeak={canSpeak} onSaved={onChange} />)}
       </div>
     </Card>
   );
 }
 
-function PersonRow({ id, name, saved, linked, onSaved }: { id: string; name: string; saved: WaPerson; linked: boolean; onSaved: () => void }) {
+function PersonRow({ id, name, saved, linked, canSpeak, onSaved }: { id: string; name: string; saved: WaPerson; linked: boolean; canSpeak: boolean; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-line p-3">
@@ -149,13 +151,13 @@ function PersonRow({ id, name, saved, linked, onSaved }: { id: string; name: str
         {saved.phone ? <span className="font-mono text-xs text-muted">+{saved.phone}</span> : <span className="text-xs text-muted">No number</span>}
         {saved.quietFrom && <Badge><MoonStar size={11} /> {saved.quietFrom}–{saved.quietTo}</Badge>}
       </button>
-      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} callUrl={linked ? `/api/integrations/whatsapp/people/${id}/call` : undefined} self={id === "owner"} onSaved={() => { onSaved(); setOpen(false); }} />}
+      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} callUrl={linked ? `/api/integrations/whatsapp/people/${id}/call` : undefined} self={id === "owner"} canSpeak={canSpeak} onSaved={() => { onSaved(); setOpen(false); }} />}
     </div>
   );
 }
 
 /** Someone's number, language and quiet hours. */
-export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { saved: WaPerson; url: string; testUrl?: string; callUrl?: string; self?: boolean; onSaved: () => void }) {
+export function PersonForm({ saved, url, testUrl, callUrl, self, canSpeak, onSaved }: { saved: WaPerson; url: string; testUrl?: string; callUrl?: string; self?: boolean; canSpeak?: boolean; onSaved: () => void }) {
   const { toast } = useStore();
   const [f, setF] = useState<WaPerson>({ ...saved, timeZone: saved.timeZone || zone() });
   const [busy, setBusy] = useState("");
@@ -196,7 +198,18 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
         Morning briefing (a WhatsApp summary of the last 24 hours)
       </label>
       {f.briefing && <Field label="At" className="sm:w-40"><Input type="time" value={f.briefing} onChange={(e) => setF({ ...f, briefing: e.target.value })} /></Field>}
-      {(quiet || f.briefing) && (
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={!!f.weekly} onChange={(e) => setF({ ...f, weekly: e.target.checked })} />
+        Weekly summary on Mondays (incidents, uptime, slowest checks{f.briefing ? `, at ${f.briefing}` : ", at 09:00"})
+      </label>
+      <Field label="Answers to chats" hint={canSpeak === false ? "Voice answers need ffmpeg on the dashboard's server (sudo apt install ffmpeg); until then they come as text." : "Voice answers are read out in the AI's call voice."} className="sm:w-80">
+        <Select value={f.replies ?? ""} onChange={(e) => setF({ ...f, replies: e.target.value as WaPerson["replies"] })}>
+          <option value="">Text</option>
+          <option value="voice">A voice note when I send one</option>
+          <option value="always">Always a voice note</option>
+        </Select>
+      </Field>
+      {(quiet || f.briefing || f.weekly) && (
         <Field label="Time zone" hint="For the quiet hours and the briefing." className="sm:w-72">
           <Input value={f.timeZone} onChange={(e) => setF({ ...f, timeZone: e.target.value })} placeholder="Africa/Casablanca" />
         </Field>
@@ -216,7 +229,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
             {busy === "test" ? <Spinner size={13} /> : <Send size={13} />} Send a test
           </Button>
         )}
-        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", briefing: f.briefing ?? "", timeZone: quiet || f.briefing ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
+        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", briefing: f.briefing ?? "", weekly: !!f.weekly, replies: f.replies ?? "", timeZone: quiet || f.briefing || f.weekly ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
           {busy === "save" ? <Spinner size={13} /> : <Check size={13} />} Save
         </Button>
       </div>
@@ -226,7 +239,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
 
 /** Settings → Account: one's own WhatsApp number, language and quiet hours. */
 export function MyWhatsApp({ explain }: { explain?: boolean }) {
-  const data = useApi<{ available: boolean; person: WaPerson; number?: string }>("/api/me/whatsapp");
+  const data = useApi<{ available: boolean; person: WaPerson; number?: string; canSpeak?: boolean }>("/api/me/whatsapp");
   if (data.data && !data.data.available && explain) {
     return <Card><SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="The dashboard owner has not linked WhatsApp yet. Once they have, set your number here to get on-call alerts and calls." /></Card>;
   }
@@ -239,7 +252,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
           <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, to restart an app, or to pass a message on to a teammate (“call Sara and tell her…”, “when Omar calls, tell him…”). Other numbers get no answer.</span></p>
       )}
       <div className="mb-3"><PinField /></div>
-      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
+      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} canSpeak={data.data.canSpeak} onSaved={data.reload} />
       <div className="mt-6"><MessagesCard bare /></div>
       <div className="mt-6"><RemindersCard bare /></div>
     </Card>

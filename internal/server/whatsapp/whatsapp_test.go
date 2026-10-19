@@ -1,6 +1,8 @@
 package whatsapp
 
 import (
+	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -185,12 +187,39 @@ func TestPINRules(t *testing.T) {
 	}
 	defer d.Close()
 	s := New(d, dir, nil)
-	for _, bad := range []string{"0000", "5555", "123", "12345", "12a4"} {
+	for _, bad := range []string{"0000", "5555", "123", "12345", "12a4", "1234", "4321", "6789", "0123"} {
 		if s.SetPIN("owner", bad) == nil {
 			t.Fatal("accepted", bad)
 		}
 	}
 	if err := s.SetPIN("owner", "4821"); err != nil || !s.HasPIN("owner") {
 		t.Fatal(err)
+	}
+}
+
+func TestWeeklyDue(t *testing.T) {
+	mon := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC) // a Monday
+	p := Person{Weekly: true}
+	if day, due := p.WeeklyDue(mon, ""); !due || day != "2026-10-19" {
+		t.Fatal("Monday 09:00", day, due)
+	}
+	if _, due := p.WeeklyDue(mon.AddDate(0, 0, 1), ""); due {
+		t.Fatal("only on Mondays")
+	}
+	if _, due := (Person{Weekly: true, Briefing: "07:30"}).WeeklyDue(mon, ""); due {
+		t.Fatal("at the briefing's time when there is one")
+	}
+	if _, due := (Person{}).WeeklyDue(mon, ""); due {
+		t.Fatal("not asked for")
+	}
+}
+
+func TestToOpus(t *testing.T) {
+	if !CanSpeak() {
+		t.Skip("no ffmpeg here")
+	}
+	ogg, err := toOpus(context.Background(), make([]byte, 2*24000), 24000)
+	if err != nil || !bytes.HasPrefix(ogg, []byte("OggS")) {
+		t.Fatal(err, len(ogg))
 	}
 }

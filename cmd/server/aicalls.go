@@ -615,10 +615,9 @@ type voiceActions struct {
 	person, name   string
 	incidentServer string
 
-	mu       sync.Mutex
-	pending  *voiceAction
-	running  *voiceRun // the app action started last
-	wrongPIN int
+	mu      sync.Mutex
+	pending *voiceAction
+	running *voiceRun // the app action started last
 }
 
 type voiceAction struct {
@@ -631,7 +630,6 @@ type voiceRun struct{ id, what string }
 
 const (
 	confirmWithin = 90 * time.Second
-	pinTries      = 3
 )
 
 // Kinds of actions, for the tool's description.
@@ -893,7 +891,7 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 
 func (g *voiceActions) do(ctx context.Context, pin string) (any, error) {
 	g.mu.Lock()
-	p, tries := g.pending, g.wrongPIN
+	p := g.pending
 	g.mu.Unlock()
 	if p == nil || time.Since(p.at) > confirmWithin {
 		return nil, valid.Error("there is nothing to confirm (or it was too long ago): call propose_action again")
@@ -902,16 +900,11 @@ func (g *voiceActions) do(ctx context.Context, pin string) (any, error) {
 		return nil, valid.Error("they have not answered yet: ask them to confirm and wait for their yes")
 	}
 	if g.d.wa != nil && g.d.wa.Options().RequirePIN {
-		switch {
-		case tries >= pinTries:
-			return nil, valid.Error("too many wrong PINs: no more actions on this call or chat")
-		case !g.d.wa.HasPIN(g.person):
+		if !g.d.wa.HasPIN(g.person) {
 			return nil, valid.Error("actions need a PIN and " + g.name + " has not set one (Integrations → WhatsApp)")
-		case !g.d.wa.CheckPIN(g.person, pin):
-			g.mu.Lock()
-			g.wrongPIN++
-			g.mu.Unlock()
-			return nil, valid.Error("that PIN is wrong")
+		}
+		if err := g.d.wa.TryPIN(g.person, pin); err != nil {
+			return nil, err
 		}
 	}
 	g.mu.Lock()

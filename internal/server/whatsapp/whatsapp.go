@@ -59,6 +59,8 @@ type Person struct {
 	QuietTo   string `json:"quietTo,omitempty"`   // …until then, in TimeZone
 	TimeZone  string `json:"timeZone,omitempty"`
 	Briefing  string `json:"briefing,omitempty"` // "08:00": a morning summary then, in TimeZone; "" = none
+	Weekly    bool   `json:"weekly,omitempty"`   // a summary of the week on Mondays, at Briefing (or 09:00)
+	Replies   string `json:"replies,omitempty"`  // "" text | "voice": a voice note to a voice note | "always": voice notes
 }
 
 // Languages people may pick ("" follows the conversation).
@@ -81,6 +83,8 @@ type Service struct {
 	// OnMessage answers a team member's message (text, or a voice note's audio and
 	// type); "" sends nothing. Messages from numbers nobody saved never reach it.
 	OnMessage func(ctx context.Context, person, text string, audio []byte, mime string) string
+	// Speak turns a reply into speech (16-bit mono PCM at rate), for voice-note replies.
+	Speak func(ctx context.Context, text string) (pcm []byte, rate int, err error)
 	// Alert tells the owner something went wrong with the link (the watchdog).
 	Alert func(title, body, severity string)
 
@@ -411,6 +415,9 @@ func (s *Service) SetPerson(id string, p Person) (Person, error) {
 	if (p.QuietFrom == "") != (p.QuietTo == "") || p.QuietFrom != "" && (!clock.MatchString(p.QuietFrom) || !clock.MatchString(p.QuietTo)) {
 		return p, valid.Error("quiet hours need a start and an end, like 22:00 and 07:00")
 	}
+	if p.Replies != "" && p.Replies != "voice" && p.Replies != "always" {
+		return p, valid.Error("replies are text, voice or always")
+	}
 	if p.Briefing != "" && !clock.MatchString(p.Briefing) {
 		return p, valid.Error("the briefing time is like 08:00")
 	}
@@ -509,6 +516,9 @@ func (s *Service) SetPIN(person, pin string) error {
 	if strings.Count(pin, pin[:1]) == len(pin) {
 		return valid.Error("a PIN can't be the same digit four times, like 1111")
 	}
+	if run(pin) {
+		return valid.Error("a PIN can't be a run of digits, like 1234 or 4321")
+	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	salt := hex.EncodeToString(b)
@@ -522,6 +532,52 @@ func (s *Service) HasPIN(person string) bool {
 }
 
 // CheckPIN reports whether a PIN is someone's (spoken digits may come with spaces).
+// run reports digits that go up or down one at a time (1234, 4321).
+func run(pin string) bool {
+	step := int(pin[1]) - int(pin[0])
+	if step != 1 && step != -1 {
+		return false
+	}
+	for i := 2; i < len(pin); i++ {
+		if int(pin[i])-int(pin[i-1]) != step {
+			return false
+		}
+	}
+	return true
+}
+
+const (
+	pinTries = 3
+	pinLock  = 15 * time.Minute
+)
+
+type pinFails struct {
+	Count int   `json:"count"`
+	Until int64 `json:"until"` // locked until then
+}
+
+// TryPIN checks someone's PIN: three wrong in a row lock their actions for 15 minutes,
+// on every call and chat.
+func (s *Service) TryPIN(person, pin string) error {
+	var f pinFails
+	settings.Load(s.db, "whatsapp.pinfails."+person, &f)
+	if left := time.Until(time.UnixMilli(f.Until)); left > 0 {
+		return valid.Error(fmt.Sprintf("too many wrong PINs: actions are locked for %d more minutes", int(left.Minutes())+1))
+	}
+	if s.CheckPIN(person, pin) {
+		settings.Save(s.db, "whatsapp.pinfails."+person, pinFails{})
+		return nil
+	}
+	f.Count++
+	if f.Count >= pinTries {
+		f = pinFails{Until: s.Now().Add(pinLock).UnixMilli()}
+		settings.Save(s.db, "whatsapp.pinfails."+person, f)
+		return valid.Error("that PIN is wrong, three times: actions are locked for 15 minutes")
+	}
+	settings.Save(s.db, "whatsapp.pinfails."+person, f)
+	return valid.Error(fmt.Sprintf("that PIN is wrong (%d tries left)", pinTries-f.Count))
+}
+
 func (s *Service) CheckPIN(person, pin string) bool {
 	var h pinHash
 	if settings.Load(s.db, "whatsapp.pin."+person, &h) != nil || h.Hash == "" {
@@ -554,4 +610,21 @@ func addMinutes(clock string, m int) string {
 		return end.Format("15:04")
 	}
 	return "23:59"
+}
+
+// WeeklyDue is BriefingDue for the Monday summary of the week.
+func (p Person) WeeklyDue(now time.Time, lastSent string) (string, bool) {
+	if !p.Weekly {
+		return "", false
+	}
+	if p.Briefing == "" {
+		p.Briefing = "09:00"
+	}
+	if loc, err := time.LoadLocation(p.TimeZone); err == nil {
+		now = now.In(loc)
+	}
+	if now.Weekday() != time.Monday {
+		return "", false
+	}
+	return p.BriefingDue(now, lastSent)
 }

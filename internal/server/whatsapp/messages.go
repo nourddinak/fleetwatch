@@ -59,6 +59,13 @@ func (s *Service) onMessage(cl *whatsmeow.Client, evt *events.Message) {
 	if reply == "" {
 		return
 	}
+	if p, _ := s.PersonOf(person); p.Replies == "always" || (p.Replies == "voice" && audio != nil) {
+		if err := s.sendVoice(ctx, cl, info.Chat, reply); err == nil {
+			return
+		} else {
+			slog.Warn("whatsapp: voice reply, sent as text", "err", err)
+		}
+	}
 	if _, err := cl.SendMessage(ctx, info.Chat, &waE2E.Message{Conversation: proto.String(reply)}); err != nil {
 		slog.Warn("whatsapp: reply", "err", err)
 	}

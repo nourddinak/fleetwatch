@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +36,148 @@ func (d *callDeps) briefings(ctx context.Context) {
 			slog.Warn("whatsapp briefing", "err", err)
 		}
 	}
+	for person, p := range d.wa.People() {
+		if p.Phone == "" {
+			continue
+		}
+		var last string
+		settings.Load(d.db, "whatsapp.weekly."+person, &last)
+		day, due := p.WeeklyDue(now, last)
+		if !due {
+			continue
+		}
+		settings.Save(d.db, "whatsapp.weekly."+person, day)
+		if err := d.wa.Send(ctx, p.Phone, d.weekly(person)); err != nil {
+			slog.Warn("whatsapp weekly summary", "err", err)
+		}
+	}
+}
+
+// weekly writes one person's summary of the last 7 days.
+func (d *callDeps) weekly(person string) string {
+	sees := d.sees(person)
+	since := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
+	var lines []string
+
+	// incidents: how many, how fast, where
+	opened, resolved, open := 0, 0, 0
+	var took time.Duration
+	perServer := map[string]int{}
+	if list, err := d.incidents.List(incidents.Filter{Status: "all", Limit: 2000}); err == nil {
+		for _, x := range list {
+			if !sees(x.ServerID) {
+				continue
+			}
+			if x.Status != "resolved" {
+				open++
+			}
+			if x.FirstAt < since {
+				continue
+			}
+			opened++
+			perServer[d.serverName(x.ServerID)]++
+			if x.Status == "resolved" && x.ResolvedAt > x.FirstAt {
+				resolved++
+				took += time.Duration(x.ResolvedAt-x.FirstAt) * time.Millisecond
+			}
+		}
+	}
+	inc := fmt.Sprintf("Incidents: %d this week, %d resolved", opened, resolved)
+	if resolved > 0 {
+		inc += fmt.Sprintf(" (in %s on average)", (took / time.Duration(resolved)).Round(time.Minute))
+	}
+	if open > 0 {
+		inc += fmt.Sprintf(", %d still open", open)
+	}
+	lines = append(lines, inc)
+	if len(perServer) > 0 {
+		type kv struct {
+			k string
+			v int
+		}
+		var top []kv
+		for k, v := range perServer {
+			top = append(top, kv{k, v})
+		}
+		sort.Slice(top, func(i, j int) bool { return top[i].v > top[j].v })
+		var names []string
+		for _, t := range top[:min(3, len(top))] {
+			names = append(names, fmt.Sprintf("%s (%d)", t.k, t.v))
+		}
+		lines = append(lines, "Most incidents: "+strings.Join(names, ", "))
+	}
+
+	// uptime: the week's lowest, and the slowest now
+	if views, err := d.uptime.Views(); err == nil {
+		type up struct {
+			name string
+			pct  float64
+			ms   int64
+		}
+		var all []up
+		for _, v := range views {
+			if v.ServerID != "" && !sees(v.ServerID) {
+				continue
+			}
+			var ms, n int64
+			for _, st := range v.States {
+				if st.LatencyMs > 0 {
+					ms, n = ms+st.LatencyMs, n+1
+				}
+			}
+			if n > 0 {
+				ms /= n
+			}
+			all = append(all, up{v.Name, v.Uptime7d, ms})
+		}
+		if len(all) > 0 {
+			sort.Slice(all, func(i, j int) bool { return all[i].pct < all[j].pct })
+			var low []string
+			for _, u := range all[:min(3, len(all))] {
+				if u.pct >= 0 && u.pct < 100 {
+					low = append(low, fmt.Sprintf("%s %.2f%%", u.name, u.pct))
+				}
+			}
+			if len(low) == 0 {
+				lines = append(lines, "Uptime: 100% everywhere")
+			} else {
+				lines = append(lines, "Lowest uptime: "+strings.Join(low, ", "))
+			}
+			sort.Slice(all, func(i, j int) bool { return all[i].ms > all[j].ms })
+			var slow []string
+			for _, u := range all[:min(3, len(all))] {
+				if u.ms > 0 {
+					slow = append(slow, fmt.Sprintf("%s %d ms", u.name, u.ms))
+				}
+			}
+			if len(slow) > 0 {
+				lines = append(lines, "Slowest now: "+strings.Join(slow, ", "))
+			}
+		}
+	}
+
+	// servers now
+	var srv []string
+	if views, err := d.hub.Views(); err == nil {
+		for _, v := range views {
+			if sees(v.ID) && (v.Status == "disconnected" || v.Disk >= 85) {
+				note := "offline"
+				if v.Status != "disconnected" {
+					note = fmt.Sprintf("disk %.0f%%", v.Disk)
+				}
+				srv = append(srv, v.Name+": "+note)
+			}
+		}
+	}
+	if len(srv) > 0 {
+		lines = append(lines, "To look at: "+strings.Join(srv, "; "))
+	}
+
+	out := "📊 Your week, " + d.nameOf(person) + ":\n"
+	for _, l := range lines {
+		out += "• " + l + "\n"
+	}
+	return out + "Reply here to ask me anything."
 }
 
 // briefing writes one person's summary of the last 24 hours.
