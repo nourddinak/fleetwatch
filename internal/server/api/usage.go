@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -148,4 +149,67 @@ func cpuTime() (time.Duration, bool) {
 	ut, _ := strconv.ParseInt(f[11], 10, 64)
 	st, _ := strconv.ParseInt(f[12], 10, 64)
 	return time.Duration(ut+st) * time.Second / 100, true // shortcut: assumes 100 ticks/s, Linux's usual USER_HZ
+}
+
+// cleanupTables are the histories a cleanup trims, with their time column. The
+// audit log, incidents and call history are kept: they are the record.
+var cleanupTables = [][2]string{
+	{"server_metrics_1m", "ts"}, {"server_metrics_5m", "ts"}, {"server_metrics_1h", "ts"},
+	{"app_metrics_1m", "ts"}, {"app_metrics_5m", "ts"}, {"app_metrics_1h", "ts"},
+	{"logs", "ts"}, {"uptime_results", "ts"}, {"health_results", "ts"}, {"events", "ts"},
+	{"notification_history", "ts"}, {"command_runs", "started_at"}, {"ssh_logins", "ts"}, {"mobile_messages", "created_at"},
+}
+
+// cleanup deletes history older than some days, then gives the space back to the disk.
+func (s *server) cleanup(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	var in struct{ Days int }
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Days != 7 && in.Days != 30 && in.Days != 90 {
+		writeError(w, http.StatusBadRequest, "invalid", "Keep 7, 30 or 90 days.")
+		return
+	}
+	before := fileSize(s.DataDir)
+	cutoff := time.Now().AddDate(0, 0, -in.Days).UnixMilli()
+	deleted := map[string]int64{}
+	for _, t := range cleanupTables {
+		for { // in small chunks, so the dashboard keeps writing meanwhile
+			res, err := s.DB.ExecContext(r.Context(), `DELETE FROM `+t[0]+` WHERE rowid IN (SELECT rowid FROM `+t[0]+` WHERE `+t[1]+` < ? LIMIT 5000)`, cutoff)
+			if err != nil {
+				break // a table this version does not have
+			}
+			n, _ := res.RowsAffected()
+			deleted[t[0]] += n
+			if n < 5000 {
+				break
+			}
+		}
+	}
+	s.DB.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	if _, err := s.DB.Exec(`VACUUM`); err != nil {
+		fail(w, err)
+		return
+	}
+	s.DB.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	var rows int64
+	for _, n := range deleted {
+		rows += n
+	}
+	s.audit(r, "system.cleanup", "", fmt.Sprintf("kept %d days: %d rows deleted", in.Days, rows))
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": rows, "before": before, "after": fileSize(s.DataDir)})
+}
+
+// fileSize is the data folder's size.
+func fileSize(dir string) int64 {
+	var total int64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
 }

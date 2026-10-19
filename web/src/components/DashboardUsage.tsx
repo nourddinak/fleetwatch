@@ -1,9 +1,10 @@
-import { Cpu, Gauge, HardDrive, MemoryStick, RefreshCw, Timer } from "lucide-react";
-import type { ReactNode } from "react";
-import { useApi } from "../api/client";
+import { Cpu, Eraser, Gauge, HardDrive, MemoryStick, RefreshCw, Timer } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { api, useApi, type ApiError } from "../api/client";
+import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
 import { fmtBytes } from "./DiskRescue";
-import { Card, ErrorState, IconButton, LoadingState, SectionTitle } from "./ui";
+import { Button, Card, ErrorState, IconButton, LoadingState, SectionTitle, Segmented, Spinner } from "./ui";
 
 interface Item {
   name: string;
@@ -40,6 +41,7 @@ export function DashboardUsage() {
         <Bars title="Database, by table" items={d.storage.tables}
           note={d.storage.free > 1 << 20 ? `${fmtBytes(d.storage.free)} of the database is empty space it reuses for new data.` : undefined} />
       </div>
+      <Cleanup onDone={u.reload} />
     </Card>
   );
 }
@@ -69,6 +71,43 @@ function Bars({ title, items, note }: { title: string; items: Item[]; note?: str
         ))}
       </ul>
       {note && <p className="mt-2 text-xs text-muted">{note}</p>}
+    </div>
+  );
+}
+
+/** Deletes old history (metrics, logs, check results…) and gives the space back. */
+function Cleanup({ onDone }: { onDone: () => void }) {
+  const { toast } = useStore();
+  const [days, setDays] = useState<"7" | "30" | "90">("30");
+  const [sure, setSure] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ deleted: number; before: number; after: number }>("POST", "/api/system/cleanup", { days: Number(days) });
+      toast(`Cleaned up: ${r.deleted.toLocaleString()} old rows deleted, ${fmtBytes(Math.max(0, r.before - r.after))} freed`);
+      setSure(false);
+      onDone();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="mt-5 space-y-3 border-t border-line pt-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="w-full">
+          <div className="flex items-center gap-1.5 text-sm font-medium"><Eraser size={14} /> Clean up</div>
+          <p className="text-xs text-muted">Deletes metrics, logs, uptime and health results, events, sent notifications and SSH logins older than you choose, then shrinks the database. The audit log, incidents and call history are kept.</p>
+        </div>
+        <Segmented value={days} onChange={setDays} options={[{ value: "7", label: "Keep 7 days" }, { value: "30", label: "30 days" }, { value: "90", label: "90 days" }]} />
+        {!sure ? (
+          <Button size="sm" variant="secondary" onClick={() => setSure(true)}>Clean up…</Button>
+        ) : (
+          <Button size="sm" variant="danger" disabled={busy} onClick={run}>{busy ? <Spinner size={13} /> : <Eraser size={13} />} Delete older than {days} days</Button>
+        )}
+      </div>
+      {sure && <p className="text-xs text-warn">Charts and logs before then will be gone for good. It can take a minute on a big database.</p>}
     </div>
   );
 }

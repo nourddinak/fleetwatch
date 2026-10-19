@@ -102,6 +102,7 @@ func New(d Deps) http.Handler {
 	s.memberRoutes(mux)
 	s.activityRoutes(mux)
 	mux.HandleFunc("GET /api/system/usage", s.authed(s.usage))
+	mux.HandleFunc("POST /api/system/cleanup", s.authed(s.cleanup))
 	if d.Fleet != nil {
 		s.serverRoutes(mux)
 		s.agentRoutes(mux)

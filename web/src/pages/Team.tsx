@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, IconButton, Input, LoadingState, Modal, SectionTitle, Segmented, Spinner, Table, Td, Toggle, ToggleRow, Tr } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, IconButton, Input, LoadingState, Modal, SectionTitle, Segmented, Spinner, Table, Td, Toggle, ToggleRow, Tr, WhatsApp } from "../components/ui";
 import { relTime } from "../mock/util";
 
 interface Member {
@@ -31,14 +31,28 @@ export function TeamSettings() {
   const [form, setForm] = useState<Form | null>(null);
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState<Member | null>(null);
+  const wa = useApi<{ status: { linked: boolean }; people: { id: string; phone: string }[] }>("/api/integrations/whatsapp");
+  const [invite, setInvite] = useState({ send: false, phone: "", withPassword: false });
+  const open = (f: Form) => {
+    setForm(f);
+    setInvite({ send: false, phone: wa.data?.people.find((p) => p.id === f.id)?.phone ?? "", withPassword: false });
+  };
 
   const save = async () => {
     if (!form) return;
     setBusy(true);
     try {
       const body = { username: form.username, displayName: form.displayName, email: form.email, role: form.role, servers: form.servers, disabled: form.disabled, password: form.password };
-      await api(form.id ? "PUT" : "POST", form.id ? `/api/members/${form.id}` : "/api/members", body);
+      const m = await api<Member>(form.id ? "PUT" : "POST", form.id ? `/api/members/${form.id}` : "/api/members", body);
       toast(form.id ? "Saved" : `${form.username} can now sign in`);
+      if (invite.send) {
+        try {
+          await api("POST", `/api/members/${m.id}/invite`, { phone: invite.phone, password: invite.withPassword ? form.password : "" });
+          toast("Sign-in details sent on WhatsApp");
+        } catch (e) {
+          toast(`Not sent on WhatsApp: ${(e as ApiError).message}`, "err");
+        }
+      }
       setForm(null);
       list.reload();
     } catch (e) {
@@ -67,7 +81,7 @@ export function TeamSettings() {
       <SectionTitle icon={<Users size={15} />}
         title="Team"
         sub="Give others their own sign-in. Every action they take is in the audit log under their name. You stay the owner: only you change settings, servers and the team."
-        action={<Button size="sm" onClick={() => setForm({ username: "", displayName: "", email: "", role: "operator", servers: null, disabled: false, password: "" })}><Plus size={14} /> Member</Button>}
+        action={<Button size="sm" onClick={() => open({ username: "", displayName: "", email: "", role: "operator", servers: null, disabled: false, password: "" })}><Plus size={14} /> Member</Button>}
       />
       {list.error ? (
         <ErrorState message={list.error} onRetry={list.reload} />
@@ -91,7 +105,7 @@ export function TeamSettings() {
               <Td className="text-xs">{m.servers === null ? "All servers" : m.servers.map((id) => getServer(id)?.name ?? id).join(", ") || "None"}</Td>
               <Td className="text-xs text-muted">{m.lastLoginAt ? relTime(m.lastLoginAt) : "never"}</Td>
               <Td className="whitespace-nowrap text-right">
-                <Button size="sm" variant="ghost" onClick={() => setForm({ ...m, password: "" })}>Edit</Button>
+                <Button size="sm" variant="ghost" onClick={() => open({ ...m, password: "" })}>Edit</Button>
                 <IconButton aria-label="Remove member" onClick={() => setDel(m)}><Trash2 size={14} /></IconButton>
               </Td>
             </Tr>
@@ -108,7 +122,7 @@ export function TeamSettings() {
           footer={
             <>
               <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
-              <Button disabled={busy || !form.username || (!form.id && form.password.length < 12)} onClick={save}>{busy && <Spinner size={14} />} {form.id ? "Save" : "Add"}</Button>
+              <Button disabled={busy || !form.username || (!form.id && form.password.length < 12) || (invite.send && !invite.phone.trim())} onClick={save}>{busy && <Spinner size={14} />} {form.id ? "Save" : "Add"}</Button>
             </>
           }
         >
@@ -141,6 +155,26 @@ export function TeamSettings() {
             <Field label={form.id ? "New password (optional)" : "Password"} hint="At least 12 characters. Changing it signs them out everywhere.">
               <Input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
             </Field>
+            {wa.data?.status.linked && (
+              <div className="space-y-3 rounded-xl bg-surface2 px-3 py-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Toggle checked={invite.send} onChange={(v) => setInvite({ ...invite, send: v })} /> <WhatsApp size={14} /> Send them the sign-in details on WhatsApp
+                </label>
+                {invite.send && (
+                  <>
+                    <Field label="Their WhatsApp number" hint="With the country code. Saved as their number for alerts too.">
+                      <Input value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value })} placeholder="+212 6 12 34 56 78" autoComplete="off" />
+                    </Field>
+                    {form.password && (
+                      <label className="flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={invite.withPassword} onChange={(e) => setInvite({ ...invite, withPassword: e.target.checked })} />
+                        Include the password (they are asked to change it); without it, the message says to ask you
+                      </label>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             {form.id && <ToggleRow label="Disabled" desc="Cannot sign in; signed out right away." checked={form.disabled} onChange={(v) => setForm({ ...form, disabled: v })} />}
             {form.id && form.twofaEnabled && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-surface2 px-3 py-2 text-sm">

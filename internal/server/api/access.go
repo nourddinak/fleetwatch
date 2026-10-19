@@ -19,7 +19,7 @@ import (
 // ownerOnly paths are off limits to members, reading included: secrets, settings,
 // the team itself, status pages and platform updates.
 var ownerOnly = []string{"/api/tokens", "/api/sessions", "/api/audit", "/api/members", "/api/settings", "/api/status-pages",
-	"/api/notifications/channels", "/api/integrations", "/api/system/update/apply", "/api/system/update/check", "/api/system/usage", "/api/oncall"}
+	"/api/notifications/channels", "/api/integrations", "/api/system/update/apply", "/api/system/update/check", "/api/system/usage", "/api/system/cleanup", "/api/oncall"}
 
 // Writes any signed-in member may make (their own account, sign-out).
 var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account/password|PUT /api/account|POST /api/notifications/read|` +
