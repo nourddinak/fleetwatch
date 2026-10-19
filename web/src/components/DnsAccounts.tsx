@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Globe, RefreshCw, ShieldAlert, Trash2, Users } from "lucide-react";
+import { AlertTriangle, ChevronDown, Globe, RefreshCw, ShieldAlert, Trash2, Users, Wand2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -170,6 +170,21 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState(false);
+  const [token, setToken] = useState("");
+  const [byHand, setByHand] = useState(false);
+  const auto = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ account: string }>("POST", "/api/integrations/cloudflare/auto", { token });
+      setEditing(false);
+      setToken("");
+      onChange();
+      toast(`Sign-in app made in ${r.account}: sign in with Cloudflare below, and delete the API token in Cloudflare`);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
   const save = async () => {
     setBusy(true);
     try {
@@ -200,6 +215,22 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="space-y-3 rounded-2xl border border-line p-4">
+            <div className="flex items-center gap-2 text-sm font-medium"><Wand2 size={15} /> Set up automatically <Badge tone="ok">Recommended</Badge></div>
+            <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
+              <li>Open <a className="font-medium text-fg underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">Cloudflare → API tokens</a> → <b className="text-fg">Create token</b> → <b className="text-fg">Create Custom Token</b>.</li>
+              <li>Give it one permission: <b className="text-fg">Account → OAuth Clients → Edit</b> (or Write), for your account. Create it and copy it.</li>
+              <li>Paste it here. Fleetwatch makes the sign-in app with every field and scope filled in. The token is used once and never kept: delete it in Cloudflare afterwards.</li>
+            </ol>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="API token" className="font-mono" autoComplete="off" />
+              <Button disabled={busy || !token.trim()} onClick={auto} className="shrink-0">{busy ? <Spinner size={13} /> : <Wand2 size={14} />} Set up automatically</Button>
+            </div>
+          </div>
+          <button className="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-fg" onClick={() => setByHand(!byHand)}>
+            <ChevronDown size={13} className={byHand ? "rotate-180 transition" : "transition"} /> Or set it up by hand
+          </button>
+          {byHand && <>
           <ol className="list-decimal space-y-2.5 pl-5 text-sm text-muted">
             <li>Open <a className="font-medium text-fg underline" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noreferrer">Cloudflare → Manage account → OAuth clients</a> and select <b className="text-fg">Create client</b>.</li>
             <li>
@@ -233,6 +264,8 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
             {clientId && <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>}
             <Button size="sm" disabled={busy || !id.trim() || !secret.trim()} onClick={save}>{busy && <Spinner size={13} />} Save</Button>
           </div>
+          </>}
+          {clientId && !byHand && <div className="flex justify-end"><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></div>}
         </div>
       )}
       <ConfirmDialog open={del} title="Remove the Cloudflare sign-in app?" confirmLabel="Remove" danger

@@ -584,7 +584,7 @@ func serve() error {
 		if !on {
 			ips = nil
 		}
-		c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		dnsSvc.SyncBlocks(c, ips)
 	}

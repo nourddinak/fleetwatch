@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -83,6 +84,51 @@ func (s *Service) SetApp(clientID, secret string) error {
 		ON CONFLICT (provider) DO UPDATE SET secret_enc = excluded.secret_enc`, s.box.Seal(raw, appAD), s.Now().UnixMilli())
 	s.publish("")
 	return err
+}
+
+// AutoApp creates the OAuth client in the owner's Cloudflare account with a one-time API
+// token (OAuth Clients Write), with everything the sign-in needs, and keeps its ID and
+// secret. The token itself is not kept. It answers the account's name.
+func (s *Service) AutoApp(ctx context.Context, token, publicURL string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" || len(token) > 300 {
+		return "", valid.Error("paste the API token")
+	}
+	c := cloudflare{token: token}
+	var accounts []struct{ ID, Name string }
+	if _, err := c.call(ctx, http.MethodGet, "/accounts?per_page=50", nil, &accounts); err != nil {
+		return "", valid.Error("the token does not work: " + err.Error())
+	}
+	if len(accounts) == 0 {
+		return "", valid.Error("the token cannot see any Cloudflare account: give it your account")
+	}
+	acc := accounts[0]
+	body := map[string]any{"client_name": "Fleetwatch", "grant_types": []string{"authorization_code", "refresh_token"},
+		"response_types": []string{"code"}, "token_endpoint_auth_method": "client_secret_basic",
+		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": Scopes}
+	if strings.HasPrefix(publicURL, "https://") {
+		body["client_uri"] = publicURL
+	}
+	var out struct {
+		ClientID     string `json:"client_id"`
+		ID           string `json:"id"`
+		ClientSecret string `json:"client_secret"`
+		Secret       string `json:"secret"`
+	}
+	path := "/accounts/" + acc.ID + "/oauth_clients"
+	_, err := c.call(ctx, http.MethodPost, path, body, &out)
+	if err != nil && strings.Contains(err.Error(), "offline") { // in case a client may not list offline access itself
+		body["scopes"] = slices.DeleteFunc(slices.Clone(Scopes), func(sc string) bool { return sc == "offline_access" })
+		_, err = c.call(ctx, http.MethodPost, path, body, &out)
+	}
+	if err != nil {
+		return "", valid.Error("Cloudflare did not create the sign-in app: " + err.Error())
+	}
+	id, secret := cmp.Or(out.ClientID, out.ID), cmp.Or(out.ClientSecret, out.Secret)
+	if id == "" || secret == "" {
+		return "", valid.Error("Cloudflare made the sign-in app but did not send its ID and secret: set it up by hand with a new secret (Manage account → OAuth clients)")
+	}
+	return acc.Name, s.SetApp(id, secret)
 }
 
 // ClearApp forgets the OAuth client; accounts already connected stop working.

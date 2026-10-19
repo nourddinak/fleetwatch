@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -313,16 +314,14 @@ func (s *Service) SetSyncBlocks(owner, id string, on bool) (Account, error) {
 
 // SyncBlocks makes Cloudflare block exactly the dashboard's blocked addresses, in every
 // zone of the accounts that asked for it; it only touches rules it made itself. When
-// mirroring is turned off, its rules go away on the next run.
+// mirroring is turned off, its rules go away on the next run. Zones are done a few at a
+// time; what does not fit in ctx is picked up by the next run.
 func (s *Service) SyncBlocks(ctx context.Context, ips []string) {
 	if !s.syncing.TryLock() {
 		return
 	}
 	defer s.syncing.Unlock()
 	for _, a := range s.Accounts("") {
-		if a.Provider != "cloudflare" {
-			continue
-		}
 		_, p, err := s.account("", a.ID)
 		if err != nil {
 			continue
@@ -332,32 +331,76 @@ func (s *Service) SyncBlocks(ctx context.Context, ips []string) {
 		if !a.SyncBlocks {
 			want = nil
 		}
-		var problem error
-		for _, z := range a.Zones {
-			have, err := cdn.BlockRules(ctx, z)
-			if err != nil {
+		var (
+			mu         sync.Mutex
+			wg         sync.WaitGroup
+			problem    error
+			todo, done int
+		)
+		fail := func(err error) {
+			mu.Lock()
+			if problem == nil {
 				problem = err
-				continue
 			}
-			for _, ip := range want {
-				if _, ok := have[ip]; !ok {
-					if err := cdn.Block(ctx, z, ip); err != nil {
-						problem = err
+			mu.Unlock()
+		}
+		slots := make(chan struct{}, 4)
+		for _, z := range a.Zones {
+			wg.Add(1)
+			go func(z Zone) {
+				defer wg.Done()
+				slots <- struct{}{}
+				defer func() { <-slots }()
+				have, err := cdn.BlockRules(ctx, z)
+				if err != nil {
+					fail(err)
+					return
+				}
+				var jobs []func() error
+				for _, ip := range want {
+					if _, ok := have[ip]; !ok {
+						jobs = append(jobs, func() error { return cdn.Block(ctx, z, ip) })
 					}
 				}
-			}
-			for ip, id := range have {
-				if !slices.Contains(want, ip) {
-					cdn.DeleteRule(ctx, z, id)
+				for ip, id := range have {
+					if !slices.Contains(want, ip) {
+						jobs = append(jobs, func() error { return cdn.DeleteRule(ctx, z, id) })
+					}
 				}
-			}
+				mu.Lock()
+				todo += len(jobs)
+				mu.Unlock()
+				for _, job := range jobs {
+					if ctx.Err() != nil {
+						fail(ctx.Err())
+						return
+					}
+					if err := job(); err != nil {
+						fail(err)
+						continue
+					}
+					mu.Lock()
+					done++
+					mu.Unlock()
+				}
+			}(z)
 		}
-		if problem != nil && a.SyncBlocks {
-			a.Error = "blocking on Cloudflare: " + problem.Error()
+		wg.Wait()
+		msg := ""
+		switch {
+		case problem == nil:
+		case ctx.Err() != nil:
+			msg = fmt.Sprintf("Cloudflare: %d of %d blocked-address changes made so far; the rest follow by themselves within 15 minutes", done, todo)
+		default:
+			msg = "blocking on Cloudflare: " + problem.Error()
+		}
+		if !a.SyncBlocks && problem != nil {
+			msg = a.Error // turned off: removing its rules is best effort
+		}
+		if msg != a.Error {
+			a.Error = msg
 			s.save(a)
-		} else if a.Error != "" && problem == nil {
-			a.Error = ""
-			s.save(a)
+			s.publish(a.Owner)
 		}
 	}
 }

@@ -73,6 +73,20 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		s.audit(r, "integration.cloudflare.connect", "", "")
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	// Or made for the owner, with a one-time API token that is not kept.
+	mux.HandleFunc("POST /api/integrations/cloudflare/auto", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Token string }
+		if !decode(w, r, &in) {
+			return
+		}
+		name, err := s.DNS.AutoApp(r.Context(), in.Token, s.publicURL(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "integration.cloudflare.connect", "", "made automatically in "+name)
+		writeJSON(w, http.StatusOK, map[string]string{"account": name})
+	}))
 	mux.HandleFunc("DELETE /api/integrations/cloudflare", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.DNS.ClearApp(); err != nil {
 			fail(w, err)
@@ -147,7 +161,7 @@ func (s *server) syncBlocks() {
 	if !on {
 		ips = nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	s.DNS.SyncBlocks(ctx, ips)
 }

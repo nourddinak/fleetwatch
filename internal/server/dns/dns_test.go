@@ -75,6 +75,14 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 		switch {
 		case p == "/zones":
 			ok([]Zone{{ID: "z1", Name: "example.com"}})
+		case p == "/accounts":
+			ok([]map[string]string{{"id": "acc1", "name": "Me"}})
+		case p == "/accounts/acc1/oauth_clients" && r.Method == "POST":
+			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes) ||
+				!strings.HasSuffix(body["redirect_uris"].([]any)[0].(string), CallbackPath) {
+				t.Errorf("client: %v", body)
+			}
+			ok(map[string]string{"client_id": "cid", "client_secret": "csec"})
 		case p == "/zones/z1/dns_records" && r.Method == "GET":
 			out := []Record{}
 			for _, rec := range f.records {
@@ -154,8 +162,11 @@ func TestCloudflare(t *testing.T) {
 	if _, err := s.SignInURL("https://dash.test", "mem_1"); err == nil {
 		t.Fatal("sign-in without the OAuth client set up")
 	}
-	if err := s.SetApp("cid", "csec"); err != nil || s.AppClientID() != "cid" {
-		t.Fatal(err)
+	if _, err := s.AutoApp(ctx, "wrong", "https://dash.test"); err == nil {
+		t.Fatal("a bad API token made a client")
+	}
+	if name, err := s.AutoApp(ctx, "cf-token", "https://dash.test"); err != nil || name != "Me" || s.AppClientID() != "cid" {
+		t.Fatal(name, err)
 	}
 	start := func(owner string) string {
 		u, err := s.SignInURL("https://dash.test", owner)
@@ -228,12 +239,18 @@ func TestCloudflare(t *testing.T) {
 	if _, err := s.SetSyncBlocks("mem_1", a.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	late, cancel := context.WithCancel(ctx) // out of time: a progress note, not an error
+	cancel()
+	s.SyncBlocks(late, []string{"198.51.100.7"})
+	if e := s.Accounts("mem_1")[0].Error; !strings.Contains(e, "follow by themselves") {
+		t.Fatal(e)
+	}
 	s.SyncBlocks(ctx, []string{"198.51.100.7", "203.0.113.0/24"})
 	if len(f.rules) != 3 {
 		t.Fatalf("%v", f.rules)
 	}
 	s.SyncBlocks(ctx, []string{"198.51.100.7"})
-	if len(f.rules) != 2 || f.rules["theirs"][0] != "192.0.2.1" {
+	if len(f.rules) != 2 || f.rules["theirs"][0] != "192.0.2.1" || s.Accounts("mem_1")[0].Error != "" {
 		t.Fatalf("%v", f.rules)
 	}
 	s.SetSyncBlocks("mem_1", a.ID, false)
