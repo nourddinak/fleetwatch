@@ -58,7 +58,7 @@ export function AISetup() {
     <>
       <Card>
         <SectionTitle icon={<Gemini size={17} />} title="AI on calls (Gemini Live)"
-          sub="When someone answers an on-call call, a Gemini voice tells them what happened, answers their questions from the dashboard's data, and acknowledges the incident when they say they are on it. The call's transcript goes on the incident."
+          sub="When someone answers an on-call call, a Gemini voice tells them what happened, answers their questions from the dashboard's data, acknowledges the incident when they say they are on it, and can start, stop or restart an app once they confirm (as far as their role allows). The call's transcript goes on the incident."
           action={st.configured ? <Badge tone="ok" dot>Connected</Badge> : undefined} />
         {!st.configured ? keyForm : (
           <div className="space-y-4">

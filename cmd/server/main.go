@@ -409,7 +409,7 @@ func serve() error {
 	}
 	// Answered calls talk with the AI (Gemini Live), when the owner set it up.
 	aiSvc := ai.New(d, box)
-	waSvc.Talker = callDeps{ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, people: func() []oncall.Person { return onCall.People() }}.talker
+	waSvc.Talker = callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, people: func() []oncall.Person { return onCall.People() }}.talker
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

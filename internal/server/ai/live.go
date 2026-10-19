@@ -28,6 +28,22 @@ type Tool struct {
 	Run         func(ctx context.Context, args map[string]any) (any, error)
 }
 
+type heardKey struct{}
+
+// HeardSince is what the person said on the call since t (their words, as transcribed),
+// for tools that must wait for an answer, such as a confirmation.
+func HeardSince(ctx context.Context, t time.Time) string {
+	if f, ok := ctx.Value(heardKey{}).(func(time.Time) string); ok {
+		return f(t)
+	}
+	return ""
+}
+
+// WithHeard gives tools run under ctx what the person said since a moment (see HeardSince).
+func WithHeard(ctx context.Context, since func(time.Time) string) context.Context {
+	return context.WithValue(ctx, heardKey{}, since)
+}
+
 // Line is one turn of the transcript.
 type Line struct {
 	Who  string `json:"who"` // ai | person
@@ -134,6 +150,23 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		lines = append(lines, Line{who, s})
 	}
 	var spoken time.Duration // audio queued since the turn began, to let it play out
+	type said struct {
+		at   time.Time
+		text string
+	}
+	var heardMu sync.Mutex
+	var heard []said
+	heardSince := func(t time.Time) string {
+		heardMu.Lock()
+		defer heardMu.Unlock()
+		var b strings.Builder
+		for _, h := range heard {
+			if !h.at.Before(t) {
+				b.WriteString(h.text)
+			}
+		}
+		return b.String()
+	}
 	for {
 		_, raw, err := ws.Read(ctx)
 		if err != nil {
@@ -181,6 +214,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			}
 			if sc.InputTranscription != nil {
 				add("person", sc.InputTranscription.Text)
+				heardMu.Lock()
+				heard = append(heard, said{s.Now(), sc.InputTranscription.Text})
+				heardMu.Unlock()
 			}
 			if sc.OutputTranscription != nil {
 				add("ai", sc.OutputTranscription.Text)
@@ -207,7 +243,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 				if fc.Name == "end_call" {
 					ending = true
 				} else if tool, ok := tools[fc.Name]; ok {
-					tctx, tcancel := context.WithTimeout(ctx, 15*time.Second)
+					tctx, tcancel := context.WithTimeout(WithHeard(ctx, heardSince), 40*time.Second)
 					v, err := tool.Run(tctx, fc.Args)
 					tcancel()
 					if err != nil {
