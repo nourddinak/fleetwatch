@@ -68,7 +68,7 @@ func fakeGitHub(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 			}
 			w.Write([]byte(`{"access_token":"ghu_member"}`))
 		case r.URL.Path == "/user" && r.Header.Get("Authorization") == "Bearer ghu_member":
-			w.Write([]byte(`{"login":"teammate"}`))
+			w.Write([]byte(`{"login":"teammate","id":42}`))
 		case r.URL.Path == "/user/installations" && r.Header.Get("Authorization") == "Bearer ghu_member":
 			w.Write([]byte(`{"installations":[{"id":7}]}`))
 		case r.Method == "DELETE" && r.URL.Path == "/app/installations/7" && checkJWT(r):
@@ -211,6 +211,31 @@ func TestMemberSignIn(t *testing.T) {
 	}
 	if _, _, err := s.FinishSignIn(ctx, "user-code", state); err == nil {
 		t.Fatal("state used twice")
+	}
+	// Signing in to the dashboard with that GitHub account finds the member, once per state.
+	lu, lstate, err := s.LoginURL(ctx, "https://ops.example.com")
+	if err != nil || !strings.Contains(lu, lstate) || !s.IsLogin(lstate) || s.IsLogin(state) {
+		t.Fatal(lu, err)
+	}
+	if who, login, err := s.FinishLogin(ctx, "user-code", lstate); err != nil || who != "mem_1" || login != "teammate" {
+		t.Fatal(who, login, err)
+	}
+	if _, _, err := s.FinishLogin(ctx, "user-code", lstate); err == nil {
+		t.Fatal("login state used twice")
+	}
+	_, ls, _ := s.LoginURL(ctx, "https://ops.example.com")
+	if _, _, err := s.FinishSignIn(ctx, "user-code", ls); err == nil {
+		t.Fatal("a login state linked an account")
+	}
+	// A link kept before user IDs were: never matched by login alone.
+	st, _, _ := s.load()
+	l = st.Links["mem_1"]
+	l.ID = 0
+	st.Links["mem_1"] = l
+	s.save(st, nil)
+	_, ls, _ = s.LoginURL(ctx, "https://ops.example.com")
+	if _, _, err := s.FinishLogin(ctx, "user-code", ls); err == nil || !strings.Contains(err.Error(), "again") {
+		t.Fatal("matched by login alone", err)
 	}
 	if !s.CanDeploy(ctx, "mem_1", "nourddinak/shop") || s.CanDeploy(ctx, "mem_2", "nourddinak/shop") {
 		t.Fatal("deploy rights")

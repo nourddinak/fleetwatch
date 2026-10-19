@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, LockKeyhole, LogIn, ShieldCheck, UserRound } from "lucide-react";
 import { useStore } from "../store/store";
-import { Button, Field, Input, Spinner, WithIcon } from "../components/ui";
+import { Button, Field, Github, Input, Spinner, WithIcon } from "../components/ui";
 import { Logo, ThemeToggle } from "../components/Layout";
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -25,8 +25,17 @@ export function Login() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [show, setShow] = useState(false);
+  const [params] = useSearchParams();
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [github, setGithub] = useState(false);
+  useEffect(() => {
+    const e = params.get("error");
+    if (e) setErr(e.charAt(0).toUpperCase() + e.slice(1));
+  }, [params]);
+  useEffect(() => {
+    fetch("/api/auth/methods").then((r) => (r.ok ? r.json() : {})).then((m: { github?: boolean }) => setGithub(!!m.github)).catch(() => {});
+  }, []);
   if (auth === "in") return <Navigate to="/" replace />;
   if (auth === "needs2fa") return <Navigate to="/2fa" replace />;
   if (auth === "setup") return <Navigate to="/setup" replace />;
@@ -66,6 +75,15 @@ export function Login() {
           {busy ? <Spinner /> : <LogIn size={15} />} Sign in
         </Button>
       </form>
+      {github && (
+        <>
+          <div className="my-5 flex items-center gap-3 text-xs text-muted"><span className="h-px flex-1 bg-line" />or<span className="h-px flex-1 bg-line" /></div>
+          <a href="/api/auth/github" className="flex w-full items-center justify-center gap-2 rounded-full border border-line px-4 py-2.5 text-sm font-medium transition hover:bg-surface2">
+            <Github size={16} /> Continue with GitHub
+          </a>
+          <p className="mt-2 text-center text-[11px] text-muted">For anyone who linked their GitHub account on the Sites page.</p>
+        </>
+      )}
     </Shell>
   );
 }

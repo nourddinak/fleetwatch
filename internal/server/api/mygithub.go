@@ -78,6 +78,10 @@ func (s *server) myGitHubRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+github.CallbackPath, func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
+		if s.GitHub.IsLogin(r.URL.Query().Get("state")) {
+			s.finishGitHubLogin(ctx, w, r)
+			return
+		}
 		key, l, err := s.GitHub.FinishSignIn(ctx, r.URL.Query().Get("code"), r.URL.Query().Get("state"))
 		if err != nil {
 			http.Redirect(w, r, "/#/sites?github=error&message="+url.QueryEscape(err.Error()), http.StatusSeeOther)
@@ -91,4 +95,61 @@ func (s *server) myGitHubRoutes(mux *http.ServeMux) {
 		}
 		http.Redirect(w, r, "/#/sites?github=linked", http.StatusSeeOther)
 	})
+}
+
+const githubLoginCookie = "fw_github_login"
+
+// Signing in to the dashboard with GitHub, for whoever linked their GitHub account.
+func (s *server) githubLoginRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/auth/methods", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"github": s.GitHub.Connected()})
+	})
+	mux.HandleFunc("GET /api/auth/github", func(w http.ResponseWriter, r *http.Request) {
+		u, state, err := s.GitHub.LoginURL(r.Context(), s.publicURL(r))
+		if err != nil {
+			http.Redirect(w, r, "/#/login?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		// Lax: it must come along on GitHub's redirect back, a top-level navigation.
+		http.SetCookie(w, &http.Cookie{Name: githubLoginCookie, Value: state, Path: github.CallbackPath, MaxAge: 900,
+			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+		http.Redirect(w, r, u, http.StatusSeeOther)
+	})
+}
+
+func (s *server) finishGitHubLogin(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	back := func(msg string) {
+		http.Redirect(w, r, "/#/login?error="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
+	state := r.URL.Query().Get("state")
+	c, err := r.Cookie(githubLoginCookie)
+	http.SetCookie(w, &http.Cookie{Name: githubLoginCookie, Path: github.CallbackPath, MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	if err != nil || c.Value != state { // started in another browser: never sign this one in
+		back("this GitHub sign-in was started in another browser: start again here")
+		return
+	}
+	key, login, err := s.GitHub.FinishLogin(ctx, r.URL.Query().Get("code"), state)
+	if err != nil {
+		back(err.Error())
+		return
+	}
+	member := key
+	if key == github.OwnerKey {
+		member = ""
+	}
+	if old := cookieToken(r); old != "" {
+		s.Auth.Logout(client(r), old)
+	}
+	token, pending, err := s.Auth.LoginExternal(client(r), member, "GitHub ("+login+")")
+	if err != nil {
+		clearSessionCookie(w)
+		back(err.Error())
+		return
+	}
+	if pending {
+		setSessionCookie(w, token, 5*time.Minute)
+	} else {
+		setSessionCookie(w, token, auth.SessionMaxAge)
+	}
+	http.Redirect(w, r, "/#/", http.StatusSeeOther)
 }

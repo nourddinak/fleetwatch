@@ -18,6 +18,9 @@ const sessionCookie = "fw_session"
 
 func (s *server) authRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", s.login)
+	if s.GitHub != nil {
+		s.githubLoginRoutes(mux)
+	}
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/auth/2fa", s.verify2FA)
 	mux.HandleFunc("GET /api/auth/me", s.me)

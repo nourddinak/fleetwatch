@@ -254,6 +254,32 @@ func (s *Service) Login(c Client, username, password string) (token string, pend
 	return token, false, err
 }
 
+// LoginExternal signs in a user another sign-in vouched for (GitHub): member "" is the
+// owner. A disabled member is refused, and two-factor still applies.
+func (s *Service) LoginExternal(c Client, member, how string) (token string, pending bool, err error) {
+	if err := s.guard(c); err != nil {
+		return "", false, err
+	}
+	if member != "" {
+		var disabled bool
+		if s.db.QueryRow(`SELECT disabled FROM members WHERE id = ?`, member).Scan(&disabled) != nil || disabled {
+			s.failed(c, "login", how+": no active member")
+			return "", false, ErrInvalidCredentials
+		}
+		s.db.Exec(`UPDATE members SET last_login_at = ? WHERE id = ?`, s.Now().UnixMilli(), member)
+	}
+	if f, err := s.factor(member); err == nil && f.totpEnc != nil {
+		token, _, err = s.createSession(c, true, member)
+		return token, true, err
+	}
+	s.lim.reset(c.IP)
+	token, _, err = s.createSession(c, false, member)
+	if err == nil {
+		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: how})
+	}
+	return token, false, err
+}
+
 // Verify2FA completes a pending login. The pending session is replaced by a new one.
 func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) (string, error) {
 	if err := s.guard(c); err != nil {

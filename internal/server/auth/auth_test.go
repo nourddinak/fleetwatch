@@ -352,3 +352,26 @@ func TestMemberTwoFactor(t *testing.T) {
 		t.Fatal("sessions kept after a 2FA reset")
 	}
 }
+
+func TestLoginExternal(t *testing.T) {
+	s, _ := newService(t)
+	if tok, pending, err := s.LoginExternal(cl, "", "GitHub (me)"); err != nil || pending || tok == "" {
+		t.Fatal("owner", pending, err)
+	}
+	m, err := s.CreateMember(cl, MemberInput{Username: "sam", Role: RoleOperator, Password: "member-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, pending, err := s.LoginExternal(cl, m.ID, "GitHub (sam)"); err != nil || pending || tok == "" {
+		t.Fatal("member", pending, err)
+	}
+	if _, err := s.UpdateMember(cl, m.ID, MemberInput{Username: "sam", Role: RoleOperator, Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.LoginExternal(cl, m.ID, "GitHub (sam)"); err == nil {
+		t.Fatal("a disabled member signed in")
+	}
+	if _, _, err := s.LoginExternal(cl, "mem_gone", "GitHub (x)"); err == nil {
+		t.Fatal("an unknown member signed in")
+	}
+}
