@@ -141,7 +141,7 @@ func TestPhoneApp(t *testing.T) {
 	}
 
 	// The fleet at a glance (widget), limited to what each person can see.
-	if st, out := appCall(t, srv, "GET", "/api/mobile/status", token, ""); st != 200 || len(out["servers"].([]any)) != 1 {
+	if st, out := appCall(t, srv, "GET", "/api/mobile/status", token, ""); st != 200 || len(out["servers"].([]any)) != 1 || out["incidents"] == nil {
 		t.Fatalf("status: %d %v", st, out)
 	}
 	if st, _ := appCall(t, srv, "GET", "/api/mobile/servers/"+serverB+"/metrics?range=1h", opsToken, ""); st != 404 {

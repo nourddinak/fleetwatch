@@ -9,6 +9,7 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/metrics"
 	"fleetwatch/internal/server/mobile"
+	"fleetwatch/internal/server/oncall"
 )
 
 // mobileMoreRoutes: what the phone app shows besides alerts: the fleet at a glance (also
@@ -59,6 +60,12 @@ func (s *server) mobileMoreRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/status", s.deviceAuthed(func(w http.ResponseWriter, r *http.Request, d mobile.Device) {
 		list := fleetOf(d)
 		open, critical := 0, 0
+		type incident struct {
+			Title    string `json:"title"`
+			Severity string `json:"severity"`
+			Status   string `json:"status"`
+		}
+		latest := []incident{} // the newest few, for the on-call widget
 		if s.Incidents != nil {
 			servers, _ := s.Mobile.Scope(d.MemberID)
 			if xs, err := s.Incidents.List(incidentsOpen()); err == nil {
@@ -68,11 +75,36 @@ func (s *server) mobileMoreRoutes(mux *http.ServeMux) {
 						if x.Severity == "critical" && x.Status == "active" {
 							critical++
 						}
+						if len(latest) < 4 {
+							latest = append(latest, incident{x.Title, x.Severity, x.Status})
+						}
 					}
 				}
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"at": time.Now().UnixMilli(), "servers": list, "openIncidents": open, "critical": critical})
+		out := map[string]any{"at": time.Now().UnixMilli(), "servers": list, "openIncidents": open, "critical": critical, "incidents": latest}
+		if s.OnCall != nil { // who is on call now, and until when (0: no end)
+			if c := s.OnCall.Config(); c.Enabled {
+				if sched := c.Schedule(time.Now(), 2); len(sched) > 0 {
+					now, until := sched[0].Person, sched[0].To
+					if c.FixedOrder && len(sched) == 1 {
+						until = 0
+					}
+					name := now
+					for _, p := range s.OnCall.People() {
+						if p.ID == now {
+							name = p.Name
+						}
+					}
+					me := d.MemberID
+					if me == "" {
+						me = oncall.Owner
+					}
+					out["onCall"] = map[string]any{"name": name, "until": until, "you": now == me}
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
 	}))
 	mux.HandleFunc("GET /api/mobile/servers/{id}/metrics", s.deviceAuthed(func(w http.ResponseWriter, r *http.Request, d mobile.Device) {
 		if !visible(d, r.PathValue("id")) {
