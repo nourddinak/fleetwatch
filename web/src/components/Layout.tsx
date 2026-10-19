@@ -1,3 +1,4 @@
+import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Activity, AlertOctagon, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
@@ -283,6 +284,7 @@ function Shell() {
           <UpdateBanner />
           <Suspense fallback={<LoadingState />}>
             <Outlet />
+            <ConfirmPrompt />
           </Suspense>
         </main>
       </div>

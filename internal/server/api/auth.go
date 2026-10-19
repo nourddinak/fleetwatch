@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -62,6 +63,9 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 		if !sess.Owner() && !strings.HasPrefix(r.URL.Path, "/api/2fa/") && !strings.HasPrefix(r.URL.Path, "/api/account") &&
 			s.Auth.Security().Require2FA && !s.Auth.HasTwoFA(sess.MemberID) {
 			writeError(w, http.StatusForbidden, "2fa_required", "The owner requires two-factor authentication: turn it on to continue.")
+			return
+		}
+		if !s.confirmed(w, r, sess) {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess))
@@ -379,4 +383,34 @@ func (s *server) regenRecovery(w http.ResponseWriter, r *http.Request, sess auth
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"recoveryCodes": codes})
+}
+
+// dangerous are the requests that need a 2FA code when the owner asks for it
+// (Security → Confirm dangerous actions).
+var dangerous = regexp.MustCompile(`^(DELETE /api/(servers|apps|sites|members|status-pages|uptime|tokens)/[^/]+|DELETE /api/integrations/[a-z]+|` +
+	`POST /api/blocks|POST /api/servers/[^/]+/(firewall/change|updates/install|disk/clean)|POST /api/system/cleanup|PUT /api/settings/security)$`)
+
+// confirmed asks for the code (428, the page prompts and sends it in X-Confirm) and checks it.
+func (s *server) confirmed(w http.ResponseWriter, r *http.Request, sess auth.Session) bool {
+	if !s.Auth.Security().ConfirmDangerous || !dangerous.MatchString(r.Method+" "+r.URL.Path) {
+		return true
+	}
+	kind, what := "password", "your password"
+	if s.Auth.HasTwoFA(sess.MemberID) {
+		kind, what = "2fa", "the code from your authenticator app"
+	}
+	code := r.Header.Get("X-Confirm")
+	if code == "" {
+		writeJSON(w, http.StatusPreconditionRequired, map[string]string{"code": "confirm_required", "kind": kind, "error": "This action needs " + what + "."})
+		return false
+	}
+	if err := s.Auth.ConfirmAction(client(r), sess.MemberID, code, "confirm "+r.Method+" "+r.URL.Path); err != nil {
+		if errors.Is(err, auth.ErrInvalidCode) {
+			writeError(w, http.StatusForbidden, "bad_confirm", "That code is wrong.")
+			return false
+		}
+		fail(w, err)
+		return false
+	}
+	return true
 }

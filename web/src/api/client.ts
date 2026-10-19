@@ -9,20 +9,36 @@ export class ApiError extends Error {
 /** Fired when the server says the session is gone; the store listens and shows the login page. */
 export const UNAUTHENTICATED_EVENT = "fw:unauthenticated";
 
+/** Asks the person for their 2FA code (or password) for a dangerous action; null = canceled. */
+type Confirmer = (kind: "2fa" | "password", message: string) => Promise<string | null>;
+let confirmer: Confirmer | null = null;
+export function setConfirmer(fn: Confirmer | null) {
+  confirmer = fn;
+}
+
 /** JSON request to the central server. Throws ApiError with the server's message on failure. */
-export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+export async function api<T = unknown>(method: string, path: string, body?: unknown, confirm?: string): Promise<T> {
   let res: Response;
   try {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (confirm) headers["X-Confirm"] = confirm;
     res = await fetch(path, {
       method,
       credentials: "same-origin",
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, "network", "Could not reach the central server.");
   }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 428 && data.code === "confirm_required" && !confirm && confirmer) {
+    // A dangerous action: ask for the code, then send it again with it.
+    const code = await confirmer(data.kind === "2fa" ? "2fa" : "password", data.error ?? "");
+    if (!code) throw new ApiError(428, "canceled", "Canceled.");
+    return api<T>(method, path, body, code);
+  }
   if (!res.ok) {
     if (res.status === 401 && data.code === "unauthenticated" && !path.startsWith("/api/auth/")) {
       window.dispatchEvent(new Event(UNAUTHENTICATED_EVENT));
@@ -77,6 +93,7 @@ export interface SessionInfo {
 }
 
 export interface SecuritySettings {
+  confirmDangerous?: boolean;
   sessionTimeoutMin: number;
   lockoutAfter: number;
   reauthForCommands: boolean;

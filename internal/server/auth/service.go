@@ -54,6 +54,9 @@ type Security struct {
 	ReauthForCommands bool `json:"reauthForCommands"`
 	Require2FA        bool `json:"require2FA"`    // team members must turn on 2FA before anything else
 	NoGitHubLogin     bool `json:"noGitHubLogin"` // the owner turned "Continue with GitHub" off
+	// ConfirmDangerous: deleting servers, blocking addresses and the like need a 2FA
+	// code (or the password, for someone without 2FA) each time.
+	ConfirmDangerous bool `json:"confirmDangerous"`
 }
 
 func DefaultSecurity() Security { return Security{SessionTimeoutMin: 60, LockoutAfter: 5} }
@@ -782,6 +785,19 @@ func hashRecovery(code string) string {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// ConfirmAction checks the code someone gave for a dangerous action: their current 2FA
+// code, or their password when they have no 2FA (failures are audited under action).
+func (s *Service) ConfirmAction(c Client, member, secret, action string) error {
+	if !s.HasTwoFA(member) {
+		return s.confirmAccountPassword(c, member, secret, action)
+	}
+	if !s.checkSecondFactor(member, strings.TrimSpace(secret), false) {
+		s.failed(c, action, "bad 2FA code")
+		return ErrInvalidCode
+	}
+	return nil
 }
 
 // ConfirmPassword re-checks the admin password for a sensitive action (rate limited

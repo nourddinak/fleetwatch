@@ -171,6 +171,7 @@ export function SecuritySettings() {
         </div>
         <div className="mt-3 divide-y divide-line">
           <ToggleRow label="Re-authenticate before running commands" desc="Ask for your password on Stop / Restart / custom commands" checked={f.reauthForCommands} onChange={(v) => setF({ ...f, reauthForCommands: v })} />
+          <ToggleRow label="2FA code for dangerous actions" desc="Deleting servers, apps, sites, members or status pages, blocking addresses, firewall changes, installing updates, cleaning disks and changing these settings ask for a 2FA code each time (the password, for someone without 2FA). Also for the team." checked={!!f.confirmDangerous} onChange={(v) => setF({ ...f, confirmDangerous: v })} />
           <ToggleRow label="Require 2FA for everyone" desc="Team members without two-factor authentication must turn it on before they can use the dashboard. Turn on your own first." checked={!!f.require2FA} onChange={(v) => setF({ ...f, require2FA: v })} />
           <ToggleRow label="Allow signing in with GitHub" desc="The login page offers Continue with GitHub to everyone who linked their GitHub account (needs GitHub connected in Integrations). Turned off, only passwords work." checked={!f.noGitHubLogin} onChange={(v) => setF({ ...f, noGitHubLogin: !v })} />
         </div>
