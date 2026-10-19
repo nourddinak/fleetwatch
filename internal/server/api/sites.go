@@ -118,7 +118,7 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			return
 		}
 		s.audit(r, "site.update", st.ServerID, st.Name)
-		writeJSON(w, http.StatusOK, st)
+		writeJSON(w, http.StatusOK, mark(sess, st))
 	}))
 	mux.HandleFunc("GET /api/sites/{id}/env", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		if _, ok := own(w, r, sess); !ok { // the .env holds secrets
@@ -147,7 +147,7 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			return
 		}
 		s.audit(r, "site.env", st.ServerID, st.Name)
-		writeJSON(w, http.StatusOK, st)
+		writeJSON(w, http.StatusOK, mark(sess, st))
 	}))
 	// Where each of a site's domains points right now, as public DNS answers.
 	mux.HandleFunc("GET /api/sites/{id}/dns/check", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
