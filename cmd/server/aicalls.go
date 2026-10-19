@@ -75,7 +75,9 @@ func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talk
 	if n, ok := whatsapp.LanguageNames[wp.Language]; ok {
 		lang = "Speak " + n + ". If they switch to another language, switch with them."
 	}
-	rules := `- This is a phone call: keep every answer short and plain, no lists, no markdown, no IDs read out unless asked.
+	rules := `- This is a phone call: answer at once, keep every answer short and plain, no lists, no markdown, no IDs read out unless asked.
+- Before you call a tool, say two or three words first (like "one moment" or "let me check") so they are not left in silence.
+- If they talk while you speak, stop and listen to them.
 - Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
 - You can start, stop, restart or reload an app. First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action, then say how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.

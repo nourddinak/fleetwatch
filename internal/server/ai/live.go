@@ -109,7 +109,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		// Half a second of quiet ends their turn, so answers come quickly (speech is
 		// still detected as eagerly as Gemini does by default).
 		"realtimeInputConfig": map[string]any{"automaticActivityDetection": map[string]any{
-			"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 600}},
+			"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 450}},
 	}}); err != nil {
 		return nil, 0, err
 	}
@@ -130,10 +130,23 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	var boost booster
 	var boostMu sync.Mutex
 	hungUp := false
+	var lastSpeech time.Time // when they last spoke, to time the replies
+	interrupts := 0
 	go func() {
+		run := 0 // frames of their speech in a row
 		for frame := range t.In {
 			boostMu.Lock()
 			frame = boost.apply(frame)
+			if boost.talking {
+				lastSpeech = s.Now()
+				run++
+			} else {
+				run = 0
+			}
+			if run == bargeFrames { // they talk over the AI: what it was still going to say is dropped
+				t.Hush()
+				interrupts++
+			}
 			boostMu.Unlock()
 			if send(map[string]any{"realtimeInput": map[string]any{"audio": map[string]string{
 				"mimeType": "audio/pcm;rate=16000", "data": base64.StdEncoding.EncodeToString(pcm16(frame))}}}) != nil {
@@ -184,6 +197,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		return b.String()
 	}
 	why := "the AI ended the call"
+	var replies []time.Duration // from the end of their speech to the AI's first sound
+	turnEnded := start          // when the AI's last turn ended
+	newTurn := true
 	for {
 		_, raw, err := ws.Read(ctx)
 		if err != nil {
@@ -232,6 +248,14 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 						continue
 					}
 					if b, err := base64.StdEncoding.DecodeString(p.InlineData.Data); err == nil {
+						if newTurn {
+							newTurn = false
+							boostMu.Lock()
+							if spoke := lastSpeech; spoke.After(turnEnded) {
+								replies = append(replies, s.Now().Sub(spoke))
+							}
+							boostMu.Unlock()
+						}
 						out := resample24to16(b)
 						spoken += time.Duration(len(out)) * time.Second / 16000
 						t.Say(out)
@@ -250,8 +274,10 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			if sc.Interrupted {
 				t.Hush()
 				spoken = 0
+				newTurn, turnEnded = true, s.Now()
 			}
 			if sc.TurnComplete {
+				newTurn, turnEnded = true, s.Now()
 				if ending {
 					select { // let the goodbye play out
 					case <-time.After(spoken + 500*time.Millisecond):
@@ -299,7 +325,14 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		why = "they hung up"
 	}
 	rep := CallReport{At: start.UnixMilli(), Seconds: int(took.Seconds()), Frames: boost.frames, Speech: boost.speech,
-		LoudestDB: dbfs(boost.peak), Gain: boost.gain, Ended: why}
+		LoudestDB: dbfs(boost.peak), Gain: boost.gain, Ended: why, Interruptions: interrupts}
+	if len(replies) > 0 {
+		var sum time.Duration
+		for _, r := range replies {
+			sum += r
+		}
+		rep.ReplyAvgMs, rep.ReplySlowestMs = int((sum / time.Duration(len(replies))).Milliseconds()), int(slices.Max(replies).Milliseconds())
+	}
 	boostMu.Unlock()
 	for _, l := range lines {
 		if l.Who == "person" {
@@ -309,7 +342,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		}
 	}
 	rep.Heard, rep.Said = clip(strings.TrimSpace(rep.Heard), 300), clip(strings.TrimSpace(rep.Said), 300)
-	slog.Info("ai call", "seconds", rep.Seconds, "frames", rep.Frames, "speechFrames", rep.Speech, "loudestDB", rep.LoudestDB, "gain", rep.Gain, "ended", why, "heard", rep.Heard)
+	slog.Info("ai call", "replyAvgMs", rep.ReplyAvgMs, "replySlowestMs", rep.ReplySlowestMs, "interruptions", rep.Interruptions, "seconds", rep.Seconds, "frames", rep.Frames, "speechFrames", rep.Speech, "loudestDB", rep.LoudestDB, "gain", rep.Gain, "ended", why, "heard", rep.Heard)
 	var failed error
 	if len(lines) == 0 && took < 5*time.Second {
 		failed = errors.New("Gemini Live ended the conversation right away")
@@ -332,7 +365,12 @@ type CallReport struct {
 	Heard     string  `json:"heard"`     // what Gemini understood them to say
 	Said      string  `json:"said"`      // what the AI said
 	Ended     string  `json:"ended"`
-	Error     string  `json:"error,omitempty"`
+	// ReplyAvgMs and ReplySlowestMs time the AI's answers: from the end of their speech
+	// to its first sound; Interruptions counts the times they talked over it.
+	ReplyAvgMs     int    `json:"replyAvgMs"`
+	ReplySlowestMs int    `json:"replySlowestMs"`
+	Interruptions  int    `json:"interruptions"`
+	Error          string `json:"error,omitempty"`
 }
 
 // LastCall is the report of the last conversation (nil before any).
@@ -392,13 +430,18 @@ func resample24to16(b []byte) []float32 {
 // the last few seconds) count as speech; silence and hiss never raise the boost on their
 // own, and nothing is muted.
 type booster struct {
-	recent []float64 // the last frames' levels, for the background
-	level  float64   // their speaking level
-	gain   float64
-	frames int
-	speech int
-	peak   float64
+	talking bool      // the last frame was speech
+	recent  []float64 // the last frames' levels, for the background
+	level   float64   // their speaking level
+	gain    float64
+	frames  int
+	speech  int
+	peak    float64
 }
+
+// bargeFrames of their speech in a row (180 ms) cut the AI off: enough to ignore a click
+// or a cough, quick enough to feel like talking over someone.
+const bargeFrames = 3
 
 const (
 	boostTarget = 0.08 // about -22 dBFS: a clear voice
@@ -419,7 +462,8 @@ func (b *booster) apply(f []float32) []float32 {
 		b.recent = b.recent[1:]
 	}
 	background := slices.Min(b.recent)
-	if rms > 3*background && rms > 0.0005 { // speech: follow its level, quickly up, more slowly down
+	b.talking = rms > 3*background && rms > 0.0005
+	if b.talking { // speech: follow its level, quickly up, more slowly down
 		b.speech++
 		switch {
 		case b.level == 0:

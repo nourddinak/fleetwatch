@@ -106,14 +106,26 @@ func TestKeyAndConversation(t *testing.T) {
 	if len(models) != 2 || models[0].ID != "gemini-3.8-live" || !models[0].Recommended || models[1].ID != "gemini-3.1-flash-live-preview" {
 		t.Fatalf("models: %+v", models)
 	}
-	in := make(chan []float32, 4)
-	in <- make([]float32, 960)
+	in := make(chan []float32, 64)
+	tone := func(amp float32) []float32 {
+		f := make([]float32, 960)
+		for i := range f {
+			f[i] = amp * float32(1-2*(i%2))
+		}
+		return f
+	}
+	for range 20 { // background, then they talk over the AI
+		in <- tone(0.0005)
+	}
+	for range 4 {
+		in <- tone(0.05)
+	}
 	var mu sync.Mutex
-	var heard int
+	var heard, hushed int
 	lines, _, err := s.Converse(ctx, Talk{
 		Instructions: "test", Opening: "go", MaxLength: time.Minute, In: in,
 		Say:  func(f []float32) { mu.Lock(); heard += len(f); mu.Unlock() },
-		Hush: func() {},
+		Hush: func() { mu.Lock(); hushed++; mu.Unlock() },
 		Tools: []Tool{{Name: "get_incident", Description: "the incident", Run: func(context.Context, map[string]any) (any, error) {
 			return "disk full on web-1", nil
 		}}},
@@ -124,7 +136,7 @@ func TestKeyAndConversation(t *testing.T) {
 	if heard != 1600 { // 100 ms at 16 kHz
 		t.Fatal("audio", heard)
 	}
-	if r := s.LastCall(); r == nil || r.Frames != 1 || r.Heard != "I'm on it" || r.Said == "" || r.Ended == "" {
+	if r := s.LastCall(); r == nil || r.Frames != 24 || r.Heard != "I'm on it" || r.Said == "" || r.Ended == "" || r.Interruptions != 1 || hushed != 1 {
 		t.Fatalf("last call report: %+v", r)
 	}
 	s.AddUsage(90 * time.Second)
@@ -159,6 +171,9 @@ func TestBooster(t *testing.T) {
 	var out []float32
 	for range 40 { // quiet speech (about -48 dBFS) comes out at a normal level
 		out = b.apply(frame(0.004))
+	}
+	if !b.talking {
+		t.Fatal("speech not marked as talking")
 	}
 	if out[0] < 0.05 || b.speech < 30 {
 		t.Fatal("quiet speech not boosted", out[0], b.speech)

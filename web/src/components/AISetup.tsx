@@ -115,6 +115,9 @@ interface LastCall {
   said: string;
   ended: string;
   error?: string;
+  replyAvgMs: number;
+  replySlowestMs: number;
+  interruptions: number;
 }
 
 /** How the last call went: whether their voice arrived, what Gemini heard, why it ended. */
@@ -128,6 +131,7 @@ function LastCallCard({ c, onReload }: { c: LastCall; onReload: () => void }) {
         action={<Button size="sm" variant="ghost" onClick={onReload}><RefreshCw size={13} /></Button>} />
       <dl className="space-y-2 text-sm">
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Their voice</dt><dd><Badge tone={voice.tone} dot>{voice.tone === "ok" ? "OK" : "Problem"}</Badge> <span className="text-xs">{voice.text}</span></dd></div>
+        {c.replyAvgMs > 0 && <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Replies</dt><dd className="text-xs">took {(c.replyAvgMs / 1000).toFixed(1)} s on average, {(c.replySlowestMs / 1000).toFixed(1)} s at most{c.interruptions > 0 ? ` · you cut it off ${c.interruptions}×` : ""}</dd></div>}
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">AI heard</dt><dd className="text-xs">{c.heard || <span className="text-muted">nothing</span>}</dd></div>
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">AI said</dt><dd className="text-xs">{c.said || <span className="text-muted">nothing</span>}</dd></div>
         {c.error && <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Error</dt><dd className="text-xs text-crit">{c.error}</dd></div>}
