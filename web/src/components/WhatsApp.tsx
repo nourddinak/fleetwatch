@@ -193,7 +193,7 @@ export function PersonForm({ saved, url, testUrl, self, onSaved }: { saved: WaPe
             {busy === "test" ? <Spinner size={13} /> : <Send size={13} />} Send a test
           </Button>
         )}
-        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { ...f, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", timeZone: quiet ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
+        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", timeZone: quiet ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
           {busy === "save" ? <Spinner size={13} /> : <Check size={13} />} Save
         </Button>
       </div>
