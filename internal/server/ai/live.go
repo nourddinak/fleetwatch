@@ -104,6 +104,11 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		"tools":                    []map[string]any{{"functionDeclarations": decls}},
 		"inputAudioTranscription":  map[string]any{},
 		"outputAudioTranscription": map[string]any{},
+		// A phone line is never quite silent: line noise must not count as speech, and
+		// half a second of quiet ends their turn, so answers come quickly.
+		"realtimeInputConfig": map[string]any{"automaticActivityDetection": map[string]any{
+			"startOfSpeechSensitivity": "START_SENSITIVITY_LOW", "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+			"prefixPaddingMs": 100, "silenceDurationMs": 500}},
 	}}); err != nil {
 		return nil, 0, err
 	}
@@ -121,7 +126,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 
 	// The person's voice, as it comes.
 	go func() {
+		var g noiseGate
 		for frame := range t.In {
+			frame = g.apply(frame)
 			if send(map[string]any{"realtimeInput": map[string]any{"audio": map[string]string{
 				"mimeType": "audio/pcm;rate=16000", "data": base64.StdEncoding.EncodeToString(pcm16(frame))}}}) != nil {
 				return
@@ -301,4 +308,36 @@ func resample24to16(b []byte) []float32 {
 		out[i] = in[j]*(1-frac) + next*frac
 	}
 	return out
+}
+
+// noiseGate turns line noise into true silence, so Gemini can tell when the person has
+// stopped talking: frames well above the noise floor pass, plus a short hold after
+// them so the ends of words are kept.
+type noiseGate struct {
+	floor float64
+	hold  int // frames left to keep passing
+}
+
+const gateHold = 5 // 300 ms of 60 ms frames
+
+func (g *noiseGate) apply(f []float32) []float32 {
+	var sum float64
+	for _, v := range f {
+		sum += float64(v) * float64(v)
+	}
+	rms := math.Sqrt(sum / float64(max(1, len(f))))
+	if g.floor == 0 || rms < g.floor {
+		g.floor = rms
+	} else {
+		g.floor = min(g.floor*1.02, rms) // follows rising noise slowly
+	}
+	if rms > max(0.006, 3*g.floor) {
+		g.hold = gateHold
+	} else if g.hold > 0 {
+		g.hold--
+	}
+	if g.hold > 0 {
+		return f
+	}
+	return make([]float32, len(f))
 }

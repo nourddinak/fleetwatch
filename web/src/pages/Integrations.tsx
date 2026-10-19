@@ -5,7 +5,8 @@ import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
 import { CloudflareSetup, DnsAccounts } from "../components/DnsAccounts";
-import { WhatsAppSetup } from "../components/WhatsApp";
+import { MyWhatsApp, WhatsAppSetup } from "../components/WhatsApp";
+import { goGitHub } from "./Sites";
 import { AISetup } from "../components/AISetup";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, WhatsApp, Gemini, CopyButton, PageHeader, SearchInput } from "../components/ui";
 
@@ -95,10 +96,92 @@ export function IntegrationsSettings() {
 
 /** Settings-free home of the integrations: a page of its own, reached from the sidebar. */
 export function IntegrationsPage() {
+  const { me } = useStore();
+  const owner = !me || me.role === "owner";
   return (
     <div>
-      <PageHeader title="Integrations" sub="Connect the services your sites and servers use." />
-      <IntegrationsSettings />
+      <PageHeader title="Integrations" sub={owner ? "Connect the services your sites and servers use." : "Your own accounts: the GitHub you deploy from, your Cloudflare, and where WhatsApp alerts reach you."} />
+      {owner ? <IntegrationsSettings /> : <MemberIntegrations />}
+    </div>
+  );
+}
+
+interface MyGitHub {
+  connected: boolean;
+  canDeploy: boolean;
+  owner: boolean;
+  app?: string;
+  link?: { login: string; installations: number[]; linkedAt: number };
+}
+
+/** A team member's own integrations: one card each, opening its settings. */
+function MemberIntegrations() {
+  const { toast } = useStore();
+  const [params, setParams] = useSearchParams();
+  const gh = useApi<MyGitHub>("/api/me/github");
+  const dns = useApi<{ accounts: unknown[]; ready: boolean }>("/api/me/dns");
+  const wa = useApi<{ available: boolean; person: { phone: string } }>("/api/me/whatsapp");
+  const tab = params.get("tab") ?? "";
+  const back = <button className="mb-6 inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg" onClick={() => setParams({})}><ArrowLeft size={14} /> All integrations</button>;
+  if (tab === "github") {
+    const g = gh.data;
+    return (
+      <div>
+        {back}
+        <Card>
+          <SectionTitle icon={<Github size={17} />} title="Your GitHub" sub="Link your own GitHub account to deploy your sites from your repositories, and to sign in with GitHub." />
+          {!g ? <Spinner /> : !g.connected ? (
+            <p className="text-sm text-muted">The dashboard owner has not connected GitHub yet.</p>
+          ) : !g.canDeploy ? (
+            <p className="text-sm text-muted">Viewers do not deploy sites, so there is nothing to link.</p>
+          ) : g.link ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-surface2"><Github size={20} /></span>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{g.link.login}</div>
+                <div className="text-xs text-muted">{g.link.installations.length} account{g.link.installations.length === 1 ? "" : "s"} with the {g.app} app · linked {relTime(g.link.linkedAt)}</div>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => goGitHub("install", toast)}>Give access to more repositories</Button>
+              <Button size="sm" variant="ghost" className="text-crit" onClick={async () => { try { await api("DELETE", "/api/me/github"); gh.reload(); toast("GitHub unlinked"); } catch (e) { toast((e as ApiError).message, "err"); } }}>Unlink</Button>
+            </div>
+          ) : (
+            <Button onClick={() => goGitHub("connect", toast)}><Github size={14} /> Connect your GitHub</Button>
+          )}
+        </Card>
+      </div>
+    );
+  }
+  if (tab === "cloudflare") return <div>{back}<DnsAccounts /></div>;
+  if (tab === "whatsapp") return <div>{back}<MyWhatsApp explain /></div>;
+  const items = [
+    { key: "github", logo: <Github size={28} />, name: "GitHub", on: !!gh.data?.link,
+      desc: "Your own GitHub account: deploy your sites from your repositories, and sign in with it.",
+      status: gh.data?.link ? `@${gh.data.link.login}` : gh.data?.connected ? "Not linked yet" : "Not set up by the owner yet" },
+    { key: "cloudflare", logo: <Cloudflare size={34} />, name: "Cloudflare", on: (dns.data?.accounts.length ?? 0) > 0,
+      desc: "Sign in with your Cloudflare: your sites' domains point at their server by themselves, and you see their traffic.",
+      status: dns.data?.accounts.length ? `${dns.data.accounts.length} account${dns.data.accounts.length === 1 ? "" : "s"} signed in` : dns.data?.ready ? "Not signed in yet" : "Not set up by the owner yet" },
+    { key: "whatsapp", logo: <WhatsApp size={32} />, name: "WhatsApp", on: !!wa.data?.person.phone,
+      desc: "Where on-call alerts and calls reach you, in your language, and your quiet hours.",
+      status: wa.data?.person.phone ? `+${wa.data.person.phone}` : wa.data?.available ? "No number yet" : "Not set up by the owner yet" },
+  ];
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {items.map((i) => (
+        <button key={i.key} onClick={() => setParams({ tab: i.key })} className="group flex flex-col gap-4 rounded-3xl border border-line bg-surface p-5 text-left transition hover:-translate-y-0.5 hover:border-fg/20 hover:shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-surface2">{i.logo}</span>
+            <Badge tone={i.on ? "ok" : undefined}>{i.on ? "Connected" : "Not connected"}</Badge>
+          </div>
+          <div>
+            <div className="text-base font-semibold">{i.name}</div>
+            <p className="mt-1 text-sm text-muted">{i.desc}</p>
+          </div>
+          <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-muted">
+            <span className="truncate">{i.status}</span>
+            <span className="inline-flex items-center gap-1 font-medium text-fg">{i.on ? "Manage" : "Set up"} <ChevronRight size={14} className="transition group-hover:translate-x-0.5" /></span>
+          </div>
+        </button>
+      ))}
     </div>
   );
 }

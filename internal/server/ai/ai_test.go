@@ -129,3 +129,37 @@ func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestNoiseGate(t *testing.T) {
+	frame := func(amp float32) []float32 {
+		f := make([]float32, 960)
+		for i := range f {
+			f[i] = amp
+			if i%2 == 1 {
+				f[i] = -amp
+			}
+		}
+		return f
+	}
+	var g noiseGate
+	for range 20 { // line hiss: silence
+		if f := g.apply(frame(0.003)); f[0] != 0 {
+			t.Fatal("noise passed")
+		}
+	}
+	if f := g.apply(frame(0.2)); f[0] == 0 {
+		t.Fatal("speech was cut")
+	}
+	for i := range gateHold - 1 { // the hold keeps the end of the word
+		if f := g.apply(frame(0.003)); f[0] == 0 {
+			t.Fatal("cut right after speech", i)
+		}
+	}
+	g.apply(frame(0.003))
+	if f := g.apply(frame(0.003)); f[0] != 0 {
+		t.Fatal("the gate stayed open")
+	}
+	if !strings.Contains(mustJSON(map[string]int{"a": 1}), "a") {
+		t.Fatal()
+	}
+}

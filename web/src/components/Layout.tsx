@@ -137,7 +137,7 @@ function Shell() {
       { to: "/applications", label: "Applications", icon: Boxes },
       { to: "/sites", label: "Sites", icon: Rocket },
       { to: "/domains", label: "Domains", icon: Globe },
-      ...(owner ? [{ to: "/integrations", label: "Integrations", icon: Puzzle }] : []),
+      { to: "/integrations", label: "Integrations", icon: Puzzle },
     ] },
     { title: "Observe", items: [
       { to: "/metrics", label: "Metrics", icon: Activity },

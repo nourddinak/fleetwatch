@@ -10,7 +10,6 @@ import (
 	"fleetwatch/internal/server/audit"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/dns"
-	"fleetwatch/internal/server/github"
 )
 
 // myDNSRoutes: everyone's own Cloudflare accounts. The owner sets up the OAuth client once
@@ -55,10 +54,7 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		if err == nil && q.Get("error") != "" { // refused on Cloudflare's side: nothing was granted
 			err = errors.New("Cloudflare: " + q.Get("error_description"))
 		}
-		page := "/#/settings/account?"
-		if a.Owner == github.OwnerKey || a.Owner == "" {
-			page = "/#/integrations?tab=cloudflare&"
-		}
+		page := "/#/integrations?tab=cloudflare&" // the owner's and everyone's own Integrations page
 		if err != nil {
 			http.Redirect(w, r, page+"cloudflare=error&message="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return

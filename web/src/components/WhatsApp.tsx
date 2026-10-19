@@ -211,8 +211,11 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
 }
 
 /** Settings → Account: one's own WhatsApp number, language and quiet hours. */
-export function MyWhatsApp() {
+export function MyWhatsApp({ explain }: { explain?: boolean }) {
   const data = useApi<{ available: boolean; person: WaPerson }>("/api/me/whatsapp");
+  if (data.data && !data.data.available && explain) {
+    return <Card><SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="The dashboard owner has not linked WhatsApp yet. Once they have, set your number here to get on-call alerts and calls." /></Card>;
+  }
   if (!data.data?.available) return null;
   return (
     <Card>

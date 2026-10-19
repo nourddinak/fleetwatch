@@ -56,7 +56,7 @@ interface MyGitHub {
   link?: { login: string; installations: number[]; linkedAt: number };
 }
 
-async function goGitHub(path: "connect" | "install", toast: (m: string, k?: "ok" | "err") => void) {
+export async function goGitHub(path: "connect" | "install", toast: (m: string, k?: "ok" | "err") => void) {
   try {
     location.href = (await api<{ url: string }>("POST", `/api/me/github/${path}`)).url;
   } catch (e) {

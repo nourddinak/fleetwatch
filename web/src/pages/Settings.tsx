@@ -10,8 +10,6 @@ import { UpdateCard } from "../components/PlatformUpdate";
 import { PushCard } from "../components/PushCard";
 import { MobileCard } from "../components/MobileCard";
 import { AlertRulesCard } from "../components/AlertRulesCard";
-import { DnsAccounts } from "../components/DnsAccounts";
-import { MyWhatsApp } from "../components/WhatsApp";
 
 const GROUPS: { title: string; items: [string, string, typeof Bell][] }[] = [
   { title: "You", items: [["account", "Account", UserRound], ["security", "Security", ShieldCheck], ["2fa", "2FA", KeyRound], ["sessions", "Sessions", MonitorSmartphone]] },
@@ -105,8 +103,6 @@ export function AccountSettings() {
     <div className="space-y-6">
       {me.role !== "owner" && (
         <>
-          <DnsAccounts />
-          <MyWhatsApp />
           <MobileCard />
           <AlertRulesCard />
           <PushCard personal enabled onChange={() => {}} />
