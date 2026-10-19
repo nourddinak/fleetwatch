@@ -19,7 +19,7 @@ func linkKey(sess auth.Session) string {
 }
 
 // myGitHubRoutes: everyone's own GitHub account, for deploying their sites. The owner
-// connects the app once (Settings → Integrations); each person then signs in with their
+// connects the app once (Integrations); each person then signs in with their
 // own GitHub account and installs the app on it.
 func (s *server) myGitHubRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me/github", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {

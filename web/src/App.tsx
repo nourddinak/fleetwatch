@@ -1,5 +1,5 @@
 import { lazy, type ComponentType } from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { StoreProvider } from "./store/store";
 import { RequireAuth } from "./components/Layout";
 import { Login, TwoFA } from "./pages/Login";
@@ -94,7 +94,12 @@ const SystemSettings = page(() => import("./pages/Settings"), "SystemSettings");
 const OnCallSettings = page(() => import("./pages/OnCall"), "OnCallSettings");
 const TeamSettings = page(() => import("./pages/Team"), "TeamSettings");
 const TokenSettings = page(() => import("./pages/Tokens"), "TokenSettings");
-const IntegrationsSettings = page(() => import("./pages/Integrations"), "IntegrationsSettings");
+const IntegrationsPage = page(() => import("./pages/Integrations"), "IntegrationsPage");
+
+/** The old Settings → Integrations address, kept for links and GitHub's redirects. */
+function ToIntegrations() {
+  return <Navigate to={"/integrations" + useLocation().search} replace />;
+}
 const TwoFASettings = page(() => import("./pages/Settings"), "TwoFASettings");
 
 export default function App() {
@@ -144,6 +149,7 @@ export default function App() {
             <Route path="domains" element={<Domains />} />
             <Route path="uptime" element={<Uptime />} />
             <Route path="sites" element={<Sites />} />
+            <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="status-page" element={<StatusPages />} />
             <Route path="status-page/:id" element={<StatusEditor />} />
             <Route path="security" element={<Security />} />
@@ -165,7 +171,7 @@ export default function App() {
               <Route path="team" element={<TeamSettings />} />
               <Route path="oncall" element={<OnCallSettings />} />
               <Route path="tokens" element={<TokenSettings />} />
-              <Route path="integrations" element={<IntegrationsSettings />} />
+              <Route path="integrations" element={<ToIntegrations />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

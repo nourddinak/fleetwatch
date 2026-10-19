@@ -64,7 +64,7 @@ export function DnsAccounts() {
         )} />
       {data.data && !data.data.ready && (
         <p className="mb-3 flex gap-2 rounded-xl bg-surface2/60 p-3 text-xs text-muted"><AlertTriangle size={13} className="shrink-0" />
-          {me?.role === "owner" ? "Set up Cloudflare above first (once), then sign in here." : "The dashboard owner has not set up Cloudflare yet (Settings → Integrations)."}</p>
+          {me?.role === "owner" ? "Set up Cloudflare above first (once), then sign in here." : "The dashboard owner has not set up Cloudflare yet (Integrations)."}</p>
       )}
       {!data.data ? <Spinner /> : mine.length === 0 ? (
         <p className="text-sm text-muted">{canConnect ? "No Cloudflare account connected yet." : "Viewers cannot connect accounts."}</p>

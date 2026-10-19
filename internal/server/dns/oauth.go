@@ -96,7 +96,7 @@ func random(n int) string {
 func (s *Service) SignInURL(publicURL, owner string) (string, error) {
 	k, ok := s.app()
 	if !ok {
-		return "", valid.Error("Cloudflare is not set up yet: the dashboard owner adds it in Settings → Integrations")
+		return "", valid.Error("Cloudflare is not set up yet: the dashboard owner adds it in Integrations")
 	}
 	state, verifier := random(16), random(32)
 	sum := sha256.Sum256([]byte(verifier))

@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
+import { ArrowLeft, ChevronRight, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
 import { CloudflareSetup, DnsAccounts } from "../components/DnsAccounts";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, CopyButton, Segmented, SearchInput } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, CopyButton, PageHeader, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -44,7 +44,7 @@ interface RepoItem {
   apps: { id: string; name: string; serverId: string; branch: string; commit: string }[];
 }
 
-/** Settings → Integrations: connect services. GitHub first. */
+/** Integrations: one card per service, or the settings of the one opened. */
 export function IntegrationsSettings() {
   const { subscribeLive, toast } = useStore();
   const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean; links: Record<string, { login: string; installations: number[]; linkedAt: number }>;
@@ -66,14 +66,12 @@ export function IntegrationsSettings() {
   }), [subscribeLive, setData]);
   if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
   if (!data.data) return <LoadingState />;
-  const tab = params.get("tab") === "cloudflare" ? "cloudflare" : "github";
   const cf = data.data.cloudflare;
+  const tab = params.get("tab") === "cloudflare" && cf ? "cloudflare" : params.get("tab") === "github" ? "github" : "";
+  if (!tab) return <IntegrationCards github={data.data.github} cf={cf} open={(t) => setParams({ tab: t })} />;
   return (
     <div className="space-y-6">
-      <Segmented value={tab} onChange={(v) => setParams(v === "cloudflare" ? { tab: "cloudflare" } : {}, { replace: true })} options={[
-        { value: "github", label: <span className="inline-flex items-center gap-1.5"><Github size={14} />GitHub{data.data.github.connected && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> },
-        ...(cf ? [{ value: "cloudflare", label: <span className="inline-flex items-center gap-1.5"><Cloudflare size={16} />Cloudflare{cf.clientId && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> }] : []),
-      ]} />
+      <button className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg" onClick={() => setParams({})}><ArrowLeft size={14} /> All integrations</button>
       {tab === "cloudflare" && cf ? (
         <>
           <CloudflareSetup clientId={cf.clientId} redirectUri={cf.redirectUri} scopes={cf.scopes} onChange={data.reload} />
@@ -85,6 +83,50 @@ export function IntegrationsSettings() {
           {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
         </>
       )}
+    </div>
+  );
+}
+
+/** Settings-free home of the integrations: a page of its own, reached from the sidebar. */
+export function IntegrationsPage() {
+  return (
+    <div>
+      <PageHeader title="Integrations" sub="Connect the services your sites and servers use." />
+      <IntegrationsSettings />
+    </div>
+  );
+}
+
+/** One card per service, with how it stands; opening one shows its settings. */
+function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { clientId: string }; open: (tab: string) => void }) {
+  const dns = useApi<{ everyone?: unknown[] }>("/api/me/dns");
+  const people = dns.data?.everyone?.length ?? 0;
+  const items = [
+    { key: "github", logo: <Github size={28} />, name: "GitHub", on: github.connected,
+      desc: "Deploy sites from your repositories, again on every push, and see which apps run which repository.",
+      status: github.connected ? `${github.app?.name ?? "App"} · ${github.installations.length} account${github.installations.length === 1 ? "" : "s"}` : "One click creates the GitHub app" },
+    ...(cf ? [{ key: "cloudflare", logo: <Cloudflare size={34} />, name: "Cloudflare", on: !!cf.clientId,
+      desc: "Sign in with Cloudflare: site domains point at their server by themselves, the cache clears after deploys, proxy and Under attack switches.",
+      status: cf.clientId ? `${people} account${people === 1 ? "" : "s"} signed in` : "Set up once, then everyone signs in" }] : []),
+  ];
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {items.map((i) => (
+        <button key={i.key} onClick={() => open(i.key)} className="group flex flex-col gap-4 rounded-3xl border border-line bg-surface p-5 text-left transition hover:-translate-y-0.5 hover:border-fg/20 hover:shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-surface2">{i.logo}</span>
+            <Badge tone={i.on ? "ok" : undefined}>{i.on ? "Connected" : "Not connected"}</Badge>
+          </div>
+          <div>
+            <div className="text-base font-semibold">{i.name}</div>
+            <p className="mt-1 text-sm text-muted">{i.desc}</p>
+          </div>
+          <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-muted">
+            <span className="truncate">{i.status}</span>
+            <span className="inline-flex items-center gap-1 font-medium text-fg">{i.on ? "Manage" : "Set up"} <ChevronRight size={14} className="transition group-hover:translate-x-0.5" /></span>
+          </div>
+        </button>
+      ))}
     </div>
   );
 }

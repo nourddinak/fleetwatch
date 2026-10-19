@@ -21,7 +21,7 @@ import (
 // browser does not send on a redirect coming from github.com.
 func (s *server) integrationRoutes(mux *http.ServeMux) {
 	back := func(w http.ResponseWriter, r *http.Request, query string) {
-		http.Redirect(w, r, "/#/settings/integrations?"+query, http.StatusSeeOther)
+		http.Redirect(w, r, "/#/integrations?tab=github&"+query, http.StatusSeeOther)
 	}
 	mux.HandleFunc("GET /api/integrations", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if s.GitHub.Connected() {

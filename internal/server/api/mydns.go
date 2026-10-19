@@ -14,7 +14,7 @@ import (
 )
 
 // myDNSRoutes: everyone's own Cloudflare accounts. The owner sets up the OAuth client once
-// (Settings → Integrations); each person then signs in with Cloudflare, and the tokens are
+// (Integrations); each person then signs in with Cloudflare, and the tokens are
 // stored encrypted.
 func (s *server) myDNSRoutes(mux *http.ServeMux) {
 	failDNS := func(w http.ResponseWriter, err error) {
@@ -51,7 +51,7 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		}
 		page := "/#/settings/account?"
 		if a.Owner == github.OwnerKey || a.Owner == "" {
-			page = "/#/settings/integrations?tab=cloudflare&"
+			page = "/#/integrations?tab=cloudflare&"
 		}
 		if err != nil {
 			http.Redirect(w, r, page+"cloudflare=error&message="+url.QueryEscape(err.Error()), http.StatusSeeOther)

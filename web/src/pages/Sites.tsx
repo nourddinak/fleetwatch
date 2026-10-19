@@ -142,9 +142,9 @@ export function Sites({ serverId }: { serverId?: string } = {}) {
       <Gate>
         {list.error ? <ErrorState message={list.error} onRetry={list.reload} /> : !list.data ? <LoadingState /> : !connected ? (
           owner ? (
-            <EmptyState icon={<Rocket size={20} />} title="Connect GitHub first" desc="Sites are deployed from GitHub repositories." action={<Link to="/settings/integrations"><Button>Open Integrations</Button></Link>} />
+            <EmptyState icon={<Rocket size={20} />} title="Connect GitHub first" desc="Sites are deployed from GitHub repositories." action={<Link to="/integrations?tab=github"><Button>Open Integrations</Button></Link>} />
           ) : (
-            <EmptyState icon={<Github size={20} />} title="GitHub is not set up yet" desc="The owner connects it once in Settings → Integrations. Then you link your own GitHub account here and deploy your sites." />
+            <EmptyState icon={<Github size={20} />} title="GitHub is not set up yet" desc="The owner connects it once in Integrations (sidebar). Then you link your own GitHub account here and deploy your sites." />
           )
         ) : list.data.length === 0 ? (
           <EmptyState icon={<Rocket size={20} />} title="No sites yet" desc={serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={canAdd ? <Button onClick={() => setAdding(true)}><Plus size={15} /> New site</Button> : g?.canDeploy && !linked ? <Button onClick={() => goGitHub("connect", toast)}><Github size={15} /> Connect your GitHub</Button> : undefined} />
@@ -216,7 +216,7 @@ function SiteError({ site, onRetry }: { site: Site; onRetry: () => void }) {
         <p className="break-words">{upper(site.error)}</p>
         {me?.role !== "viewer" && (
           <div className="flex flex-wrap gap-3 text-xs font-medium">
-            {site.error.includes("permissions") && <Link to="/settings/integrations" className="inline-flex items-center gap-1 underline"><KeyRound size={12} /> How to grant them</Link>}
+            {site.error.includes("permissions") && <Link to="/integrations?tab=github" className="inline-flex items-center gap-1 underline"><KeyRound size={12} /> How to grant them</Link>}
             <button className="inline-flex items-center gap-1 underline" onClick={onRetry}><RefreshCw size={12} /> Retry</button>
           </div>
         )}
@@ -419,7 +419,7 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose
               <div className="max-h-52 overflow-y-auto p-1.5">
                 {!repos.data && <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted"><Spinner size={14} /> Loading repositories…</div>}
                 {repos.data && list.length === 0 && (
-                  <p className="px-3 py-3 text-sm text-muted">No repository matches. {owner ? <Link to="/settings/integrations" className="underline">Give the app access to more</Link> : <button type="button" className="underline" onClick={onMoreRepos}>Give the app access to more of your repositories</button>}</p>
+                  <p className="px-3 py-3 text-sm text-muted">No repository matches. {owner ? <Link to="/integrations?tab=github" className="underline">Give the app access to more</Link> : <button type="button" className="underline" onClick={onMoreRepos}>Give the app access to more of your repositories</button>}</p>
                 )}
                 {list.map(({ repo }) => {
                   const [owner, rname] = repo.fullName.split("/");

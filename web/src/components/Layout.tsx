@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, Gauge, Globe, Bell, Boxes, Check, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Radar, Radio, Rocket, ScrollText, ShieldCheck, Search, Server, Settings, Sun, Users, X } from "lucide-react";
+import { Activity, AlertOctagon, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -137,6 +137,7 @@ function Shell() {
       { to: "/applications", label: "Applications", icon: Boxes },
       { to: "/sites", label: "Sites", icon: Rocket },
       { to: "/domains", label: "Domains", icon: Globe },
+      ...(owner ? [{ to: "/integrations", label: "Integrations", icon: Puzzle }] : []),
     ] },
     { title: "Observe", items: [
       { to: "/metrics", label: "Metrics", icon: Activity },
