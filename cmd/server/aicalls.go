@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -108,7 +109,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 		default:
 			x, _ := d.incidents.Get(incidentID)
 			talk.Instructions = fmt.Sprintf("You are Fleetwatch's on-call voice assistant, calling %s on WhatsApp about an incident: %q (%s, severity %s) on the server %s, first seen %s ago. get_incident has its details and acknowledge (without an id) acknowledges it.\n%s\n%s",
-				name, x.Title, x.Type, x.Severity, d.serverName(x.ServerID), time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), d.recentLogs(x), rules)
+				name, x.Title, x.Type, x.Severity, d.serverName(x.ServerID), time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), d.recentLogs(x)+d.history(x), rules)
 			talk.Tools = kit
 			talk.ProtectOpening = true
 			talk.Opening = "The call just connected. Greet " + name + " and explain fully what happened: the incident, then what the latest app and server log lines above show (in plain words, the most telling ones). Then ask if they can handle it."
@@ -116,6 +117,8 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 		if opening != "" {
 			talk.Opening = opening
 		}
+		var report ai.CallReport
+		talk.Report = &report
 		lines, took, err := d.ai.Converse(ctx, talk)
 		d.ai.AddUsage(took)
 		if err != nil {
@@ -129,24 +132,87 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 			}
 		}
 		if len(lines) > 0 {
-			var b strings.Builder
-			for _, l := range lines {
-				who := "AI"
-				if l.Who == "person" {
-					who = name
-				}
-				fmt.Fprintf(&b, "%s: %s\n", who, strings.TrimSpace(l.Text))
-			}
-			if incidentID != "" {
-				d.incidents.AddComment(incidentID, "WhatsApp call with "+name+" ("+took.Round(time.Second).String()+")", b.String())
-			}
 			how := "outgoing"
-			if inbound {
+			switch {
+			case inbound:
 				how = "incoming"
+			case opening != "":
+				how = "follow-up"
+			case incidentID == "":
+				how = "test"
 			}
-			audit.Record(d.db, audit.Event{Action: "whatsapp.call", OK: true, Actor: name, Detail: how + " AI call, " + took.Round(time.Second).String()})
+			go d.afterCall(person, name, how, incidentID, lines, took, report) // the call ends now: the summary can wait
 		}
 	}
+}
+
+// afterCall keeps a call in the history with a summary, and puts both on its incident.
+func (d callDeps) afterCall(person, name, how, incidentID string, lines []ai.Line, took time.Duration, report ai.CallReport) {
+	var b strings.Builder
+	for _, l := range lines {
+		who := "AI"
+		if l.Who == "person" {
+			who = name
+		}
+		fmt.Fprintf(&b, "%s: %s\n", who, strings.TrimSpace(l.Text))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	summary, err := d.ai.Summarize(ctx, "phone call between Fleetwatch's on-call AI and "+name, b.String())
+	if err != nil {
+		slog.Warn("ai call summary", "err", err)
+	}
+	if err := d.ai.SaveCall(ai.CallRecord{At: report.At, Person: person, Name: name, Direction: how, IncidentID: incidentID,
+		Seconds: int(took.Seconds()), Summary: summary, Transcript: lines, Report: report}); err != nil {
+		slog.Warn("ai call history", "err", err)
+	}
+	if incidentID != "" {
+		text := b.String()
+		if summary != "" {
+			text = summary + "\n\nTranscript:\n" + text
+		}
+		d.incidents.AddComment(incidentID, "WhatsApp call with "+name+" ("+took.Round(time.Second).String()+")", text)
+	}
+	audit.Record(d.db, audit.Event{Action: "whatsapp.call", OK: true, Actor: name, Detail: how + " AI call, " + took.Round(time.Second).String()})
+}
+
+// pastIncidents is how often this kind of incident happened on its server lately, and
+// how each ended, with what was said on their calls.
+func (d callDeps) pastIncidents(x incidents.Incident, limit int) []map[string]any {
+	list, err := d.incidents.List(incidents.Filter{Status: "resolved", ServerID: x.ServerID, Type: x.TypeKey, Limit: 50})
+	if err != nil {
+		return nil
+	}
+	since := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+	out := []map[string]any{}
+	for _, p := range list {
+		if p.ID == x.ID || p.FirstAt < since || len(out) >= limit {
+			continue
+		}
+		item := map[string]any{"when": time.UnixMilli(p.FirstAt).UTC().Format("Jan 2 15:04"), "lasted": time.UnixMilli(p.ResolvedAt).Sub(time.UnixMilli(p.FirstAt)).Round(time.Minute).String(),
+			"resolvedBy": p.ResolvedBy, "resolution": p.Resolution}
+		if calls, err := d.ai.Calls("", p.ID, 3); err == nil && len(calls) > 0 {
+			var said []string
+			for _, c := range calls {
+				if c.Summary != "" {
+					said = append(said, c.Summary)
+				}
+			}
+			item["calls"] = said
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// history tells the AI, in the brief, whether this happened before.
+func (d callDeps) history(x incidents.Incident) string {
+	past := d.pastIncidents(x, 5)
+	if len(past) == 0 {
+		return "This kind of incident did not happen on this server in the last 30 days.\n"
+	}
+	b, _ := json.Marshal(past)
+	return fmt.Sprintf("This kind of incident happened %d time(s) on this server in the last 30 days (newest first): %s. Mention it in a few words if it helps (\"third time this week, a restart fixed it last time\").\n", len(past), b)
 }
 
 // recentLogs is the incident's latest warnings and errors, of its app and of its server,
@@ -469,6 +535,15 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 					d.wa.Ring(c, wp.Phone, 45*time.Second, d.talker(who, incidentID))
 				}()
 				return "calling them now", nil
+			}},
+		{Name: "past_incidents", Description: "How often an incident like this one (same kind, same server) happened in the last 30 days, how each ended, and what was said on their calls.",
+			Params: map[string]any{"id": map[string]any{"type": "STRING", "description": "An incident's id; without it, the incident of this call"}},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				x, err := incident(args)
+				if err != nil {
+					return nil, err
+				}
+				return d.pastIncidents(x, 10), nil
 			}},
 		{Name: "propose_action", Description: "Get an app action ready: start, stop, restart or reload. It runs only after the person confirms and you call do_action.",
 			Params: map[string]any{

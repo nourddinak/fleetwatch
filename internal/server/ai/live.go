@@ -61,6 +61,9 @@ type Talk struct {
 	Say          func([]float32)  // queue 16 kHz audio for the person
 	Hush         func()           // drop the queued audio: they talked over it
 	MaxLength    time.Duration
+	// Report, when set, gets the call's report as well (calls may run side by side, so
+	// LastCall may be another's).
+	Report *CallReport
 	// ProtectOpening lets the AI's first turn play out whole: talking over it does not
 	// cut it off (an on-call call's explanation), later turns can be.
 	ProtectOpening bool
@@ -371,6 +374,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	s.mu.Lock()
 	s.last = &rep
 	s.mu.Unlock()
+	if t.Report != nil {
+		*t.Report = rep
+	}
 	return lines, took, failed
 }
 

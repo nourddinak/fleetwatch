@@ -24,6 +24,14 @@ func (s *server) aiRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))
+	mux.HandleFunc("GET /api/integrations/ai/calls", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		calls, err := s.AI.Calls(r.URL.Query().Get("q"), r.URL.Query().Get("incident"), 100)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, calls)
+	}))
 	mux.HandleFunc("PUT /api/integrations/ai/key", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ Key string }
 		if !decode(w, r, &in) {

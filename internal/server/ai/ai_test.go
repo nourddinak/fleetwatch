@@ -283,3 +283,29 @@ func TestChatReply(t *testing.T) {
 		t.Fatal("old turns and voice notes must not be kept")
 	}
 }
+
+func TestCallHistory(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	s := New(d, box)
+	s.SaveCall(CallRecord{At: 1, Person: "owner", Name: "Nour", Direction: "outgoing", IncidentID: "inc_1", Seconds: 40,
+		Summary: "Disk full on web-1; Nour restarted api.", Transcript: []Line{{"ai", "Hello"}, {"person", "restart the api"}}})
+	s.SaveCall(CallRecord{At: 2, Person: "mem_1", Name: "Sam", Direction: "incoming", Seconds: 10, Transcript: []Line{{"person", "status?"}}})
+	all, _ := s.Calls("", "", 10)
+	if len(all) != 2 || all[0].Name != "Sam" || all[1].Transcript[1].Text != "restart the api" {
+		t.Fatalf("%+v", all)
+	}
+	if got, _ := s.Calls("restart", "", 10); len(got) != 1 || got[0].Name != "Nour" {
+		t.Fatal("search", got)
+	}
+	if got, _ := s.Calls("", "inc_1", 10); len(got) != 1 {
+		t.Fatal("by incident", got)
+	}
+	if got, _ := s.Calls("100%_", "", 10); len(got) != 0 {
+		t.Fatal("wildcards in the search", got)
+	}
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, ExternalLink, Gauge, Info, KeyRound, Mic, PhoneCall, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ExternalLink, Gauge, History, Info, KeyRound, Mic, PhoneCall, RefreshCw, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { relTime } from "../mock/util";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
@@ -102,6 +103,7 @@ export function AISetup() {
         )}
       </Card>
       {st.configured && data.data?.lastCall && <LastCallCard c={data.data.lastCall} onReload={data.reload} />}
+      {st.configured && <CallHistory />}
       {st.configured && <Card><SectionTitle icon={<KeyRound size={15} />} title="Replace the key" />{keyForm}</Card>}
       <ConfirmDialog open={del} title="Remove the Gemini key?" confirmLabel="Remove" danger
         message="Answered on-call calls go back to playing the alert sound."
@@ -142,6 +144,61 @@ function LastCallCard({ c, onReload }: { c: LastCall; onReload: () => void }) {
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">AI said</dt><dd className="text-xs">{c.said || <span className="text-muted">nothing</span>}</dd></div>
         {c.error && <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Error</dt><dd className="text-xs text-crit">{c.error}</dd></div>}
       </dl>
+    </Card>
+  );
+}
+
+interface CallRecord {
+  id: string;
+  at: number;
+  name: string;
+  direction: "outgoing" | "incoming" | "follow-up" | "test";
+  incidentId?: string;
+  seconds: number;
+  summary: string;
+  transcript: { who: "ai" | "person"; text: string }[];
+  report: LastCall;
+}
+
+/** Every call the AI held, newest first, searchable; a row opens its transcript. */
+function CallHistory() {
+  const [q, setQ] = useState("");
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+  const calls = useApi<CallRecord[]>(`/api/integrations/ai/calls?q=${encodeURIComponent(search)}`);
+  const label = { outgoing: "On-call", incoming: "Called in", "follow-up": "Follow-up", test: "Test" };
+  return (
+    <Card>
+      <SectionTitle icon={<History size={15} />} title="Call history" sub="Every call the AI held, with a short summary. Search names, summaries and what was said." />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search calls…" className="mb-3 sm:w-72" />
+      {!calls.data ? <Spinner /> : calls.data.length === 0 ? <p className="text-sm text-muted">No calls yet.</p> : (
+        <ul className="divide-y divide-line">
+          {calls.data.map((c) => (
+            <li key={c.id} className="py-2.5">
+              <button className="flex w-full flex-wrap items-center gap-2 text-left" onClick={() => setOpen(open === c.id ? "" : c.id)}>
+                <Badge tone={c.direction === "outgoing" ? "warn" : c.direction === "follow-up" ? "crit" : undefined}>{label[c.direction]}</Badge>
+                <span className="font-medium">{c.name}</span>
+                <span className="text-xs text-muted">{relTime(c.at)} · {Math.floor(c.seconds / 60)}:{String(c.seconds % 60).padStart(2, "0")}</span>
+                {c.incidentId && <Link to="/incidents" className="text-xs underline text-muted" onClick={(e) => e.stopPropagation()}>incident</Link>}
+                <ChevronDown size={13} className={`ml-auto text-muted transition ${open === c.id ? "rotate-180" : ""}`} />
+                {c.summary && <span className="w-full text-xs text-muted">{c.summary}</span>}
+              </button>
+              {open === c.id && (
+                <div className="mt-2 space-y-1.5 rounded-2xl bg-surface2/60 p-3 text-xs">
+                  {c.transcript.map((l, i) => (
+                    <p key={i}><b className={l.who === "ai" ? "text-muted" : "text-fg"}>{l.who === "ai" ? "AI" : c.name}:</b> {l.text}</p>
+                  ))}
+                  {c.report.replyAvgMs > 0 && <p className="pt-1 text-muted">Replies took {(c.report.replyAvgMs / 1000).toFixed(1)} s on average · ended: {c.report.ended}</p>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
