@@ -206,6 +206,12 @@ func (s *server) statusPublicExtras(mux *http.ServeMux) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Write(statuspage.Badge(s.Status.Public(c).Overall, r.URL.Query().Get("label")))
 	})
+	mux.HandleFunc("GET /api/public/widget.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write(statuspage.WidgetJS)
+	})
 	mux.HandleFunc("POST /api/public/unlock", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ Page, Password string }
 		if !decode(w, r, &in) {

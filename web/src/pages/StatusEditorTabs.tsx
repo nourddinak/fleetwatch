@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BadgeCheck, BarChart3, BellRing, Code2, FileCode2, Lock, Mail, Megaphone, Plus, Send, Sparkles, Trash2, Users } from "lucide-react";
+import { BadgeCheck, BarChart3, Globe, BellRing, Code2, FileCode2, Lock, Mail, Megaphone, Plus, Send, Sparkles, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, Field, IconButton, Input, Modal, SectionTitle, Segmented, Select, Spinner, Table, Td, Textarea, ToggleRow, Tr } from "../components/ui";
@@ -431,6 +431,8 @@ export function ShareTab({ c, set, pageUrl, savedPublic }: { c: Config; set: Set
         )}
       </Card>
 
+      <WidgetCard c={c} savedPublic={savedPublic} />
+
       <Card>
         <SectionTitle icon={<BarChart3 size={15} />} title="Uptime report" sub="Monthly uptime of every component (UTC)." />
         <div className="flex flex-wrap items-center gap-2">
@@ -493,5 +495,37 @@ export function CodeTab({ c, set }: { c: Config; set: Set }) {
         <p className="mt-2 text-xs text-muted">Plain HTML: scripts, frames, forms and event handlers are removed, so it cannot run code on your visitors' browsers.</p>
       </Card>
     </div>
+  );
+}
+
+/** The status widget for the admin's own website, and their chat's (Crisp, Intercom). */
+function WidgetCard({ c, savedPublic }: { c: Config; savedPublic: boolean }) {
+  const [pos, setPos] = useState("bottom-right");
+  const [mode, setMode] = useState("both");
+  const [chat, setChat] = useState("auto");
+  const attrs = [c.slug && !c.domain ? `data-page="${c.slug}"` : "", pos !== "bottom-right" ? `data-position="${pos}"` : "", mode !== "both" ? `data-mode="${mode}"` : "", chat !== "auto" ? `data-chat="${chat}"` : ""].filter(Boolean).join(" ");
+  const snippet = `<script src="${c.domain ? `https://${c.domain}` : location.origin}/api/public/widget.js"${attrs ? " " + attrs : ""} async></script>`;
+  return (
+    <Card>
+      <SectionTitle icon={<Globe size={15} />} title="Website widget" sub="A small status pill in a corner of your own website, and a card while a notice is open (“We know about the problem…”). Visitors chatting with you through Crisp or Intercom hear about it there too." />
+      {!savedPublic ? (
+        <p className="text-sm text-muted">Available once the page is saved, turned on and visible to everyone.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Corner"><Select value={pos} onChange={(e) => setPos(e.target.value)}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></Select></Field>
+            <Field label="Shows"><Select value={mode} onChange={(e) => setMode(e.target.value)}><option value="both">Pill and notices</option><option value="pill">Only the pill</option><option value="banner">Only notices</option></Select></Field>
+            <Field label="Chat"><Select value={chat} onChange={(e) => setChat(e.target.value)}><option value="auto">Crisp or Intercom, if on the site</option><option value="crisp">Crisp</option><option value="intercom">Intercom</option><option value="none">None</option></Select></Field>
+          </div>
+          <Field label="Paste before </body> on your site">
+            <div className="flex items-start gap-2"><CodeBlock>{snippet}</CodeBlock><CopyButton text={snippet} /></div>
+          </Field>
+          <ul className="space-y-1 text-xs text-muted">
+            <li><b className="text-fg">Crisp:</b> while a notice is open, visitors see “We know about the problem: …” in the chat, once each.</li>
+            <li><b className="text-fg">Intercom:</b> the widget sends the event <span className="font-mono">status-incident</span> (title, status, update, url). In Intercom, make a Workflow or Post triggered by it, showing your message, once.</li>
+          </ul>
+        </div>
+      )}
+    </Card>
   );
 }

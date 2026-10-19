@@ -47,7 +47,15 @@ func (d *callDeps) briefings(ctx context.Context) {
 			continue
 		}
 		settings.Save(d.db, "whatsapp.weekly."+person, day)
-		if err := d.wa.Send(ctx, p.Phone, d.weekly(person)); err != nil {
+		text := d.weekly(person)
+		if p.WeeklyVoice { // read out in the call voice; the text if that cannot be made
+			if err := d.wa.SendVoice(ctx, p.Phone, spoken(text)); err == nil {
+				continue
+			} else {
+				slog.Warn("whatsapp weekly voice note, sent as text", "err", err)
+			}
+		}
+		if err := d.wa.Send(ctx, p.Phone, text); err != nil {
 			slog.Warn("whatsapp weekly summary", "err", err)
 		}
 	}
@@ -318,4 +326,26 @@ func (d *callDeps) briefing(person string) string {
 		out += "• " + l + "\n"
 	}
 	return out + "Reply here to ask me anything."
+}
+
+// spoken turns a written summary into something to read out: no emoji or bullets,
+// one sentence per line, and a friendly start and end.
+func spoken(text string) string {
+	var out []string
+	for i, l := range strings.Split(text, "\n") {
+		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "•"))
+		l = strings.TrimSpace(strings.TrimFunc(l, func(r rune) bool { return r > 0x2000 || r == ':' }))
+		if l == "" {
+			continue
+		}
+		if name, ok := strings.CutPrefix(l, "Your week, "); ok && i == 0 {
+			l = "Hi " + name + "! Here is your week"
+		}
+		l = strings.ReplaceAll(l, "%", " percent")
+		if !strings.HasSuffix(l, ".") {
+			l += "."
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, " ")
 }

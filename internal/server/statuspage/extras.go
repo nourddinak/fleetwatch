@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	_ "embed"
 	"encoding/csv"
 	"encoding/hex"
 	"fmt"
@@ -246,3 +247,8 @@ func (s *Service) EmailReport(ctx context.Context, id, month, to string) error {
 	return s.Mail.Send(ctx, Mail{To: addrs, Subject: fmt.Sprintf("Uptime report %s: %s", month, r.Page), Text: b.String(),
 		Attached: &Attachment{Name: fmt.Sprintf("uptime-%s.csv", month), Type: "text/csv; charset=utf-8", Data: r.CSV()}})
 }
+
+// WidgetJS is the status widget for the admin's own websites (see widget.js).
+//
+//go:embed widget.js
+var WidgetJS []byte

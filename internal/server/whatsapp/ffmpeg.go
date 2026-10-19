@@ -56,7 +56,7 @@ func (s *Service) VoiceSetup() VoiceSetup {
 // wantsVoice reports whether someone asked for voice-note answers.
 func (s *Service) wantsVoice() bool {
 	for _, p := range s.People() {
-		if p.Replies != "" {
+		if p.Replies != "" || p.WeeklyVoice {
 			return true
 		}
 	}

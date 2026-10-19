@@ -53,14 +53,15 @@ type Status struct {
 
 // Person is how one dashboard user is reached on WhatsApp.
 type Person struct {
-	Phone     string `json:"phone"`               // digits, with the country code
-	Language  string `json:"language"`            // "" = whatever the conversation is in
-	QuietFrom string `json:"quietFrom,omitempty"` // "22:00": no WhatsApp from then…
-	QuietTo   string `json:"quietTo,omitempty"`   // …until then, in TimeZone
-	TimeZone  string `json:"timeZone,omitempty"`
-	Briefing  string `json:"briefing,omitempty"` // "08:00": a morning summary then, in TimeZone; "" = none
-	Weekly    bool   `json:"weekly,omitempty"`   // a summary of the week on Mondays, at Briefing (or 09:00)
-	Replies   string `json:"replies,omitempty"`  // "" text | "voice": a voice note to a voice note | "always": voice notes
+	Phone       string `json:"phone"`               // digits, with the country code
+	Language    string `json:"language"`            // "" = whatever the conversation is in
+	QuietFrom   string `json:"quietFrom,omitempty"` // "22:00": no WhatsApp from then…
+	QuietTo     string `json:"quietTo,omitempty"`   // …until then, in TimeZone
+	TimeZone    string `json:"timeZone,omitempty"`
+	Briefing    string `json:"briefing,omitempty"`    // "08:00": a morning summary then, in TimeZone; "" = none
+	Weekly      bool   `json:"weekly,omitempty"`      // a summary of the week on Mondays, at Briefing (or 09:00)
+	WeeklyVoice bool   `json:"weeklyVoice,omitempty"` // …as a voice note in the AI's call voice
+	Replies     string `json:"replies,omitempty"`     // "" text | "voice": a voice note to a voice note | "always": voice notes
 }
 
 // Languages people may pick ("" follows the conversation).
@@ -430,8 +431,8 @@ func (s *Service) SetPerson(id string, p Person) (Person, error) {
 	}
 	raw, _ := json.Marshal(p)
 	_, err = s.db.Exec(`INSERT INTO whatsapp_people (person, data) VALUES (?, ?) ON CONFLICT (person) DO UPDATE SET data = excluded.data`, id, string(raw))
-	if err == nil && p.Replies != "" {
-		s.EnsureVoice() // voice answers need ffmpeg: the helper installs it
+	if err == nil && (p.Replies != "" || p.WeeklyVoice) {
+		s.EnsureVoice() // voice notes need ffmpeg: the helper installs it
 	}
 	return p, err
 }

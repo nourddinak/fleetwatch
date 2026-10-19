@@ -303,3 +303,12 @@ func TestStatusPost(t *testing.T) {
 		t.Fatalf("%+v", p.Notices)
 	}
 }
+
+// The weekly summary read out: no emoji or bullets, whole sentences.
+func TestSpoken(t *testing.T) {
+	got := spoken("📊 Your week, Nour:\n• Incidents: 3 this week, 3 resolved\n• Lowest uptime: shop 99.50%\nReply here to ask me anything.")
+	want := "Hi Nour! Here is your week. Incidents: 3 this week, 3 resolved. Lowest uptime: shop 99.50 percent. Reply here to ask me anything."
+	if got != want {
+		t.Fatalf("%q", got)
+	}
+}

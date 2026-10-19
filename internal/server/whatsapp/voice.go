@@ -63,3 +63,16 @@ func toOpus(ctx context.Context, pcm []byte, rate int) ([]byte, error) {
 	}
 	return out.Bytes(), nil
 }
+
+// SendVoice sends someone a voice note reading text out (ffmpeg and the AI needed).
+func (s *Service) SendVoice(ctx context.Context, phone, text string) error {
+	digits, err := CleanPhone(phone)
+	if err != nil {
+		return err
+	}
+	cl, err := s.connected()
+	if err != nil {
+		return err
+	}
+	return s.sendVoice(ctx, cl, types.NewJID(digits, types.DefaultUserServer), text)
+}

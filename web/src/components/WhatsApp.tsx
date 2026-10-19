@@ -13,6 +13,7 @@ export interface WaPerson {
   timeZone?: string;
   briefing?: string;
   weekly?: boolean;
+  weeklyVoice?: boolean;
   replies?: "" | "voice" | "always";
 }
 interface WaStatus {
@@ -203,6 +204,12 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, voice, onSaved 
         <input type="checkbox" checked={!!f.weekly} onChange={(e) => setF({ ...f, weekly: e.target.checked })} />
         Weekly summary on Mondays (incidents, uptime, slowest checks{f.briefing ? `, at ${f.briefing}` : ", at 09:00"})
       </label>
+      {f.weekly && (
+        <label className="ml-6 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={!!f.weeklyVoice} onChange={(e) => setF({ ...f, weeklyVoice: e.target.checked })} />
+          As a voice note, read out in the AI's call voice (about a minute)
+        </label>
+      )}
       <Field label="Answers to chats" hint={voiceHint(voice, !!f.replies)} className="sm:w-80">
         <Select value={f.replies ?? ""} onChange={(e) => setF({ ...f, replies: e.target.value as WaPerson["replies"] })}>
           <option value="">Text</option>
@@ -230,7 +237,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, voice, onSaved 
             {busy === "test" ? <Spinner size={13} /> : <Send size={13} />} Send a test
           </Button>
         )}
-        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", briefing: f.briefing ?? "", weekly: !!f.weekly, replies: f.replies ?? "", timeZone: quiet || f.briefing || f.weekly ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
+        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", briefing: f.briefing ?? "", weekly: !!f.weekly, weeklyVoice: !!f.weekly && !!f.weeklyVoice, replies: f.replies ?? "", timeZone: quiet || f.briefing || f.weekly ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
           {busy === "save" ? <Spinner size={13} /> : <Check size={13} />} Save
         </Button>
       </div>
