@@ -463,12 +463,12 @@ interface VoiceSetup {
 function voiceHint(v: VoiceSetup | undefined, wanted: boolean) {
   switch (v?.state) {
     case "installing":
-      return wanted ? "Installing ffmpeg on the dashboard's server for voice answers (a minute or two). Until then, answers come as text." : "Voice answers are read out in the AI's call voice.";
+      return wanted ? "Installing ffmpeg on the dashboard's server for voice answers (a minute or two). Until then, answers come as text." : "Voice answers are read out by the calls' Live model, in its voice.";
     case "failed":
       return `ffmpeg could not be installed by itself (${v.error ?? "unknown error"}). Run "sudo apt install ffmpeg" on the dashboard's server; until then, answers come as text.`;
     case "manual":
       return "Voice answers need ffmpeg on the dashboard's server, and one-click updates (which install it) are not set up there: run \"sudo apt install ffmpeg\". Until then, answers come as text.";
     default:
-      return "Voice answers are read out in the AI's call voice. Saving installs what they need on the dashboard's server, if it is missing.";
+      return "Voice answers are read out by the calls' Live model, in its voice (they count in the monthly call minutes). Saving installs what they need on the dashboard's server, if it is missing.";
   }
 }
