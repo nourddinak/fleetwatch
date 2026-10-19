@@ -222,12 +222,12 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
               Select <b className="text-fg">Continue</b> and pick these scopes (leave them Required): {perms.map((p) => <Badge key={p} className="mr-1 mt-1">{p}</Badge>)}
               <span className="mt-1 block text-[11px]">If an <b>offline access</b> scope is listed, pick it too. The sign-in asks for: <code className="font-mono">{scopes.join(" ")}</code></span>
             </li>
-            <li>Select <b className="text-fg">Create client</b>, then paste the <b className="text-fg">Client ID</b> and <b className="text-fg">Client Secret</b> here (Cloudflare shows the secret only once).</li>
+            <li>Select <b className="text-fg">Create client</b>, then paste the <b className="text-fg">Client Secret</b> and <b className="text-fg">Client ID</b> here (Cloudflare shows the secret only once).</li>
             <li>Teammates who are not members of your Cloudflare account can only sign in once the client is <b className="text-fg">Public</b>: that needs a logo, a Client URL and a TXT record on your domain.</li>
           </ol>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Client ID"><Input value={id} onChange={(e) => setId(e.target.value)} className="font-mono" autoComplete="off" /></Field>
             <Field label="Client secret"><Input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} className="font-mono" autoComplete="off" /></Field>
+            <Field label="Client ID"><Input value={id} onChange={(e) => setId(e.target.value)} className="font-mono" autoComplete="off" /></Field>
           </div>
           <div className="flex justify-end gap-2">
             {clientId && <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>}
