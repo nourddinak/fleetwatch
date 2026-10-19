@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Info, MoonStar, QrCode, Send, Smartphone, Trash2, Users } from "lucide-react";
+import { AlertTriangle, Check, Info, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Input, SectionTitle, Select, Spinner, WhatsApp } from "./ui";
@@ -72,7 +72,7 @@ export function WhatsAppSetup() {
     <>
       <Card>
         <SectionTitle icon={<WhatsApp size={18} />} title="Your WhatsApp"
-          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts are sent from it to the team; calls come next."
+          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message."
           action={st.linked ? <Badge tone={st.connected ? "ok" : "warn"} dot>{st.connected ? "Connected" : "Reconnecting"}</Badge> : undefined} />
         {st.linked ? (
           <div className="flex flex-wrap items-center gap-3">
@@ -144,13 +144,13 @@ function PersonRow({ id, name, saved, linked, onSaved }: { id: string; name: str
         {saved.phone ? <span className="font-mono text-xs text-muted">+{saved.phone}</span> : <span className="text-xs text-muted">No number</span>}
         {saved.quietFrom && <Badge><MoonStar size={11} /> {saved.quietFrom}–{saved.quietTo}</Badge>}
       </button>
-      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} self={id === "owner"} onSaved={() => { onSaved(); setOpen(false); }} />}
+      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} callUrl={linked ? `/api/integrations/whatsapp/people/${id}/call` : undefined} self={id === "owner"} onSaved={() => { onSaved(); setOpen(false); }} />}
     </div>
   );
 }
 
 /** Someone's number, language and quiet hours. */
-export function PersonForm({ saved, url, testUrl, self, onSaved }: { saved: WaPerson; url: string; testUrl?: string; self?: boolean; onSaved: () => void }) {
+export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { saved: WaPerson; url: string; testUrl?: string; callUrl?: string; self?: boolean; onSaved: () => void }) {
   const { toast } = useStore();
   const [f, setF] = useState<WaPerson>({ ...saved, timeZone: saved.timeZone || zone() });
   const [busy, setBusy] = useState("");
@@ -188,6 +188,15 @@ export function PersonForm({ saved, url, testUrl, self, onSaved }: { saved: WaPe
         </div>
       )}
       <div className="flex flex-wrap justify-end gap-2">
+        {callUrl && saved.phone && (
+          <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("call", async () => {
+            toast("Calling on WhatsApp: answer it to hear the alert");
+            const r = await api<{ answered: boolean }>("POST", callUrl);
+            toast(r.answered ? "The call was answered" : "Nobody answered the call", r.answered ? undefined : "err");
+          })}>
+            {busy === "call" ? <Spinner size={13} /> : <PhoneCall size={13} />} {busy === "call" ? "Ringing…" : "Call me now"}
+          </Button>
+        )}
         {testUrl && saved.phone && (
           <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("test", async () => { await api("POST", testUrl); toast("Test message sent"); })}>
             {busy === "test" ? <Spinner size={13} /> : <Send size={13} />} Send a test
@@ -208,7 +217,7 @@ export function MyWhatsApp() {
   return (
     <Card>
       <SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="Where on-call alerts reach you on WhatsApp, in which language, and when not to." />
-      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} onSaved={data.reload} />
+      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
     </Card>
   );
 }

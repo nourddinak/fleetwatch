@@ -41,8 +41,8 @@ import (
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
-	"fleetwatch/internal/server/whatsapp"
 	"fleetwatch/internal/server/vulns"
+	"fleetwatch/internal/server/whatsapp"
 )
 
 type Deps struct {

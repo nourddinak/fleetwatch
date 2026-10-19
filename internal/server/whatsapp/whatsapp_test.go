@@ -51,3 +51,24 @@ func TestPeopleAndQuietHours(t *testing.T) {
 		t.Fatal("not removed")
 	}
 }
+
+func TestAlertSound(t *testing.T) {
+	src, frames := alertSound(), 0
+	for {
+		f, err := src.ReadFrame()
+		if err != nil {
+			break
+		}
+		if len(f) != 960 {
+			t.Fatal("frame size", len(f))
+		}
+		frames++
+	}
+	if frames < 40 || frames > 100 { // about 4 seconds of 60 ms frames
+		t.Fatal(frames)
+	}
+	s := New(nil, t.TempDir(), nil)
+	if _, err := s.Ring(t.Context(), "+212612345678", time.Second); err != ErrNotLinked {
+		t.Fatal(err)
+	}
+}

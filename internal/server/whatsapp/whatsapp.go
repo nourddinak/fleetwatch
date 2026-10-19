@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/purpshell/meowcaller"
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -66,6 +67,7 @@ type Service struct {
 	mu        sync.Mutex
 	container *sqlstore.Container
 	client    *whatsmeow.Client
+	caller    *meowcaller.Client // calls through client
 	qr, code  string
 	lastErr   string
 	stopLink  context.CancelFunc
@@ -109,7 +111,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	cl := whatsmeow.NewClient(dev, nil)
 	cl.AddEventHandler(s.onEvent)
-	s.client = cl
+	s.client, s.caller = cl, meowcaller.NewClient(cl) // before connecting, as meowcaller needs
 	return cl.Connect()
 }
 
@@ -185,7 +187,7 @@ func (s *Service) Link(phone string) error {
 	cl := whatsmeow.NewClient(c.NewDevice(), nil)
 	cl.AddEventHandler(s.onEvent)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	s.client, s.stopLink, s.qr, s.code, s.lastErr = cl, cancel, "", "", ""
+	s.client, s.caller, s.stopLink, s.qr, s.code, s.lastErr = cl, meowcaller.NewClient(cl), cancel, "", "", ""
 	s.mu.Unlock()
 
 	if digits == "" {
@@ -259,7 +261,7 @@ func (s *Service) onEvent(evt any) {
 		s.mu.Lock()
 		if s.client != nil {
 			s.client.Disconnect()
-			s.client = nil
+			s.client, s.caller = nil, nil
 		}
 		s.lastErr = "WhatsApp was unlinked from the phone"
 		s.mu.Unlock()
@@ -274,7 +276,7 @@ func (s *Service) onEvent(evt any) {
 func (s *Service) Unlink(ctx context.Context) error {
 	s.mu.Lock()
 	cl := s.client
-	s.client, s.qr, s.code, s.lastErr = nil, "", "", ""
+	s.client, s.caller, s.qr, s.code, s.lastErr = nil, nil, "", "", ""
 	if s.stopLink != nil {
 		s.stopLink()
 		s.stopLink = nil

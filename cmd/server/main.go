@@ -436,6 +436,13 @@ func serve() error {
 			}
 		}
 		if wp, ok := waSvc.PersonOf(p.ID); ok && waSvc.Linked() && !wp.Quiet(time.Now()) {
+			go func() { // the call rings while the rest of the page goes out
+				c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				if _, err := waSvc.Ring(c, wp.Phone, 45*time.Second); err != nil {
+					slog.Warn("whatsapp call", "person", p.Name, "err", err)
+				}
+			}()
 			text := fmt.Sprintf("🚨 On call: %s\n%s on %s.%s\n\nI'm on it (stops the paging): %s", x.Title, x.Type, serverName(x.ServerID), why, ackURL)
 			if err := waSvc.Send(ctx, wp.Phone, text); err == nil {
 				reached = true

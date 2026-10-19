@@ -82,6 +82,27 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+	call := func(w http.ResponseWriter, r *http.Request, id string) {
+		p, ok := s.WhatsApp.PersonOf(id)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "no_phone", "Save a WhatsApp number first.")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		answered, err := s.WhatsApp.Ring(ctx, p.Phone, 40*time.Second)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"answered": answered})
+	}
+	mux.HandleFunc("POST /api/integrations/whatsapp/people/{id}/call", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		call(w, r, r.PathValue("id"))
+	}))
+	mux.HandleFunc("POST /api/me/whatsapp/call", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		call(w, r, linkKey(sess))
+	}))
 	mux.HandleFunc("POST /api/integrations/whatsapp/people/{id}/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		test(w, r, r.PathValue("id"))
 	}))
@@ -106,4 +127,3 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		test(w, r, linkKey(sess))
 	}))
 }
-
