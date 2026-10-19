@@ -45,6 +45,9 @@ type Config struct {
 	Severity         string     `json:"severity"` // critical | warning (warnings and worse)
 	Overrides        []Override `json:"overrides"`
 	Start            int64      `json:"start"` // the handover when Rotation[0]'s week began
+	// FixedOrder turns weekly shifts off: Rotation[0] is always on call, and the others
+	// are paged in that order (overrides still apply).
+	FixedOrder bool `json:"fixedOrder"`
 }
 
 func Defaults() Config {
@@ -190,6 +193,9 @@ func (c Config) rotationAt(t time.Time) (string, time.Time, time.Time) {
 		return "", time.Time{}, time.Time{}
 	}
 	from := c.lastHandover(t)
+	if c.FixedOrder {
+		return c.Rotation[0], from, from.AddDate(0, 0, 7)
+	}
 	weeks := int(from.Sub(time.UnixMilli(c.Start).In(c.loc())).Round(time.Hour) / week)
 	i := ((weeks % len(c.Rotation)) + len(c.Rotation)) % len(c.Rotation)
 	return c.Rotation[i], from, from.AddDate(0, 0, 7)

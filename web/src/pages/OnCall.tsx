@@ -27,6 +27,7 @@ interface Config {
   severity: "critical" | "warning";
   overrides: Override[];
   start: number;
+  fixedOrder?: boolean;
 }
 interface Shift {
   person: string;
@@ -90,6 +91,7 @@ export function OnCallPage() {
   const current = v.data.schedule?.[0];
   const next = v.data.schedule?.find((s) => s.person !== v.data!.now && s.from > Date.now());
   const fresh = c.rotation.length === 0;
+  const weekly = !c.fixedOrder;
 
   return (
     <div className="pb-24">
@@ -144,14 +146,14 @@ export function OnCallPage() {
           </Card>
 
           {/* step 1 */}
-          <Step n={1} title="Who takes turns" sub="Each person is on call for a week, in this order.">
+          <Step n={1} title="Who takes turns" sub={weekly ? "Each person is on call for a week, in this order." : "The first person is always on call; the others are paged in this order if nobody answers."}>
             <div className="space-y-2">
               {c.rotation.length === 0 && <p className="text-sm text-muted">Nobody yet.</p>}
               {c.rotation.map((id, i) => (
                 <div key={id} className="flex items-center gap-3 rounded-2xl border border-line px-3 py-2.5">
                   <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-surface2 text-xs font-semibold">{initials(name(id))}</span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{name(id)} <span className="text-xs font-normal text-muted">· week {i + 1}</span></div>
+                    <div className="text-sm font-medium">{name(id)} <span className="text-xs font-normal text-muted">· {weekly ? `week ${i + 1}` : i === 0 ? "always on call" : `backup ${i}`}</span></div>
                     <Reach {...ways(id)} />
                   </div>
                   <IconButton aria-label="Earlier" disabled={i === 0} onClick={() => set({ rotation: swap(c.rotation, i, i - 1) })}><ArrowUp size={14} /></IconButton>
@@ -174,7 +176,9 @@ export function OnCallPage() {
           </Step>
 
           {/* step 2 */}
-          <Step n={2} title="When shifts change" sub={`Every ${DAYS[c.handoverDay]} at ${hour(c.handoverHour)} (${c.timeZone || "UTC"}), the next person takes over.`}>
+          <Step n={2} title="When shifts change" sub={weekly ? `Every ${DAYS[c.handoverDay]} at ${hour(c.handoverHour)} (${c.timeZone || "UTC"}), the next person takes over.` : "Shifts don't change: the first person in the list stays on call. Cover and swaps still apply."}>
+            <label className="flex items-center justify-between gap-3 text-sm font-medium">Change shifts every week <Toggle checked={weekly} onChange={(on) => set({ fixedOrder: !on })} /></label>
+            {weekly && <>
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Day">
                 <Select value={c.handoverDay} onChange={(e) => set({ handoverDay: Number(e.target.value) })}>
@@ -191,6 +195,7 @@ export function OnCallPage() {
               </Field>
             </div>
             <p className="text-xs text-muted">The person coming on call gets a message at handover, with the note the last one left.</p>
+            </>}
           </Step>
 
           {/* step 3 */}
@@ -316,7 +321,7 @@ function Overrides({ c, people, name, set }: { c: Config; people: Person[]; name
 function GettingStarted() {
   const steps = [
     { icon: <Users size={16} />, title: "Pick who takes turns", text: "Add the people who share the nights and weekends; each takes a week." },
-    { icon: <Clock size={16} />, title: "Choose the handover", text: "The day and time the next person takes over." },
+    { icon: <Clock size={16} />, title: "Choose the handover", text: "The day and time the next person takes over, or no weekly shifts at all." },
     { icon: <BellRing size={16} />, title: "Turn paging on", text: "Then critical incidents wake the right person, and move on if nobody answers." },
   ];
   return (

@@ -3,6 +3,7 @@ package oncall
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -152,5 +153,31 @@ func TestEscalation(t *testing.T) {
 	h := s.Handoff()
 	if h.Current == nil || h.Current.Person != "ben" || h.Note == nil || h.Note.By != "Ana" || h.Summary == nil || h.Summary.Opened != 2 || h.Summary.Pages != 2 {
 		t.Fatalf("%+v %+v", h, h.Summary)
+	}
+}
+
+func TestFixedOrder(t *testing.T) {
+	c := Defaults()
+	c.Rotation, c.FixedOrder = []string{"a", "b", "c"}, true
+	now := time.Now()
+	for w := range 4 { // the first is on call every week
+		if got := c.OnCall(now.AddDate(0, 0, 7*w)); got != "a" {
+			t.Fatal("week", w, got)
+		}
+	}
+	if got := c.chain(now); strings.Join(got, ",") != "a,b,c,owner" {
+		t.Fatal(got)
+	}
+	if s := c.Schedule(now, 4); len(s) != 1 || s[0].Person != "a" {
+		t.Fatal("one long shift expected", s)
+	}
+	c.Overrides = []Override{{Person: "b", From: now.Add(-time.Hour).UnixMilli(), To: now.Add(time.Hour).UnixMilli()}}
+	if got := c.OnCall(now); got != "b" {
+		t.Fatal("cover still applies", got)
+	}
+	c.FixedOrder = false // weekly shifts again: the week after is someone else
+	c.Overrides = nil
+	if c.OnCall(now) == c.OnCall(now.AddDate(0, 0, 7)) {
+		t.Fatal("shifts on: the person changes weekly")
 	}
 }
