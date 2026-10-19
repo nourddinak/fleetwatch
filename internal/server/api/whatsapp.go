@@ -111,7 +111,8 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	// Everyone's own settings.
 	mux.HandleFunc("GET /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		p, _ := s.WhatsApp.PersonOf(linkKey(sess))
-		writeJSON(w, http.StatusOK, map[string]any{"available": s.WhatsApp.Linked(), "person": p, "languages": whatsapp.Languages})
+		writeJSON(w, http.StatusOK, map[string]any{"available": s.WhatsApp.Linked(), "person": p, "languages": whatsapp.Languages,
+			"number": s.WhatsApp.Status().Number}) // whom to call to talk with the AI
 	}))
 	mux.HandleFunc("PUT /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		var in whatsapp.Person

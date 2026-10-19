@@ -72,7 +72,7 @@ export function WhatsAppSetup() {
     <>
       <Card>
         <SectionTitle icon={<WhatsApp size={18} />} title="Your WhatsApp"
-          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message."
+          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message, and the team can call it to ask the AI about anything (only from the numbers saved below; other calls are declined)."
           action={st.linked ? <Badge tone={st.connected ? "ok" : "warn"} dot>{st.connected ? "Connected" : "Reconnecting"}</Badge> : undefined} />
         {st.linked ? (
           <div className="flex flex-wrap items-center gap-3">
@@ -212,7 +212,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
 
 /** Settings → Account: one's own WhatsApp number, language and quiet hours. */
 export function MyWhatsApp({ explain }: { explain?: boolean }) {
-  const data = useApi<{ available: boolean; person: WaPerson }>("/api/me/whatsapp");
+  const data = useApi<{ available: boolean; person: WaPerson; number?: string }>("/api/me/whatsapp");
   if (data.data && !data.data.available && explain) {
     return <Card><SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="The dashboard owner has not linked WhatsApp yet. Once they have, set your number here to get on-call alerts and calls." /></Card>;
   }
@@ -220,6 +220,10 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
   return (
     <Card>
       <SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="Where on-call alerts reach you on WhatsApp, in which language, and when not to." />
+      {data.data.number && (
+        <p className="mb-1 flex items-center gap-2 rounded-xl bg-surface2/60 p-3 text-xs text-muted"><PhoneCall size={13} className="shrink-0" />
+          <span>Call <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp, from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Calls from other numbers are declined.</span></p>
+      )}
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
     </Card>
   );

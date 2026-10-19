@@ -33,6 +33,12 @@ func TestVoiceActionGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := callDeps{auth: a}
+	if !deps.sees(oncall.Owner)("any") || !deps.sees(op.ID)("s1") || deps.sees(op.ID)("s2") || !deps.sees(viewer.ID)("s9") {
+		t.Fatal("who sees which servers")
+	}
+	if deps.sees("mem_gone")("s1") {
+		t.Fatal("an unknown member sees servers")
+	}
 	gate := func(person string) *voiceActions { return &voiceActions{d: deps, person: person, name: person} }
 	if gate(oncall.Owner).allowed("s2") != nil || gate(op.ID).allowed("s1") != nil {
 		t.Fatal("the owner, and an operator on their server, may act")

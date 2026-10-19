@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow/types"
+
 	"fleetwatch/internal/server/db"
 )
 
@@ -88,5 +90,22 @@ func TestStream(t *testing.T) {
 	st.flush()
 	if f, _ := st.ReadFrame(); len(f) != 960 || len(st.buf) != 0 {
 		t.Fatal("not flushed")
+	}
+}
+
+func TestCallerOf(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, dir, nil)
+	s.SetPerson("mem_1", Person{Phone: "+212 6 12 34 56 78"})
+	if who, num := s.callerOf(t.Context(), nil, types.NewJID("212612345678", types.DefaultUserServer)); who != "mem_1" || num != "212612345678" {
+		t.Fatal("a saved number is not recognised", who, num)
+	}
+	if who, _ := s.callerOf(t.Context(), nil, types.NewJID("15551234567", types.DefaultUserServer)); who != "" {
+		t.Fatal("a stranger was taken for someone", who)
 	}
 }

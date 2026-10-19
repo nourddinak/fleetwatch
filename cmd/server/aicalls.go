@@ -16,15 +16,19 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/fleet"
+	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/logs"
 	"fleetwatch/internal/server/oncall"
+	"fleetwatch/internal/server/security"
+	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
 	"fleetwatch/internal/server/whatsapp"
 )
 
-// What the AI may look at and do during an on-call call: the incident, the server's
-// numbers, its apps and recent errors, and acknowledging the incident.
+// The AI on WhatsApp calls: on-call calls about an incident, and calls the team makes
+// to the dashboard's number to ask about anything. In both it sees what the person
+// may see (their servers) and does what their role allows.
 
 type callDeps struct {
 	db        *sql.DB
@@ -37,13 +41,25 @@ type callDeps struct {
 	hub       *fleet.Hub
 	apps      *apps.Service
 	logs      *logs.Store
+	uptime    *uptime.Service
+	security  *security.Service
+	admin     *hostadmin.Service
 	people    func() []oncall.Person
 }
 
 const maxCall = 5 * time.Minute
 
-// talker answers a WhatsApp call with the AI, when it is set up and minutes are left.
+// talker answers an outgoing call: about an incident, or a test ("" incident).
 func (d callDeps) talker(person, incidentID string) whatsapp.Talker {
+	return d.session(person, incidentID, false)
+}
+
+// inbound answers a call a team member makes to the dashboard's number.
+func (d callDeps) inbound(person string) whatsapp.Talker {
+	return d.session(person, "", true)
+}
+
+func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talker {
 	left := d.ai.Remaining()
 	if left < 30*time.Second {
 		return nil
@@ -59,21 +75,37 @@ func (d callDeps) talker(person, incidentID string) whatsapp.Talker {
 	if n, ok := whatsapp.LanguageNames[wp.Language]; ok {
 		lang = "Speak " + n + ". If they switch to another language, switch with them."
 	}
+	rules := `- This is a phone call: keep every answer short and plain, no lists, no markdown, no IDs read out unless asked.
+- Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
+- You can start, stop, restart or reload an app. First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action, then say how it went. If a tool refuses, tell them why.
+- When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.
+- When they are done or say goodbye, say goodbye and call end_call.
+` + lang
 	return func(ctx context.Context, m whatsapp.Media) {
 		talk := ai.Talk{In: m.In, Say: m.Say, Hush: m.Hush, MaxLength: min(maxCall, left)}
-		if incidentID == "" {
+		kit := d.toolkit(person, name, incidentID)
+		switch {
+		case inbound:
+			talk.Instructions = "You are Fleetwatch's voice assistant. " + name + " is calling the dashboard's WhatsApp number to ask about their servers, apps, sites, incidents, logs, uptime or security, or to have an app restarted.\n" + rules
+			talk.Tools = kit
+			talk.Opening = name + " is calling. Greet them by name, briefly mention anything urgent (call list_incidents first), and ask what they need."
+		case incidentID == "":
 			talk.Instructions = "You are Fleetwatch's on-call voice assistant, on a WhatsApp test call with " + name +
-				". Say this is a test call from Fleetwatch to check that calls and the AI work, and that during a real incident you would explain the problem and answer questions. Keep it short, answer what they ask, then say goodbye and end the call. " + lang
+				". Say this is a test call from Fleetwatch to check that calls and the AI work; they may ask anything about their servers to try it.\n" + rules
+			talk.Tools = kit
 			talk.Opening = "The test call just connected."
-		} else {
-			talk.Instructions, talk.Tools = d.brief(incidentID, person, name, lang)
+		default:
+			x, _ := d.incidents.Get(incidentID)
+			talk.Instructions = fmt.Sprintf("You are Fleetwatch's on-call voice assistant, calling %s on WhatsApp about an incident: %q (%s, severity %s) on the server %s, first seen %s ago. get_incident has its details and acknowledge (without an id) acknowledges it.\n%s",
+				name, x.Title, x.Type, x.Severity, d.serverName(x.ServerID), time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), rules)
+			talk.Tools = kit
 			talk.Opening = "The call just connected. Greet " + name + ", say in one or two sentences what happened, and ask if they can handle it."
 		}
 		lines, took, err := d.ai.Converse(ctx, talk)
 		d.ai.AddUsage(took)
 		if err != nil {
 			slog.Warn("ai call", "person", name, "err", err)
-			if len(lines) == 0 { // the AI could not start: at least they hear the alert
+			if len(lines) == 0 && !inbound { // the AI could not start: at least they hear the alert
 				m.Alert()
 				select {
 				case <-time.After(5 * time.Second):
@@ -81,7 +113,7 @@ func (d callDeps) talker(person, incidentID string) whatsapp.Talker {
 				}
 			}
 		}
-		if incidentID != "" && len(lines) > 0 {
+		if len(lines) > 0 {
 			var b strings.Builder
 			for _, l := range lines {
 				who := "AI"
@@ -90,32 +122,203 @@ func (d callDeps) talker(person, incidentID string) whatsapp.Talker {
 				}
 				fmt.Fprintf(&b, "%s: %s\n", who, strings.TrimSpace(l.Text))
 			}
-			d.incidents.AddComment(incidentID, "WhatsApp call with "+name+" ("+took.Round(time.Second).String()+")", b.String())
+			if incidentID != "" {
+				d.incidents.AddComment(incidentID, "WhatsApp call with "+name+" ("+took.Round(time.Second).String()+")", b.String())
+			}
+			how := "outgoing"
+			if inbound {
+				how = "incoming"
+			}
+			audit.Record(d.db, audit.Event{Action: "whatsapp.call", OK: true, Actor: name, Detail: how + " AI call, " + took.Round(time.Second).String()})
 		}
 	}
 }
 
-// brief is what the AI knows and may do about an incident.
-func (d callDeps) brief(incidentID, person, name, lang string) (string, []ai.Tool) {
-	x, _ := d.incidents.Get(incidentID)
-	server := x.ServerID
-	if rec, err := d.hub.Reg.Get(x.ServerID); err == nil {
-		server = rec.Name
+func (d callDeps) serverName(id string) string {
+	if rec, err := d.hub.Reg.Get(id); err == nil {
+		return rec.Name
 	}
-	instructions := fmt.Sprintf(`You are Fleetwatch's on-call voice assistant, calling %s on WhatsApp about an incident on their servers.
-The incident: %q (%s, severity %s) on the server %s, first seen %s ago.
-- This is a phone call: keep every answer short and plain, no lists, no markdown.
-- Tell them briefly what happened, then help: use the tools for any fact (server load, apps, errors). Never invent numbers.
-- When they say they will handle it, are on it, or will check it, call acknowledge, then confirm in a few words.
-- You can start, stop, restart or reload an app (list_apps names them). First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action, then say how it went. If a tool refuses, tell them why.
-- When they are done or say goodbye, say goodbye and call end_call.
-%s`, name, x.Title, x.Type, x.Severity, server, time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), lang)
+	return id
+}
 
-	gate := &voiceActions{d: d, person: person, name: name, incidentServer: x.ServerID}
-	tools := []ai.Tool{
-		{Name: "get_incident", Description: "The incident's details: what, where, since when, how often, and sample log lines.",
+// sees reports whether the person may see a server: the owner and members without a
+// server list see them all.
+func (d callDeps) sees(person string) func(serverID string) bool {
+	if person == oncall.Owner {
+		return func(string) bool { return true }
+	}
+	m, err := d.auth.GetMember(person)
+	if err != nil || m.Disabled {
+		return func(string) bool { return false }
+	}
+	return func(id string) bool { return m.Servers == nil || slices.Contains(m.Servers, id) }
+}
+
+// toolkit is what the AI may look at and do for a person, focused on an incident if any.
+func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
+	sees := d.sees(person)
+	focus := ""
+	if incidentID != "" {
+		if x, err := d.incidents.Get(incidentID); err == nil {
+			focus = x.ServerID
+		}
+	}
+	str := func(args map[string]any, k string) string { v, _ := args[k].(string); return strings.TrimSpace(v) }
+	// server finds a server by name (or the incident's one when none is named).
+	server := func(name string) (fleet.View, error) {
+		views, err := d.hub.Views()
+		if err != nil {
+			return fleet.View{}, err
+		}
+		for _, v := range views {
+			if ((name == "" && v.ID == focus) || (name != "" && strings.EqualFold(v.Name, name))) && sees(v.ID) {
+				return v, nil
+			}
+		}
+		if name == "" {
+			return fleet.View{}, valid.Error("which server? list_servers names them")
+		}
+		return fleet.View{}, valid.Error("no server of theirs is called " + name)
+	}
+	optServer := map[string]any{"type": "STRING", "description": "A server's name; without it, the incident's server (or all of theirs)"}
+	gate := &voiceActions{d: d, person: person, name: name, incidentServer: focus}
+	incident := func(args map[string]any) (incidents.Incident, error) {
+		id := str(args, "id")
+		if id == "" {
+			id = incidentID
+		}
+		if id == "" {
+			return incidents.Incident{}, valid.Error("which incident? list_incidents names them")
+		}
+		x, err := d.incidents.Get(id)
+		if err != nil || !sees(x.ServerID) {
+			return incidents.Incident{}, valid.Error("no such incident")
+		}
+		return x, nil
+	}
+	return []ai.Tool{
+		{Name: "list_servers", Description: "Their servers with status (online, warning, critical, disconnected), CPU, memory and disk use.",
 			Run: func(context.Context, map[string]any) (any, error) {
-				x, err := d.incidents.Get(incidentID)
+				views, err := d.hub.Views()
+				if err != nil {
+					return nil, err
+				}
+				out := []map[string]any{}
+				for _, v := range views {
+					if sees(v.ID) {
+						out = append(out, map[string]any{"name": v.Name, "status": v.Status, "cpuPercent": v.CPU, "memoryPercent": v.RAM, "diskPercent": v.Disk})
+					}
+				}
+				return out, nil
+			}},
+		{Name: "get_server_status", Description: "One server's current load: CPU, memory, disk, network, load average, uptime, agent status.",
+			Params: map[string]any{"server": optServer},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				v, err := server(str(args, "server"))
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"name": v.Name, "status": v.Status, "cpuPercent": v.CPU, "memoryPercent": v.RAM, "diskPercent": v.Disk, "swapPercent": v.Swap,
+					"netInMbps": v.NetRx, "netOutMbps": v.NetTx, "load": v.Load, "uptimeHours": v.UptimeSec / 3600, "cpuCores": v.CPUCores, "ramGB": v.RAMGB, "diskGB": v.DiskGB}, nil
+			}},
+		{Name: "list_apps", Description: "The apps on a server (or on all their servers) and whether each is running.",
+			Params: map[string]any{"server": optServer},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				id := ""
+				if n := str(args, "server"); n != "" || focus != "" {
+					v, err := server(n)
+					if err != nil {
+						return nil, err
+					}
+					id = v.ID
+				}
+				views, err := d.apps.List(id)
+				if err != nil {
+					return nil, err
+				}
+				out := []map[string]string{}
+				for _, v := range views {
+					if sees(v.ServerID) {
+						out = append(out, map[string]string{"name": v.Name, "server": d.serverName(v.ServerID), "status": v.Status, "runtime": v.Runtime})
+					}
+				}
+				return out, nil
+			}},
+		{Name: "search_logs", Description: "Search the logs of a server or of one app: the newest matching lines.",
+			Params: map[string]any{
+				"server":  optServer,
+				"app":     map[string]any{"type": "STRING", "description": "An app's name, to see only its logs"},
+				"text":    map[string]any{"type": "STRING", "description": "Words the lines must contain"},
+				"level":   map[string]any{"type": "STRING", "enum": []string{"error", "warning", "any"}, "description": "error: errors only (the default); warning: warnings and errors"},
+				"minutes": map[string]any{"type": "INTEGER", "description": "How far back to look (default 60)"},
+			},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				q := logs.Query{Text: str(args, "text"), Limit: 15}
+				switch str(args, "level") {
+				case "any":
+				case "warning":
+					q.Severities = []string{"warning", "error", "critical"}
+				default:
+					q.Severities = []string{"error", "critical"}
+				}
+				minutes := 60
+				if f, ok := args["minutes"].(float64); ok && f > 0 {
+					minutes = min(int(f), 7*24*60)
+				}
+				q.From = time.Now().Add(-time.Duration(minutes) * time.Minute).UnixMilli()
+				if n := str(args, "app"); n != "" {
+					app, err := gate.findApp(n)
+					if err != nil {
+						return nil, err
+					}
+					if !sees(app.ServerID) {
+						return nil, valid.Error("no app of theirs is called " + n)
+					}
+					q.AppID = app.ID
+				} else if n := str(args, "server"); n != "" || focus != "" {
+					v, err := server(n)
+					if err != nil {
+						return nil, err
+					}
+					q.ServerID = v.ID
+				}
+				lines, err := d.logs.Search(q)
+				if err != nil {
+					return nil, err
+				}
+				out := []string{}
+				for _, l := range lines {
+					if !sees(l.ServerID) {
+						continue
+					}
+					msg := l.Message
+					if len(msg) > 240 {
+						msg = msg[:240]
+					}
+					out = append(out, time.UnixMilli(l.TS).UTC().Format("Jan 2 15:04:05")+" ["+l.Severity+"] "+d.serverName(l.ServerID)+": "+msg)
+				}
+				return out, nil
+			}},
+		{Name: "list_incidents", Description: "Their open incidents: what, where, how serious, since when, and whether someone acknowledged them.",
+			Run: func(context.Context, map[string]any) (any, error) {
+				list, err := d.incidents.List(incidents.Filter{Status: "open", Limit: 50})
+				if err != nil {
+					return nil, err
+				}
+				out := []map[string]any{}
+				for _, x := range list {
+					if x.Status == "resolved" || !sees(x.ServerID) || len(out) >= 15 {
+						continue
+					}
+					out = append(out, map[string]any{"id": x.ID, "title": x.Title, "severity": x.Severity, "status": x.Status, "server": d.serverName(x.ServerID),
+						"since": time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute).String()})
+				}
+				return out, nil
+			}},
+		{Name: "get_incident", Description: "An incident's details: what, where, since when, how often, and sample log lines. Without an id, the incident of this call.",
+			Params: map[string]any{"id": map[string]any{"type": "STRING", "description": "The incident's id from list_incidents"}},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				x, err := incident(args)
 				if err != nil {
 					return nil, err
 				}
@@ -125,57 +328,75 @@ The incident: %q (%s, severity %s) on the server %s, first seen %s ago.
 						app = v.Name
 					}
 				}
-				return map[string]any{"title": x.Title, "type": x.Type, "severity": x.Severity, "status": x.Status, "server": server, "app": app,
+				return map[string]any{"title": x.Title, "type": x.Type, "severity": x.Severity, "status": x.Status, "server": d.serverName(x.ServerID), "app": app,
 					"firstSeen": time.UnixMilli(x.FirstAt).UTC().Format(time.RFC3339), "lastSeen": time.UnixMilli(x.LastAt).UTC().Format(time.RFC3339),
 					"occurrences": x.Occurrences, "logSamples": x.Samples[:min(len(x.Samples), 5)]}, nil
 			}},
-		{Name: "get_server_status", Description: "The server's current load: CPU, memory, disk, load average, uptime and whether its agent is connected. Without a name, the incident's server.",
-			Params: map[string]any{"server": map[string]any{"type": "STRING", "description": "A server's name, if not the incident's"}},
+		{Name: "acknowledge", Description: "Acknowledge an incident for them (it stops the paging). Without an id, the incident of this call.",
+			Params: map[string]any{"id": map[string]any{"type": "STRING", "description": "The incident's id from list_incidents"}},
 			Run: func(_ context.Context, args map[string]any) (any, error) {
-				want, _ := args["server"].(string)
-				views, err := d.hub.Views()
+				x, err := incident(args)
 				if err != nil {
 					return nil, err
 				}
-				for _, v := range views {
-					if (want == "" && v.ID == x.ServerID) || (want != "" && strings.EqualFold(v.Name, want)) {
-						return map[string]any{"name": v.Name, "status": v.Status, "cpuPercent": v.CPU, "memoryPercent": v.RAM, "diskPercent": v.Disk,
-							"load": v.Load, "uptimeHours": v.UptimeSec / 3600}, nil
-					}
+				if _, err := d.incidents.Act(x.ID, "acknowledge", "Acknowledged on a WhatsApp call", name); err != nil {
+					return nil, err
 				}
-				return nil, fmt.Errorf("no server named %q", want)
+				return "acknowledged", nil
 			}},
-		{Name: "list_apps", Description: "The apps on the incident's server and whether each is running.",
+		{Name: "uptime_checks", Description: "Their uptime checks (websites and endpoints): up or down, uptime over 24 hours, 7 and 30 days, response times.",
 			Run: func(context.Context, map[string]any) (any, error) {
-				views, err := d.apps.List(x.ServerID)
+				views, err := d.uptime.Views()
 				if err != nil {
 					return nil, err
 				}
-				out := []map[string]string{}
+				out := []map[string]any{}
 				for _, v := range views {
-					out = append(out, map[string]string{"name": v.Name, "status": v.Status, "runtime": v.Runtime})
+					if v.ServerID != "" && !sees(v.ServerID) {
+						continue
+					}
+					out = append(out, map[string]any{"name": v.Name, "url": v.URL, "status": v.Status, "uptime24hPercent": v.Uptime24h,
+						"uptime7dPercent": v.Uptime7d, "uptime30dPercent": v.Uptime30d, "p95ms": v.P95})
 				}
 				return out, nil
 			}},
-		{Name: "get_recent_errors", Description: "The latest error log lines (last hour) of the incident's app, or of its server.",
-			Run: func(context.Context, map[string]any) (any, error) {
-				q := logs.Query{ServerID: x.ServerID, Severities: []string{"error"}, From: time.Now().Add(-time.Hour).UnixMilli(), Limit: 12}
-				if x.AppID != nil {
-					q.AppID = *x.AppID
-				}
-				lines, err := d.logs.Search(q)
-				if err != nil {
-					return nil, err
-				}
-				out := []string{}
-				for _, l := range lines {
-					msg := l.Message
-					if len(msg) > 240 {
-						msg = msg[:240]
+		{Name: "security_overview", Description: "Security of a server or all of theirs: the latest scan's warnings, recent SSH logins (new countries or keys flagged), and IP addresses the dashboard blocks.",
+			Params: map[string]any{"server": optServer},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				only := ""
+				if n := str(args, "server"); n != "" {
+					v, err := server(n)
+					if err != nil {
+						return nil, err
 					}
-					out = append(out, time.UnixMilli(l.TS).UTC().Format("15:04:05")+" "+msg)
+					only = v.ID
 				}
-				return out, nil
+				findings := []map[string]string{}
+				for _, rep := range d.security.Reports() {
+					if !sees(rep.ServerID) || (only != "" && rep.ServerID != only) {
+						continue
+					}
+					for _, f := range rep.Findings {
+						if f.Severity != "info" && len(findings) < 12 {
+							findings = append(findings, map[string]string{"server": d.serverName(rep.ServerID), "severity": f.Severity, "title": f.Title})
+						}
+					}
+				}
+				logins := []map[string]any{}
+				if list, err := d.security.Logins(only, false, false, 30); err == nil {
+					for _, l := range list.Items {
+						if sees(l.ServerID) && len(logins) < 8 {
+							logins = append(logins, map[string]any{"server": d.serverName(l.ServerID), "user": l.User, "ip": l.IP, "country": l.Country,
+								"when": time.UnixMilli(l.TS).UTC().Format("Jan 2 15:04"), "newCountry": l.NewCountry, "newKey": l.NewKey})
+						}
+					}
+				}
+				blocked := d.admin.Blocked()
+				recent := []string{}
+				for _, b := range blocked[max(0, len(blocked)-5):] {
+					recent = append(recent, b.IP+" ("+b.Reason+")")
+				}
+				return map[string]any{"findings": findings, "recentSSHLogins": logins, "blockedIPs": len(blocked), "latestBlocked": recent}, nil
 			}},
 		{Name: "propose_action", Description: "Get an app action ready: start, stop, restart or reload. It runs only after the person confirms and you call do_action.",
 			Params: map[string]any{
@@ -183,21 +404,11 @@ The incident: %q (%s, severity %s) on the server %s, first seen %s ago.
 				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload"}},
 			}, Required: []string{"app", "action"},
 			Run: func(_ context.Context, args map[string]any) (any, error) {
-				appName, _ := args["app"].(string)
-				action, _ := args["action"].(string)
-				return gate.propose(appName, action)
+				return gate.propose(str(args, "app"), str(args, "action"))
 			}},
 		{Name: "do_action", Description: "Run the action propose_action got ready, once the person has clearly said yes to it.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.do(ctx) }},
-		{Name: "acknowledge", Description: "Acknowledge the incident for them: it stops the paging. Use it once they say they will handle it.",
-			Run: func(context.Context, map[string]any) (any, error) {
-				if _, err := d.incidents.Act(incidentID, "acknowledge", "Acknowledged on a WhatsApp call", name); err != nil {
-					return nil, err
-				}
-				return "acknowledged", nil
-			}},
 	}
-	return instructions, tools
 }
 
 // voiceActions runs app actions asked for on a call, in two steps: propose, then do once

@@ -409,7 +409,9 @@ func serve() error {
 	}
 	// Answered calls talk with the AI (Gemini Live), when the owner set it up.
 	aiSvc := ai.New(d, box)
-	waSvc.Talker = callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, people: func() []oncall.Person { return onCall.People() }}.talker
+	calls := &callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, uptime: upSvc, admin: admin, people: func() []oncall.Person { return onCall.People() }}
+	waSvc.Talker = func(person, incident string) whatsapp.Talker { return calls.talker(person, incident) }
+	waSvc.Inbound = func(person string) whatsapp.Talker { return calls.inbound(person) }
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {
@@ -628,6 +630,7 @@ func serve() error {
 		return ids
 	}
 	sec := security.New(d)
+	calls.security = sec // the AI on calls reads security too
 	vulnSvc.ServerIDs = serverIDs
 	sec.Send, sec.ServerIDs, sec.AgentVersion, sec.Connected, sec.Name = hub.Send, serverIDs, diskSvc.AgentVersion, hub.Connected, serverName
 	sec.Ports, sec.Domains = appSvc.ServerPorts, appSvc.Domains

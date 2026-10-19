@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/purpshell/meowcaller"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // Calls go through meowcaller, WhatsApp's voice calls in pure Go. Audio is 16 kHz mono,
@@ -85,46 +88,7 @@ func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration, ta
 	case <-time.After(8 * time.Second):
 	}
 	if talk != nil {
-		out := &stream{}
-		call.Play(out)
-		in := make(chan []float32, 64)
-		var inMu sync.Mutex
-		inClosed := false
-		closeIn := func() {
-			inMu.Lock()
-			if !inClosed {
-				inClosed = true
-				close(in)
-			}
-			inMu.Unlock()
-		}
-		call.Receive(meowcaller.SinkFunc(func(f []float32) {
-			inMu.Lock()
-			defer inMu.Unlock()
-			if !inClosed {
-				select {
-				case in <- slices.Clone(f):
-				default: // the AI is behind: drop a frame rather than block the call
-				}
-			}
-		}))
-		tctx, cancel := context.WithCancel(ctx)
-		talked := make(chan struct{})
-		go func() {
-			select {
-			case <-ended:
-				closeIn()
-				cancel()
-			case <-talked:
-			}
-		}()
-		talk(tctx, Media{In: in, Say: out.push, Hush: out.flush, Alert: func() {
-			src := alertSound().(*samples)
-			out.push(src.buf)
-		}})
-		close(talked)
-		cancel()
-		closeIn()
+		talkOn(ctx, call, ended, talk)
 		return true, nil
 	}
 	done := make(chan struct{})
@@ -212,3 +176,107 @@ func (st *stream) ReadFrame() ([]float32, error) {
 }
 
 func (st *stream) Close() error { return nil }
+
+// talkOn lets talk speak on an answered call until it returns or the call ends.
+func talkOn(ctx context.Context, call *meowcaller.Call, ended <-chan struct{}, talk Talker) {
+	out := &stream{}
+	call.Play(out)
+	in := make(chan []float32, 64)
+	var inMu sync.Mutex
+	inClosed := false
+	closeIn := func() {
+		inMu.Lock()
+		if !inClosed {
+			inClosed = true
+			close(in)
+		}
+		inMu.Unlock()
+	}
+	call.Receive(meowcaller.SinkFunc(func(f []float32) {
+		inMu.Lock()
+		defer inMu.Unlock()
+		if !inClosed {
+			select {
+			case in <- slices.Clone(f):
+			default: // the AI is behind: drop a frame rather than block the call
+			}
+		}
+	}))
+	tctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	talked := make(chan struct{})
+	go func() {
+		select {
+		case <-ended:
+			closeIn()
+			cancel()
+		case <-talked:
+		}
+	}()
+	talk(tctx, Media{In: in, Say: out.push, Hush: out.flush, Alert: func() {
+		out.push(alertSound().(*samples).buf)
+	}})
+	close(talked)
+	closeIn()
+}
+
+// newCaller sets up calls on a client, before it connects.
+func (s *Service) newCaller(cl *whatsmeow.Client) *meowcaller.Client {
+	c := meowcaller.NewClient(cl)
+	c.OnIncomingCall(func(call *meowcaller.Call) { go s.incoming(cl, call) })
+	return c
+}
+
+// caller is who rings: the person whose saved number it is, or "".
+func (s *Service) callerOf(ctx context.Context, cl *whatsmeow.Client, peer types.JID) (string, string) {
+	digits := peer.User
+	if peer.Server == types.HiddenUserServer { // a private ID: its phone number, if WhatsApp told us
+		digits = ""
+		if pn, err := cl.Store.LIDs.GetPNForLID(ctx, peer); err == nil && !pn.IsEmpty() {
+			digits = pn.User
+		}
+	}
+	if digits == "" {
+		return "", ""
+	}
+	for id, p := range s.People() {
+		if p.Phone == digits {
+			return id, digits
+		}
+	}
+	return "", digits
+}
+
+// incoming answers a call to the linked number from someone of the team, with the AI.
+func (s *Service) incoming(cl *whatsmeow.Client, call *meowcaller.Call) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	person, digits := s.callerOf(ctx, cl, call.Peer())
+	var talk Talker
+	if person != "" && s.Inbound != nil {
+		talk = s.Inbound(person)
+	}
+	if talk == nil {
+		call.Reject()
+		if person == "" {
+			slog.Info("whatsapp: declined a call from a number nobody saved", "from", digits)
+		}
+		return
+	}
+	var readyOnce, endOnce sync.Once
+	ready, ended := make(chan struct{}), make(chan struct{})
+	call.OnReady(func() { readyOnce.Do(func() { close(ready) }) })
+	call.OnEnd(func(string) { endOnce.Do(func() { close(ended) }) })
+	if err := call.Answer(); err != nil {
+		slog.Warn("whatsapp: answer", "err", err)
+		return
+	}
+	defer call.Hangup()
+	select {
+	case <-ready:
+	case <-ended:
+		return
+	case <-time.After(10 * time.Second):
+	}
+	talkOn(ctx, call, ended, talk)
+}

@@ -69,6 +69,9 @@ type Service struct {
 	path string
 	// Talker answers calls (person, incident ("" for a test call)); see TalkerFor.
 	Talker func(person, incident string) Talker
+	// Inbound answers a call a known person makes to the linked number; nil, or a nil
+	// Talker, declines it. Calls from numbers nobody saved are always declined.
+	Inbound func(person string) Talker
 
 	mu        sync.Mutex
 	container *sqlstore.Container
@@ -117,7 +120,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	cl := whatsmeow.NewClient(dev, nil)
 	cl.AddEventHandler(s.onEvent)
-	s.client, s.caller = cl, meowcaller.NewClient(cl) // before connecting, as meowcaller needs
+	s.client, s.caller = cl, s.newCaller(cl) // before connecting, as meowcaller needs
 	return cl.Connect()
 }
 
@@ -193,7 +196,7 @@ func (s *Service) Link(phone string) error {
 	cl := whatsmeow.NewClient(c.NewDevice(), nil)
 	cl.AddEventHandler(s.onEvent)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	s.client, s.caller, s.stopLink, s.qr, s.code, s.lastErr = cl, meowcaller.NewClient(cl), cancel, "", "", ""
+	s.client, s.caller, s.stopLink, s.qr, s.code, s.lastErr = cl, s.newCaller(cl), cancel, "", "", ""
 	s.mu.Unlock()
 
 	if digits == "" {
