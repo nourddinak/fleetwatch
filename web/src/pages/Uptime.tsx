@@ -8,6 +8,7 @@ import { dateTime, relTime } from "../mock/util";
 import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, SectionTitle, Table, Td, TimeRangeSelector, Tr, toneDot, type Tone } from "../components/ui";
 import { MetricPanel } from "../components/MetricChart";
 import { cn } from "../utils/cn";
+import { countryName, placesOf } from "../utils/regions";
 
 interface Check {
   id: string;
@@ -67,6 +68,7 @@ export function Uptime() {
   const { me, subscribeLive, toast } = useStore();
   const owner = !me || me.role === "owner";
   const list = useApi<View[]>("/api/uptime");
+  const where = useApi<Record<string, string>>("/api/uptime/locations");
   const { setData } = list;
   const [edit, setEdit] = useState<Partial<Check> | null>(null);
   const [del, setDel] = useState<View | null>(null);
@@ -129,7 +131,7 @@ export function Uptime() {
             {list.data.length === 0 ? (
               <EmptyState icon={<Gauge size={20} />} title="No uptime checks yet" desc="Add a site's address; it is checked every minute from the places you pick." />
             ) : (
-              list.data.map((v) => <CheckCard key={v.id} v={v} owner={owner} onOpen={() => setOpen(v.id)} onCheck={() => checkNow(v.id)} onEdit={() => setEdit(v)} onDelete={() => setDel(v)} />)
+              list.data.map((v) => <CheckCard key={v.id} v={v} where={where.data ?? {}} owner={owner} onOpen={() => setOpen(v.id)} onCheck={() => checkNow(v.id)} onEdit={() => setEdit(v)} onDelete={() => setDel(v)} />)
             )}
           </div>
         )}
@@ -154,10 +156,14 @@ function locName(l: string, name: (id: string) => string | undefined) {
   return l === "dashboard" ? "Dashboard" : (name(l) ?? "Removed server");
 }
 
-function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; owner: boolean; onOpen: () => void; onCheck: () => void; onEdit: () => void; onDelete: () => void }) {
+function CheckCard({ v, where, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; where: Record<string, string>; owner: boolean; onOpen: () => void; onCheck: () => void; onEdit: () => void; onDelete: () => void }) {
   const { getServer } = useStore();
   const [tone, label] = STATUS[v.status];
   const name = (id: string) => getServer(id)?.name;
+  // "Down from Europe (Germany) · up from North America": where it fails, by place.
+  const down = v.states.filter((x) => x.status === "down").map((x) => where[x.location]);
+  const up = v.states.filter((x) => x.status === "up").map((x) => where[x.location]);
+  const split = down.length > 0 && up.length > 0 && placesOf(down) && placesOf(up) ? `Down from ${placesOf(down)} · up from ${placesOf(up)}` : "";
   return (
     <Card className="transition hover:border-fg/25">
       <div className="flex items-start gap-3">
@@ -208,6 +214,7 @@ function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; o
           ))}
         </div>
       </div>
+      {split && <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-warn"><MapPin size={12} className="shrink-0" />{split}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
         {v.states.map((s) => (
           <span key={s.location} title={s.error || (s.ts ? `HTTP ${s.code} · ${relTime(s.ts)}` : "No result yet")}
@@ -215,6 +222,7 @@ function CheckCard({ v, owner, onOpen, onCheck, onEdit, onDelete }: { v: View; o
             <span className={cn("h-1.5 w-1.5 rounded-full", s.status === "up" ? "bg-ok" : s.status === "down" ? "bg-crit" : "bg-muted")} />
             {s.location === "dashboard" ? <MapPin size={11} className="text-muted" /> : <ServerIcon size={11} className="text-muted" />}
             {locName(s.location, name)}
+            {where[s.location] && where[s.location] !== "LAN" && <span className="text-muted" title={countryName(where[s.location])}>{where[s.location]}</span>}
             <span className="text-muted">{s.status === "up" ? ms(s.latencyMs ?? 0) : s.status === "down" ? (s.code ? `HTTP ${s.code}` : "no answer") : "…"}</span>
           </span>
         ))}
@@ -284,6 +292,8 @@ function EditCheck({ check, onClose, onSaved }: { check: Partial<Check>; onClose
                 {l === "dashboard" ? "Dashboard" : servers.find((s) => s.id === l)?.name}
               </button>
             ))}
+            <button type="button" onClick={() => setF({ ...f, locations: ["dashboard", ...servers.filter((s) => s.enrolled).map((s) => s.id)] })}
+              className="rounded-full px-3 py-1.5 text-xs font-medium text-muted underline hover:text-fg">Everywhere</button>
           </div>
         </Field>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Checking (untick to pause)</label>

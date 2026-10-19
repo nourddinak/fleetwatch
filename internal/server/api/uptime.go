@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"fleetwatch/internal/agent/caddy"
 	"fleetwatch/internal/server/auth"
@@ -74,6 +78,27 @@ func (s *server) uptimeRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, h)
 	}))
 	// suggestions: the sites the dashboard knows about (Caddy, app domains) that have no check yet.
+	// Where each place checks run from is, by country: "down only from Europe".
+	mux.HandleFunc("GET /api/uptime/locations", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		out := map[string]string{}
+		if s.Security == nil {
+			writeJSON(w, http.StatusOK, out)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if views, err := s.Fleet.Views(); err == nil {
+			for _, v := range views {
+				if v.IP != "" {
+					out[v.ID] = s.Security.CountryOf(ctx, v.IP)
+				}
+			}
+		}
+		if ips, err := net.DefaultResolver.LookupHost(ctx, hostOnly(s.publicURL(r))); err == nil && len(ips) > 0 {
+			out[uptime.Dashboard] = s.Security.CountryOf(ctx, ips[0])
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
 	mux.HandleFunc("GET /api/uptime/suggestions", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		type suggestion struct {
 			Name     string `json:"name"`
@@ -94,4 +119,12 @@ func (s *server) uptimeRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))
+}
+
+// hostOnly is the host name of a URL.
+func hostOnly(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		return u.Hostname()
+	}
+	return raw
 }

@@ -409,6 +409,9 @@ func orUnknown(c string) string {
 }
 
 // countryOf caches lookups for 30 days.
+// CountryOf is the country (ISO code) of an address, "LAN" for a private one, "" unknown.
+func (s *Service) CountryOf(ctx context.Context, ip string) string { return s.countryOf(ctx, ip) }
+
 func (s *Service) countryOf(ctx context.Context, ip string) string {
 	a, err := netip.ParseAddr(ip)
 	if err != nil {
