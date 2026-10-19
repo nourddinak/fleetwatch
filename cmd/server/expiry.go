@@ -105,3 +105,15 @@ func markFor(left int) int {
 	}
 	return mark
 }
+
+// securityText tells the owner about a security event on WhatsApp (blocks, new open
+// ports, new findings), in a few lines.
+func (d *callDeps) securityText(title, body string) {
+	if d.wa == nil || !d.wa.Linked() {
+		return
+	}
+	if len(body) > 600 {
+		body = body[:600] + "…"
+	}
+	d.text(oncall.Owner, "🛡️ "+title+"\n"+body)
+}

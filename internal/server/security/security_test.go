@@ -170,3 +170,26 @@ func TestAutomatedLogins(t *testing.T) {
 		t.Fatalf("labels: %+v", all.Items)
 	}
 }
+
+// A port newly open to the internet is told within minutes, once.
+func TestWatchPorts(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d)
+	rows := []apps.PortRow{{Port: 22, Proto: "tcp", Bind: "0.0.0.0", Process: "sshd"}}
+	s.Ports = func(string) ([]apps.PortRow, error) { return rows, nil }
+	s.ServerIDs = func() []string { return []string{"s1"} }
+	s.Name = func(string) string { return "web-1" }
+	var told []string
+	s.Notify = func(title, _, _ string) { told = append(told, title) }
+	s.WatchPorts() // the first look only remembers
+	rows = append(rows, apps.PortRow{Port: 5432, Proto: "tcp", Bind: "0.0.0.0", Process: "postgres"})
+	s.WatchPorts()
+	s.WatchPorts()
+	if len(told) != 1 || !strings.Contains(told[0], "Port 5432") || !strings.Contains(told[0], "web-1") {
+		t.Fatal(told)
+	}
+}

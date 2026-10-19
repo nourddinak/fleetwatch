@@ -95,10 +95,11 @@ type Service struct {
 	scanning map[string]time.Time
 	web      map[string][]proto.Finding // per server, from the dashboard's own web checks
 	webAt    time.Time
+	ports    map[string]map[string]bool // server → public port findings seen last (WatchPorts)
 }
 
 func New(d *sql.DB) *Service {
-	s := &Service{db: d, Now: time.Now, scanning: map[string]time.Time{}, web: map[string][]proto.Finding{}}
+	s := &Service{db: d, Now: time.Now, scanning: map[string]time.Time{}, web: map[string][]proto.Finding{}, ports: map[string]map[string]bool{}}
 	rd := &rdap{client: &http.Client{Timeout: 15 * time.Second}}
 	s.Country = rd.country
 	gh := &githubRanges{}
@@ -314,11 +315,16 @@ func (s *Service) Reports() []ServerReport {
 func (s *Service) Run(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Minute)
 	defer tick.Stop()
+	ports := time.NewTicker(2 * time.Minute)
+	defer ports.Stop()
 	first := time.After(90 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ports.C:
+			s.WatchPorts()
+			continue
 		case <-first:
 		case <-tick.C:
 		}
@@ -558,4 +564,32 @@ func (r *rdap) country(ctx context.Context, ip string) string {
 		return ""
 	}
 	return strings.ToUpper(info.Country)
+}
+
+// WatchPorts tells about ports newly open to the internet, without waiting for the
+// next scan: from what the agents report every minute. The first look at a server
+// only remembers what is there.
+func (s *Service) WatchPorts() {
+	for _, id := range s.ServerIDs() {
+		if s.Connected != nil && !s.Connected(id) {
+			continue
+		}
+		now := map[string]bool{}
+		fs := s.portFindings(id)
+		for _, f := range fs {
+			now[f.ID] = true
+		}
+		s.mu.Lock()
+		before, seen := s.ports[id]
+		s.ports[id] = now
+		s.mu.Unlock()
+		if !seen || s.Notify == nil {
+			continue
+		}
+		for _, f := range fs {
+			if !before[f.ID] {
+				s.Notify("Security: "+s.Name(id)+": "+f.Title, f.Detail+"\n\nHow to fix:\n"+f.Fix, f.Severity)
+			}
+		}
+	}
 }

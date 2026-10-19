@@ -570,6 +570,7 @@ func serve() error {
 	}
 	admin.Notify = func(title, body, severity string) {
 		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
+		go calls.securityText(title, body) // and the owner on WhatsApp
 	}
 	hub.Handlers[proto.TypeSSHFailures] = admin.OnFailures
 	hub.Handlers[proto.TypeBlockStatus] = admin.OnBlockStatus
@@ -659,6 +660,9 @@ func serve() error {
 	}
 	sec.Notify = func(title, body, severity string) {
 		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
+		if severity != "info" {
+			go calls.securityText(title, body)
+		}
 	}
 	hub.Handlers[proto.TypeSecurityReport] = sec.OnReport
 	hub.Handlers[proto.TypeSSHLogins] = sec.OnLogins
