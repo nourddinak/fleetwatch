@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -104,11 +105,10 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		"tools":                    []map[string]any{{"functionDeclarations": decls}},
 		"inputAudioTranscription":  map[string]any{},
 		"outputAudioTranscription": map[string]any{},
-		// A phone line is never quite silent: line noise must not count as speech, and
-		// half a second of quiet ends their turn, so answers come quickly.
+		// Half a second of quiet ends their turn, so answers come quickly (speech is
+		// still detected as eagerly as Gemini does by default).
 		"realtimeInputConfig": map[string]any{"automaticActivityDetection": map[string]any{
-			"startOfSpeechSensitivity": "START_SENSITIVITY_LOW", "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-			"prefixPaddingMs": 100, "silenceDurationMs": 500}},
+			"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 600}},
 	}}); err != nil {
 		return nil, 0, err
 	}
@@ -127,6 +127,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	// The person's voice, as it comes.
 	go func() {
 		var g noiseGate
+		defer func() {
+			slog.Info("ai call audio", "frames", g.frames, "passed", g.passed, "peakRMS", fmt.Sprintf("%.4f", g.peak), "noiseFloor", fmt.Sprintf("%.4f", g.floor))
+		}()
 		for frame := range t.In {
 			frame = g.apply(frame)
 			if send(map[string]any{"realtimeInput": map[string]any{"audio": map[string]string{
@@ -177,6 +180,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	for {
 		_, raw, err := ws.Read(ctx)
 		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("ai call: Gemini Live closed", "err", err)
+			}
 			break
 		}
 		var m struct {
@@ -311,14 +317,22 @@ func resample24to16(b []byte) []float32 {
 }
 
 // noiseGate turns line noise into true silence, so Gemini can tell when the person has
-// stopped talking: frames well above the noise floor pass, plus a short hold after
-// them so the ends of words are kept.
+// stopped talking. It learns the noise level from quiet frames only (never from their
+// voice), and never mutes a frame louder than a whisper (gateAlways); after sound it
+// keeps passing a moment, so the ends of words are kept.
 type noiseGate struct {
-	floor float64
-	hold  int // frames left to keep passing
+	floor          float64 // the line's noise level
+	hold           int     // frames left to keep passing
+	frames, passed int     // for the call's log line
+	peak           float64
 }
 
-const gateHold = 5 // 300 ms of 60 ms frames
+const (
+	gateHold   = 5     // 300 ms of 60 ms frames
+	gateFloor  = 0.002 // a quiet line, before anything is learnt
+	gateMax    = 0.004 // the most the noise level is taken to be
+	gateAlways = 0.01  // about -40 dBFS: speech is well above it
+)
 
 func (g *noiseGate) apply(f []float32) []float32 {
 	var sum float64
@@ -326,17 +340,24 @@ func (g *noiseGate) apply(f []float32) []float32 {
 		sum += float64(v) * float64(v)
 	}
 	rms := math.Sqrt(sum / float64(max(1, len(f))))
-	if g.floor == 0 || rms < g.floor {
-		g.floor = rms
-	} else {
-		g.floor = min(g.floor*1.02, rms) // follows rising noise slowly
+	g.frames++
+	g.peak = max(g.peak, rms)
+	if g.floor == 0 {
+		g.floor = gateFloor
 	}
-	if rms > max(0.006, 3*g.floor) {
+	if rms > gateAlways || rms > max(0.003, 2.5*g.floor) {
 		g.hold = gateHold
-	} else if g.hold > 0 {
-		g.hold--
+	} else {
+		if g.hold > 0 {
+			g.hold--
+		}
+		g.floor = min(gateMax, rms, g.floor*1.01) // quiet: learn the noise, slowly upwards
+		if rms < g.floor {
+			g.floor = rms
+		}
 	}
 	if g.hold > 0 {
+		g.passed++
 		return f
 	}
 	return make([]float32, len(f))

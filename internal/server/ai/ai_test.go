@@ -147,24 +147,30 @@ func TestNoiseGate(t *testing.T) {
 		return f
 	}
 	var g noiseGate
-	for range 20 { // line hiss: silence
-		if f := g.apply(frame(0.003)); f[0] != 0 {
+	for range 50 { // line hiss: silence
+		if f := g.apply(frame(0.0025)); f[0] != 0 {
 			t.Fatal("noise passed")
 		}
 	}
-	if f := g.apply(frame(0.2)); f[0] == 0 {
-		t.Fatal("speech was cut")
+	for i := range 200 { // a long sentence is never muted, however long
+		if f := g.apply(frame(0.03)); f[0] == 0 {
+			t.Fatal("speech muted after", i, "frames")
+		}
 	}
 	for i := range gateHold - 1 { // the hold keeps the end of the word
-		if f := g.apply(frame(0.003)); f[0] == 0 {
+		if f := g.apply(frame(0.0025)); f[0] == 0 {
 			t.Fatal("cut right after speech", i)
 		}
 	}
-	g.apply(frame(0.003))
-	if f := g.apply(frame(0.003)); f[0] != 0 {
+	g.apply(frame(0.0025))
+	if f := g.apply(frame(0.0025)); f[0] != 0 {
 		t.Fatal("the gate stayed open")
 	}
-	if !strings.Contains(mustJSON(map[string]int{"a": 1}), "a") {
-		t.Fatal()
+	var quiet noiseGate // a loud line: the noise level is capped, so soft speech still passes
+	for range 300 {
+		quiet.apply(frame(0.008))
+	}
+	if f := quiet.apply(frame(0.012)); f[0] == 0 {
+		t.Fatal("soft speech on a noisy line was muted")
 	}
 }
