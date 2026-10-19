@@ -11,8 +11,11 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/incidents"
+	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/whatsapp"
 )
 
@@ -256,5 +259,44 @@ func TestExpiring(t *testing.T) {
 		if markFor(left) != mark {
 			t.Fatal(left, markFor(left))
 		}
+	}
+}
+
+// "Tell customers we're fixing it": ready first, posted only once they said yes.
+func TestStatusPost(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	st := statuspage.New(d, incidents.NewStore(d, live.NewBus()))
+	cfg := statuspage.Defaults()
+	cfg.Title = "Shop status"
+	page, err := st.Save(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := callDeps{db: d, status: st}
+	if len(deps.statusTools(&voiceActions{d: deps, person: "mem_1"})) != 0 {
+		t.Fatal("status pages are the owner's")
+	}
+	g := &voiceActions{d: deps, person: oncall.Owner, name: "Nour"}
+	var propose ai.Tool
+	for _, tool := range deps.statusTools(g) {
+		if tool.Name == "propose_status_update" {
+			propose = tool
+		}
+	}
+	if _, err := propose.Run(context.Background(), map[string]any{"title": "Checkout is slow", "message": "We are fixing it."}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := st.Page(page.ID); len(p.Notices) != 0 {
+		t.Fatal("posted before a yes")
+	}
+	if _, err := g.do(ai.WithHeard(context.Background(), func(time.Time) string { return "yes" }), ""); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := st.Page(page.ID); len(p.Notices) != 1 || p.Notices[0].Title != "Checkout is slow" || p.Notices[0].Updates[0].Body != "We are fixing it." {
+		t.Fatalf("%+v", p.Notices)
 	}
 }

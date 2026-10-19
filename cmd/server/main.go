@@ -420,6 +420,7 @@ func serve() error {
 	waSvc.Inbound = func(person string) whatsapp.Talker { return calls.inbound(person) }
 	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes
 	waSvc.Speak = aiSvc.Speak       // and get voice notes back, if they like
+	calls.status = status           // the owner posts to status pages from WhatsApp
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

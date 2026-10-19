@@ -30,6 +30,7 @@ import (
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/security"
 	"fleetwatch/internal/server/sites"
+	"fleetwatch/internal/server/statuspage"
 	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
 	"fleetwatch/internal/server/whatsapp"
@@ -61,6 +62,7 @@ type callDeps struct {
 	oncall    *oncall.Service
 	dns       *dns.Service
 	domains   *domains.Checker
+	status    *statuspage.Service
 }
 
 const maxCall = 5 * time.Minute
@@ -109,6 +111,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 - They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
 - They can ask for reminders ("remind me at 6pm…", "call me in 30 minutes if the API is still down": remind_me) and to be told when something happens ("tell me when the CPU drops below 50%", "when the deploy finishes": watch_for).
 - On-call cover: "can someone cover me Saturday?" is ask_cover; "I'll cover" (or yes to a teammate's request) is take_cover (cover_requests lists them).
+- Public status page ("tell customers we're fixing it"): propose_status_update, read them the exact text, and post it with do_action only after their yes.
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang + "\n" + d.nowLine(person)
 	return func(ctx context.Context, m whatsapp.Media) {
@@ -609,7 +612,7 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 			}},
 		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
-	}, append(append(d.watchTools(person, gate, sees, incidentID), d.coverTools(person)...), d.passMessage(person))...)
+	}, append(append(append(d.watchTools(person, gate, sees, incidentID), d.coverTools(person)...), d.statusTools(gate)...), d.passMessage(person))...)
 }
 
 // voiceActions runs actions asked for on a call or in a chat, in two steps: propose,
@@ -1032,6 +1035,7 @@ func (d *callDeps) message(ctx context.Context, person, text string, audio []byt
 - They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
 - They can ask for reminders ("remind me at 6pm…", "call me in 30 minutes if the API is still down": remind_me) and to be told when something happens ("tell me when the CPU drops below 50%", "when the deploy finishes": watch_for).
 - On-call cover: "can someone cover me Saturday?" is ask_cover; "I'll cover" (or yes to a teammate's request) is take_cover (cover_requests lists them).
+- Public status page ("tell customers we're fixing it"): propose_status_update, read them the exact text, and post it with do_action only after their yes.
 ` + lang + "\n" + d.nowLine(person)}
 		chats[person] = c
 	}
