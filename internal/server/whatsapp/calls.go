@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,9 +16,30 @@ import (
 // Calls go through meowcaller, WhatsApp's voice calls in pure Go. Audio is 16 kHz mono,
 // in frames of meowcaller.FrameSamples.
 
-// Ring calls a phone number on WhatsApp for up to wait. When they answer, the alert
-// sound plays and the call ends. It reports whether they answered.
-func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration) (bool, error) {
+// Media is an answered call's audio, for whoever speaks on it.
+type Media struct {
+	In    <-chan []float32 // the person's voice, 16 kHz frames; closed when the call ends
+	Say   func([]float32)  // queue 16 kHz audio for them
+	Hush  func()           // drop what is queued (they talked over it)
+	Alert func()           // queue the alert sound
+}
+
+// Talker speaks on an answered call; the call ends when it returns.
+type Talker func(ctx context.Context, m Media)
+
+// TalkerFor is how a call to a person is answered (set by the dashboard: the AI when it
+// is set up); nil, or a nil Talker, plays the alert sound.
+func (s *Service) TalkerFor(person, incident string) Talker {
+	if s.Talker == nil {
+		return nil
+	}
+	return s.Talker(person, incident)
+}
+
+// Ring calls a phone number on WhatsApp for up to wait. When they answer, talk speaks
+// with them, or without it the alert sound plays; then the call ends. It reports
+// whether they answered.
+func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration, talk Talker) (bool, error) {
 	digits, err := CleanPhone(phone)
 	if err != nil {
 		return false, err
@@ -61,6 +83,49 @@ func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration) (b
 	case <-ended:
 		return true, nil
 	case <-time.After(8 * time.Second):
+	}
+	if talk != nil {
+		out := &stream{}
+		call.Play(out)
+		in := make(chan []float32, 64)
+		var inMu sync.Mutex
+		inClosed := false
+		closeIn := func() {
+			inMu.Lock()
+			if !inClosed {
+				inClosed = true
+				close(in)
+			}
+			inMu.Unlock()
+		}
+		call.Receive(meowcaller.SinkFunc(func(f []float32) {
+			inMu.Lock()
+			defer inMu.Unlock()
+			if !inClosed {
+				select {
+				case in <- slices.Clone(f):
+				default: // the AI is behind: drop a frame rather than block the call
+				}
+			}
+		}))
+		tctx, cancel := context.WithCancel(ctx)
+		talked := make(chan struct{})
+		go func() {
+			select {
+			case <-ended:
+				closeIn()
+				cancel()
+			case <-talked:
+			}
+		}()
+		talk(tctx, Media{In: in, Say: out.push, Hush: out.flush, Alert: func() {
+			src := alertSound().(*samples)
+			out.push(src.buf)
+		}})
+		close(talked)
+		cancel()
+		closeIn()
+		return true, nil
 	}
 	done := make(chan struct{})
 	var doneOnce sync.Once
@@ -119,3 +184,31 @@ func alertSound() meowcaller.AudioSource {
 	}
 	return &samples{buf: buf}
 }
+
+// stream is the audio a talker queues; silence when there is none, so the call holds.
+type stream struct {
+	mu  sync.Mutex
+	buf []float32
+}
+
+func (st *stream) push(f []float32) {
+	st.mu.Lock()
+	st.buf = append(st.buf, f...)
+	st.mu.Unlock()
+}
+
+func (st *stream) flush() {
+	st.mu.Lock()
+	st.buf = nil
+	st.mu.Unlock()
+}
+
+func (st *stream) ReadFrame() ([]float32, error) {
+	f := make([]float32, meowcaller.FrameSamples)
+	st.mu.Lock()
+	st.buf = st.buf[copy(f, st.buf):]
+	st.mu.Unlock()
+	return f, nil
+}
+
+func (st *stream) Close() error { return nil }

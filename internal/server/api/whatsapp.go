@@ -90,7 +90,9 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		answered, err := s.WhatsApp.Ring(ctx, p.Phone, 40*time.Second)
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(r.Context()), 7*time.Minute) // a test talk with the AI may run long
+		defer cancel()
+		answered, err := s.WhatsApp.Ring(ctx, p.Phone, 40*time.Second, s.WhatsApp.TalkerFor(id, ""))
 		if err != nil {
 			fail(w, err)
 			return

@@ -58,11 +58,17 @@ type Person struct {
 // Languages people may pick ("" follows the conversation).
 var Languages = []string{"", "en", "fr", "ar", "ary", "es", "de", "it", "pt", "tr", "nl"}
 
+// LanguageNames names them, for the AI.
+var LanguageNames = map[string]string{"en": "English", "fr": "French", "ar": "Arabic", "ary": "Moroccan Arabic (Darija)",
+	"es": "Spanish", "de": "German", "it": "Italian", "pt": "Portuguese", "tr": "Turkish", "nl": "Dutch"}
+
 type Service struct {
 	db   *sql.DB
 	Bus  *live.Bus
 	Now  func() time.Time
 	path string
+	// Talker answers calls (person, incident ("" for a test call)); see TalkerFor.
+	Talker func(person, incident string) Talker
 
 	mu        sync.Mutex
 	container *sqlstore.Container

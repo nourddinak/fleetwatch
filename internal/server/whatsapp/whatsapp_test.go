@@ -68,7 +68,25 @@ func TestAlertSound(t *testing.T) {
 		t.Fatal(frames)
 	}
 	s := New(nil, t.TempDir(), nil)
-	if _, err := s.Ring(t.Context(), "+212612345678", time.Second); err != ErrNotLinked {
+	if _, err := s.Ring(t.Context(), "+212612345678", time.Second, nil); err != ErrNotLinked {
 		t.Fatal(err)
+	}
+}
+
+func TestStream(t *testing.T) {
+	st := &stream{}
+	if f, err := st.ReadFrame(); err != nil || len(f) != 960 || f[0] != 0 {
+		t.Fatal("silence when empty")
+	}
+	st.push(make([]float32, 1000))
+	st.push([]float32{0.5})
+	st.ReadFrame()
+	if f, _ := st.ReadFrame(); f[40] != 0.5 || f[41] != 0 {
+		t.Fatal("frames out of order")
+	}
+	st.push(make([]float32, 5000))
+	st.flush()
+	if f, _ := st.ReadFrame(); len(f) != 960 || len(st.buf) != 0 {
+		t.Fatal("not flushed")
 	}
 }

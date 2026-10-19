@@ -25,6 +25,7 @@ import (
 	"fleetwatch/deploy"
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/agentbin"
+	"fleetwatch/internal/server/ai"
 	"fleetwatch/internal/server/anomaly"
 	"fleetwatch/internal/server/api"
 	"fleetwatch/internal/server/apps"
@@ -406,6 +407,9 @@ func serve() error {
 	if err := waSvc.Start(context.Background()); err != nil {
 		slog.Warn("whatsapp", "err", err)
 	}
+	// Answered calls talk with the AI (Gemini Live), when the owner set it up.
+	aiSvc := ai.New(d, box)
+	waSvc.Talker = callDeps{ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, people: func() []oncall.Person { return onCall.People() }}.talker
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {
@@ -437,9 +441,9 @@ func serve() error {
 		}
 		if wp, ok := waSvc.PersonOf(p.ID); ok && waSvc.Linked() && !wp.Quiet(time.Now()) {
 			go func() { // the call rings while the rest of the page goes out
-				c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				c, cancel := context.WithTimeout(context.Background(), 8*time.Minute) // ringing, then the AI may talk
 				defer cancel()
-				if _, err := waSvc.Ring(c, wp.Phone, 45*time.Second); err != nil {
+				if _, err := waSvc.Ring(c, wp.Phone, 45*time.Second, waSvc.TalkerFor(p.ID, x.ID)); err != nil {
 					slog.Warn("whatsapp call", "person", p.Name, "err", err)
 				}
 			}()
@@ -752,7 +756,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

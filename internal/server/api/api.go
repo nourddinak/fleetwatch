@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fleetwatch/internal/server/ai"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
@@ -81,6 +82,7 @@ type Deps struct {
 	EnvFiles   *envfile.Service
 	DNS        *dns.Service
 	WhatsApp   *whatsapp.Service
+	AI         *ai.Service
 	EnvHistory *envfile.History
 	// ServerFileHistory keeps servers' Caddyfile versions.
 	ServerFileHistory *envfile.History
@@ -169,6 +171,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.WhatsApp != nil {
 		s.whatsAppRoutes(mux)
+	}
+	if d.AI != nil {
+		s.aiRoutes(mux)
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
