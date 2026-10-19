@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Info, KeyRound, MessageSquareText, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users, X } from "lucide-react";
+import { AlarmClock, AlertTriangle, Check, Info, KeyRound, MessageSquareText, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Input, SectionTitle, Select, Spinner, WhatsApp } from "./ui";
@@ -119,6 +119,7 @@ export function WhatsAppSetup() {
       <PeopleCard people={data.data!.people} linked={st.linked} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
       {st.linked && <MessagesCard />}
+      {st.linked && <RemindersCard />}
       {st.linked && <Card><SectionTitle icon={<KeyRound size={15} />} title="Your action PIN" sub="What you say or write to confirm an action on WhatsApp, when PINs are asked for." /><PinField /></Card>}
       <ConfirmDialog open={unlink} title="Unlink WhatsApp?" confirmLabel="Unlink" danger
         message="The dashboard is signed out of your WhatsApp and stops sending from it. People's numbers are kept."
@@ -240,6 +241,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
       <div className="mb-3"><PinField /></div>
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
       <div className="mt-6"><MessagesCard bare /></div>
+      <div className="mt-6"><RemindersCard bare /></div>
     </Card>
   );
 }
@@ -366,6 +368,70 @@ function MessagesCard({ bare }: { bare?: boolean }) {
               </div>
             </div>
             {n.canCancel && <Button size="sm" variant="ghost" onClick={() => cancel(n.id)}><X size={13} /> Cancel</Button>}
+          </li>
+        ))}
+      </ul>
+      {items.length > shown && <button className="mt-2 text-xs font-medium text-muted hover:text-fg" onClick={() => setShown(shown + 20)}>Show more</button>}
+    </>
+  );
+  return bare ? body : <Card>{body}</Card>;
+}
+
+interface Reminder {
+  id: number;
+  person: string;
+  name: string;
+  what: string;
+  dueAt: number;
+  how: "text" | "call";
+  at: number;
+  expiresAt: number;
+  doneAt: number;
+  result: string;
+  status: "active" | "done" | "canceled" | "expired";
+  canCancel: boolean;
+}
+
+const REMINDER_TONE = { active: "info", done: "ok", canceled: undefined, expired: undefined } as const;
+const clock = (ms: number) => new Date(ms).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+
+/** Reminders and watches asked for on WhatsApp ("remind me at 6pm", "tell me when…"). */
+function RemindersCard({ bare }: { bare?: boolean }) {
+  const { toast } = useStore();
+  const list = useApi<{ items: Reminder[]; me: string }>("/api/me/whatsapp/reminders");
+  const [shown, setShown] = useState(8);
+  const items = list.data?.items ?? [];
+  const active = items.filter((r) => r.status === "active").length;
+  const cancel = async (id: number) => {
+    try {
+      await api("DELETE", `/api/me/whatsapp/reminders/${id}`);
+      list.reload();
+      toast("Canceled");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  const body = (
+    <>
+      <SectionTitle icon={<AlarmClock size={15} />} title="Reminders and watches"
+        sub="Asked for on WhatsApp: “remind me at 6pm to check the backup”, “call me in 30 minutes if the API is still down”, “tell me when the CPU drops below 50%”."
+        action={active > 0 ? <Badge tone="info">{active} active</Badge> : undefined} />
+      {items.length === 0 && <p className="text-sm text-muted">None yet.</p>}
+      <ul className="space-y-2">
+        {items.slice(0, shown).map((r) => (
+          <li key={r.id} className="flex items-start gap-3 rounded-2xl border border-line px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs text-muted">
+                {r.person !== list.data!.me && <><b className="text-fg">{r.name}</b> · </>}
+                {r.dueAt ? `reminder at ${clock(r.dueAt)}` : `watching until ${clock(r.expiresAt)}`} · by {r.how === "call" ? "a call" : "a text"}
+              </div>
+              <p className="mt-0.5 break-words text-sm">{r.what}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                <Badge tone={REMINDER_TONE[r.status]}>{r.status}</Badge>
+                {r.status === "done" && r.result && r.result !== "sent" && <span>{r.result}</span>}
+              </div>
+            </div>
+            {r.canCancel && <Button size="sm" variant="ghost" onClick={() => cancel(r.id)}><X size={13} /> Cancel</Button>}
           </li>
         ))}
       </ul>

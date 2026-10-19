@@ -801,9 +801,10 @@ func serve() error {
 	go func() {
 		for range time.Tick(time.Minute) {
 			admin.Sweep()
-			waSvc.Watch()        // tells the owner when WhatsApp stays disconnected
-			calls.followUps(ctx) // resolved messages, follow-up calls
-			calls.briefings(ctx) // morning briefings, at each person's time
+			waSvc.Watch()           // tells the owner when WhatsApp stays disconnected
+			calls.followUps(ctx)    // resolved messages, follow-up calls
+			calls.briefings(ctx)    // morning briefings, at each person's time
+			calls.checkWatches(ctx) // reminders and watches asked for on WhatsApp
 			var connected []string
 			for _, id := range serverIDs() {
 				if hub.Connected(id) {

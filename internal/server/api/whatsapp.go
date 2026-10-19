@@ -191,4 +191,38 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+
+	// Reminders and watches asked for on WhatsApp: the owner sees all, a member their own.
+	mux.HandleFunc("GET /api/me/whatsapp/reminders", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		names := map[string]string{}
+		for _, p := range people() {
+			names[p.ID] = p.Name
+		}
+		list := s.WhatsApp.Watches(linkKey(sess))
+		if sess.Owner() {
+			list = s.WhatsApp.Watches("")
+		}
+		type item struct {
+			whatsapp.Watch
+			Name      string `json:"name"`
+			CanCancel bool   `json:"canCancel"`
+		}
+		out := []item{}
+		for _, x := range list {
+			out = append(out, item{x, cmp.Or(names[x.Person], "(removed)"), x.Status == "active"})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out, "me": linkKey(sess)})
+	}))
+	mux.HandleFunc("DELETE /api/me/whatsapp/reminders/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		by := linkKey(sess)
+		if sess.Owner() {
+			by = ""
+		}
+		if err := s.WhatsApp.CancelWatch(id, by); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 }

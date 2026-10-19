@@ -102,6 +102,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 - You can act: start, stop, restart or reload apps, restart containers, redeploy sites, clean disk space, mute an incident, put a server in maintenance, block an IP. First call propose_action and tell them exactly what will happen; only after they clearly say yes (and give their PIN if the tool asks for it), call do_action. App actions only start: say it is under way ("restarting now, give me a few seconds"), then call action_status and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.
 - They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
+- They can ask for reminders ("remind me at 6pm…", "call me in 30 minutes if the API is still down": remind_me) and to be told when something happens ("tell me when the CPU drops below 50%", "when the deploy finishes": watch_for).
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang
 	return func(ctx context.Context, m whatsapp.Media) {
@@ -117,7 +118,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 			talk.Tools = kit
 			talk.Opening = name + " is calling. Greet them by name, briefly mention anything urgent (call list_incidents first), and ask what they need."
 		case incidentID == "" && opening != "":
-			talk.Instructions = "You are Fleetwatch's voice assistant, calling " + name + " on WhatsApp to pass on a teammate's message. After that they may ask anything about their servers.\n" + rules
+			talk.Instructions = "You are Fleetwatch's voice assistant, calling " + name + " on WhatsApp for the reason in your first message (a teammate's message, a reminder they asked for). After that they may ask anything about their servers.\n" + rules
 			talk.Tools = kit
 		case incidentID == "":
 			talk.Instructions = "You are Fleetwatch's on-call voice assistant, on a WhatsApp test call with " + name +
@@ -602,7 +603,7 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 			}},
 		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
-	}, d.passMessage(person))
+	}, append(d.watchTools(person, gate, sees, incidentID), d.passMessage(person))...)
 }
 
 // voiceActions runs actions asked for on a call or in a chat, in two steps: propose,
@@ -991,6 +992,7 @@ func (d *callDeps) message(ctx context.Context, person, text string, audio []byt
 - You can act (apps, containers, site redeploys, disk cleanups, muting incidents, maintenance, blocking IPs): call propose_action, then ask them to reply "yes" (and their PIN if the tool says actions need one); only after that, call do_action (then action_status for apps) and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it.
 - They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
+- They can ask for reminders ("remind me at 6pm…", "call me in 30 minutes if the API is still down": remind_me) and to be told when something happens ("tell me when the CPU drops below 50%", "when the deploy finishes": watch_for).
 ` + lang}
 		chats[person] = c
 	}

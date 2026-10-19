@@ -192,3 +192,47 @@ func TestTeammate(t *testing.T) {
 		}
 	}
 }
+
+// A due reminder is told once; a watch past its time is closed and said so.
+func TestReminders(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	wa := whatsapp.New(d, t.TempDir(), nil)
+	wa.SetPerson("mem_sara", whatsapp.Person{Phone: "+212600000002", Language: "en", TimeZone: "Africa/Casablanca"})
+	deps := &callDeps{db: d, wa: wa, people: func() []oncall.Person { return []oncall.Person{{ID: "mem_sara", Name: "Sara"}} }}
+
+	due, err := deps.dueTime("mem_sara", "18:00", nil)
+	loc, _ := time.LoadLocation("Africa/Casablanca")
+	if err != nil || due.In(loc).Format("15:04") != "18:00" || !due.After(time.Now()) || time.Until(due) > 24*time.Hour {
+		t.Fatal("at 18:00 their time, the next one", due, err)
+	}
+	if due, _ := deps.dueTime("mem_sara", "", float64(30)); time.Until(due).Round(time.Minute) != 30*time.Minute {
+		t.Fatal("in 30 minutes", due)
+	}
+
+	news, done := onCall("mem_sara")
+	defer done()
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	wa.AddWatch(whatsapp.Watch{Person: "mem_sara", What: "check the backup", Due: past, How: "text", Expires: time.Now().Add(time.Hour).UnixMilli()})
+	wa.AddWatch(whatsapp.Watch{Person: "mem_sara", What: "CPU below 50%", Cond: `{"kind":"app"}`, How: "text", Expires: past})
+	wa.AddWatch(whatsapp.Watch{Person: "mem_sara", What: "later", Due: time.Now().Add(time.Hour).UnixMilli(), How: "text", Expires: time.Now().Add(2 * time.Hour).UnixMilli()})
+	deps.checkWatches(context.Background())
+	deps.checkWatches(context.Background()) // nothing twice
+	var got []string
+	for len(news) > 0 {
+		got = append(got, <-news)
+	}
+	if len(got) != 2 || !strings.Contains(got[0], "check the backup") || !strings.Contains(got[1], "stopped watching") {
+		t.Fatal("told", got)
+	}
+	status := map[string]string{}
+	for _, w := range wa.Watches("mem_sara") {
+		status[w.What] = w.Status
+	}
+	if status["check the backup"] != "done" || status["CPU below 50%"] != "expired" || status["later"] != "active" {
+		t.Fatal(status)
+	}
+}
