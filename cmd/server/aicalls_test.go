@@ -95,3 +95,40 @@ func TestVoiceActionGate(t *testing.T) {
 		t.Fatal("three wrong PINs must end actions", err)
 	}
 }
+
+// "When Sara calls, tell her…": kept, passed on once on her next call or chat.
+func TestPassMessageLater(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	wa := whatsapp.New(d, t.TempDir(), nil)
+	for id, phone := range map[string]string{oncall.Owner: "+212600000001", "mem_sara": "+212600000002"} {
+		if _, err := wa.SetPerson(id, whatsapp.Person{Phone: phone, Language: "en"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps := callDeps{db: d, wa: wa, people: func() []oncall.Person {
+		return []oncall.Person{{ID: oncall.Owner, Name: "Nour"}, {ID: "mem_sara", Name: "Sara", Username: "sara"}, {ID: "mem_omar", Name: "Omar"}}
+	}}
+	tool := deps.passMessage(oncall.Owner)
+	run := func(args map[string]any) error { _, err := tool.Run(context.Background(), args); return err }
+	if run(map[string]any{"name": "Omar", "message": "hi", "how": "later"}) == nil {
+		t.Fatal("Omar has no WhatsApp number")
+	}
+	if run(map[string]any{"name": "Nour", "message": "hi", "how": "later"}) == nil {
+		t.Fatal("a message to oneself")
+	}
+	if err := run(map[string]any{"name": "sara", "message": "renew the domain today", "how": "later"}); err != nil {
+		t.Fatal(err)
+	}
+	notes := deps.notesFor("mem_sara")
+	if len(notes) != 1 || !strings.Contains(deps.notesBrief(notes), "from Nour") || !strings.Contains(deps.notesBrief(notes), "renew the domain today") {
+		t.Fatal("kept for Sara", notes)
+	}
+	deps.delivered("mem_sara", notes)
+	if len(deps.notesFor("mem_sara")) != 0 {
+		t.Fatal("passed on twice")
+	}
+}

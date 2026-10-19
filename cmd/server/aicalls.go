@@ -101,16 +101,21 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 - Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
 - You can act: start, stop, restart or reload apps, restart containers, redeploy sites, clean disk space, mute an incident, put a server in maintenance, block an IP. First call propose_action and tell them exactly what will happen; only after they clearly say yes (and give their PIN if the tool asks for it), call do_action. App actions only start: say it is under way ("restarting now, give me a few seconds"), then call action_status and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.
+- They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang
 	return func(ctx context.Context, m whatsapp.Media) {
 		talk := ai.Talk{In: m.In, Say: m.Say, Hush: m.Hush, MaxLength: min(maxCall, left)}
 		kit := d.toolkit(person, name, incidentID)
+		notes := d.notesFor(person)
 		switch {
 		case inbound:
 			talk.Instructions = "You are Fleetwatch's voice assistant. " + name + " is calling the dashboard's WhatsApp number to ask about their servers, apps, sites, incidents, logs, uptime or security, or to have an app restarted.\n" + rules
 			talk.Tools = kit
 			talk.Opening = name + " is calling. Greet them by name, briefly mention anything urgent (call list_incidents first), and ask what they need."
+		case incidentID == "" && opening != "":
+			talk.Instructions = "You are Fleetwatch's voice assistant, calling " + name + " on WhatsApp to pass on a teammate's message. After that they may ask anything about their servers.\n" + rules
+			talk.Tools = kit
 		case incidentID == "":
 			talk.Instructions = "You are Fleetwatch's on-call voice assistant, on a WhatsApp test call with " + name +
 				". Say this is a test call from Fleetwatch to check that calls and the AI work; they may ask anything about their servers to try it.\n" + rules
@@ -127,6 +132,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 		if opening != "" {
 			talk.Opening = opening
 		}
+		talk.Instructions += d.notesBrief(notes)
 		var report ai.CallReport
 		talk.Report = &report
 		lines, took, err := d.ai.Converse(ctx, talk)
@@ -142,10 +148,13 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 			}
 		}
 		if len(lines) > 0 {
+			d.delivered(person, notes)
 			how := "outgoing"
 			switch {
 			case inbound:
 				how = "incoming"
+			case incidentID == "" && opening != "":
+				how = "message"
 			case opening != "":
 				how = "follow-up"
 			case incidentID == "":
@@ -321,7 +330,7 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 		}
 		return x, nil
 	}
-	return []ai.Tool{
+	return append([]ai.Tool{
 		{Name: "list_servers", Description: "Their servers with status (online, warning, critical, disconnected), CPU, memory and disk use.",
 			Run: func(context.Context, map[string]any) (any, error) {
 				views, err := d.hub.Views()
@@ -592,7 +601,7 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 			}},
 		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
-	}
+	}, d.passMessage(person))
 }
 
 // voiceActions runs actions asked for on a call or in a chat, in two steps: propose,
@@ -980,14 +989,20 @@ func (d *callDeps) message(ctx context.Context, person, text string, audio []byt
 - Use the tools for every fact. Never invent numbers or events; if a tool has nothing, say so.
 - You can act (apps, containers, site redeploys, disk cleanups, muting incidents, maintenance, blocking IPs): call propose_action, then ask them to reply "yes" (and their PIN if the tool says actions need one); only after that, call do_action (then action_status for apps) and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it.
+- They can have messages passed on to teammates ("text Sara that…", "call Omar and tell him…", "when Omar calls, tell him…"): use pass_message.
 ` + lang}
 		chats[person] = c
 	}
 	chatsMu.Unlock()
+	notes := d.notesFor(person)
+	if len(notes) > 0 {
+		text = strings.TrimSpace(d.notesBrief(notes)) + "\n\nTheir message:\n" + text
+	}
 	reply, err := d.ai.Reply(ctx, c, text, audio, mime)
 	if err != nil {
 		slog.Warn("whatsapp chat", "person", name, "err", err)
 		return "Sorry, I could not answer that: " + err.Error()
 	}
+	d.delivered(person, notes)
 	return reply
 }

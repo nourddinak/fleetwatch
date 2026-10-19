@@ -234,7 +234,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
       <SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="Where on-call alerts reach you on WhatsApp, in which language, and when not to." />
       {data.data.number && (
         <p className="mb-1 flex items-center gap-2 rounded-xl bg-surface2/60 p-3 text-xs text-muted"><PhoneCall size={13} className="shrink-0" />
-          <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Other numbers get no answer.</span></p>
+          <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, to restart an app, or to pass a message on to a teammate (“call Sara and tell her…”, “when Omar calls, tell him…”). Other numbers get no answer.</span></p>
       )}
       <div className="mb-3"><PinField /></div>
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
