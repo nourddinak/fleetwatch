@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Activity, Bell, BookOpen, Bot, CalendarClock, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, KeySquare, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
+import { Activity, Bell, BookOpen, Bot, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, KeySquare, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, deviceLabel, useApi, type ApiError, type AuditRow, type SecuritySettings as SecurityConfig, type SessionInfo } from "../api/client";
 import { relTime, dateTime, fmtMB } from "../mock/util";
@@ -14,7 +14,7 @@ import { AlertRulesCard } from "../components/AlertRulesCard";
 const GROUPS: { title: string; items: [string, string, typeof Bell][] }[] = [
   { title: "You", items: [["account", "Account", UserRound], ["security", "Security", ShieldCheck], ["2fa", "2FA", KeyRound], ["sessions", "Sessions", MonitorSmartphone]] },
   { title: "Fleet", items: [["servers", "Servers", Server], ["agents", "Agents", Bot], ["logs", "Logs", ScrollText], ["metrics", "Metrics", Activity]] },
-  { title: "Alerts", items: [["notifications", "Notifications", Bell], ["incidents", "Incident rules", Siren], ["oncall", "On-call", CalendarClock]] },
+  { title: "Alerts", items: [["notifications", "Notifications", Bell], ["incidents", "Incident rules", Siren]] },
   { title: "Access", items: [["team", "Team", Users], ["tokens", "API tokens", KeySquare]] },
   { title: "Platform", items: [["system", "System", Cog]] },
 ];

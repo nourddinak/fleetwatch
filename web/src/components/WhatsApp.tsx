@@ -130,7 +130,7 @@ function PeopleCard({ people, linked, onChange }: { people: (WaPerson & { id: st
   return (
     <Card>
       <SectionTitle icon={<Users size={15} />} title="Who gets WhatsApp alerts"
-        sub={<>Add each person's number the first time; they can change it later in their account. Who is alerted, in which order and for which incidents is set in <Link to="/settings/oncall" className="underline">On-call</Link>.</>} />
+        sub={<>Add each person's number the first time; they can change it later in their account. Who is alerted, in which order and for which incidents is set in <Link to="/oncall" className="underline">On-call</Link>.</>} />
       <div className="space-y-3">
         {people.map((p) => <PersonRow key={p.id} id={p.id} name={p.name} saved={p} linked={linked} onSaved={onChange} />)}
       </div>
