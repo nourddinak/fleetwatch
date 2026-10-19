@@ -20,56 +20,23 @@ import (
 // and tell him…", "when Omar calls, tell him…". Kept ones wait in whatsapp_notes for the
 // person's next call or chat, and the sender hears back once they are passed on.
 
-type note struct {
-	id         int64
-	from, text string
-	at         int64
-}
-
-func (d callDeps) leaveNote(from, to, text string) error {
-	_, err := d.db.Exec(`INSERT INTO whatsapp_notes (from_person, to_person, text, created_at) VALUES (?, ?, ?, ?)`, from, to, text, time.Now().UnixMilli())
-	return err
-}
-
-// notesFor are the messages waiting for someone, oldest first.
-func (d callDeps) notesFor(person string) []note {
-	rows, err := d.db.Query(`SELECT id, from_person, text, created_at FROM whatsapp_notes WHERE to_person = ? AND delivered_at = 0 ORDER BY id`, person)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []note
-	for rows.Next() {
-		var n note
-		if rows.Scan(&n.id, &n.from, &n.text, &n.at) == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
 // notesBrief tells the AI which messages to pass on ("" when none).
-func (d callDeps) notesBrief(notes []note) string {
+func (d callDeps) notesBrief(notes []whatsapp.Note) string {
 	if len(notes) == 0 {
 		return ""
 	}
-	b := "\nMessages teammates left for this person: pass each on clearly (who it is from and what they said), once, early in the conversation:\n"
+	b := "\nMessages teammates left for this person: pass each on clearly (who it is from and what they said), once, early in the conversation. Then ask if they want to answer: if so, pass_message their answer back to the sender (how: text, unless they ask for a call).\n"
 	for _, n := range notes {
-		b += fmt.Sprintf("- from %s, %s ago: %q\n", d.nameOf(n.from), time.Since(time.UnixMilli(n.at)).Round(time.Minute), n.text)
+		b += fmt.Sprintf("- from %s, %s ago: %q\n", d.nameOf(n.From), time.Since(time.UnixMilli(n.At)).Round(time.Minute), n.Text)
 	}
 	return b
 }
 
 // delivered marks messages passed on and lets each sender know.
-func (d callDeps) delivered(to string, notes []note) {
+func (d callDeps) delivered(to string, notes []whatsapp.Note) {
 	for _, n := range notes {
-		if res, err := d.db.Exec(`UPDATE whatsapp_notes SET delivered_at = ? WHERE id = ? AND delivered_at = 0`, time.Now().UnixMilli(), n.id); err != nil {
-			continue
-		} else if k, _ := res.RowsAffected(); k == 0 {
-			continue // passed on elsewhere meanwhile
-		}
-		if n.from != to {
-			d.tell(n.from, fmt.Sprintf("✅ I passed your message on to %s: %q", d.nameOf(to), n.text))
+		if d.wa.Deliver(n.ID) && n.From != to { // false: passed on elsewhere meanwhile, or canceled
+			d.tell(n.From, fmt.Sprintf("✅ I passed your message on to %s: %q", d.nameOf(to), n.Text))
 		}
 	}
 }
@@ -97,15 +64,8 @@ func onCall(person string) (<-chan string, func()) {
 
 // tell lets someone know: said on their call when they are on one, else a WhatsApp text.
 func (d callDeps) tell(person, text string) {
-	onCalls.Lock()
-	ch := onCalls.m[person]
-	onCalls.Unlock()
-	if ch != nil {
-		select {
-		case ch <- text:
-			return
-		default: // a backlog: text it instead
-		}
+	if sayOnCall(person, text) {
+		return
 	}
 	wp, ok := d.wa.PersonOf(person)
 	if !ok || wp.Phone == "" {
@@ -118,6 +78,22 @@ func (d callDeps) tell(person, text string) {
 			slog.Warn("whatsapp tell", "err", err)
 		}
 	}()
+}
+
+// sayOnCall tells someone on their AI call now, if they are on one.
+func sayOnCall(person, text string) bool {
+	onCalls.Lock()
+	ch := onCalls.m[person]
+	onCalls.Unlock()
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- text:
+		return true
+	default: // a backlog
+		return false
+	}
 }
 
 func (d callDeps) nameOf(person string) string {
@@ -164,9 +140,11 @@ func (d callDeps) passMessage(from string) ai.Tool {
 				if err := d.wa.Send(ctx, wp.Phone, fmt.Sprintf("📨 From %s: %s", sender, msg)); err != nil {
 					return nil, err
 				}
+				d.wa.LeaveNote(from, to, msg, "text", true)
+				sayOnCall(to, "message from "+sender+": "+msg) // on a call with the AI right now: they hear it too
 				return "sent", nil
 			case "call":
-				if err := d.leaveNote(from, to, msg); err != nil { // the call passes it on; unanswered, it waits for later
+				if _, err := d.wa.LeaveNote(from, to, msg, "call", false); err != nil { // the call passes it on; unanswered, it waits for later
 					return nil, err
 				}
 				go func() { // runs alongside this call: how it goes is told to the sender as it happens
@@ -192,7 +170,7 @@ func (d callDeps) passMessage(from string) ai.Tool {
 				}()
 				return "calling them now, while this call goes on; you will hear how it goes", nil
 			case "later":
-				if err := d.leaveNote(from, to, msg); err != nil {
+				if _, err := d.wa.LeaveNote(from, to, msg, "later", false); err != nil {
 					return nil, err
 				}
 				return "kept: I will tell them the next time they call or chat with me, and let you know", nil

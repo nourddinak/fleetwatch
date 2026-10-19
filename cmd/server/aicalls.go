@@ -110,7 +110,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 		defer done()
 		talk.News = news
 		kit := d.toolkit(person, name, incidentID)
-		notes := d.notesFor(person)
+		notes := d.wa.Waiting(person)
 		switch {
 		case inbound:
 			talk.Instructions = "You are Fleetwatch's voice assistant. " + name + " is calling the dashboard's WhatsApp number to ask about their servers, apps, sites, incidents, logs, uptime or security, or to have an app restarted.\n" + rules
@@ -995,7 +995,7 @@ func (d *callDeps) message(ctx context.Context, person, text string, audio []byt
 		chats[person] = c
 	}
 	chatsMu.Unlock()
-	notes := d.notesFor(person)
+	notes := d.wa.Waiting(person)
 	if len(notes) > 0 {
 		text = strings.TrimSpace(d.notesBrief(notes)) + "\n\nTheir message:\n" + text
 	}

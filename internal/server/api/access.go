@@ -25,7 +25,7 @@ var ownerOnly = []string{"/api/tokens", "/api/sessions", "/api/audit", "/api/mem
 var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account/password|PUT /api/account|POST /api/notifications/read|` +
 	`POST /api/2fa/(setup|enable|disable|recovery-codes)|PUT /api/account/alert-rules|PUT /api/handoff|` +
 	`POST /api/push/(subscribe|unsubscribe|test)|DELETE /api/push/devices/[^/]+|` +
-	`POST /api/phones/pairing|(PATCH|DELETE) /api/phones/[^/]+|POST /api/phones/[^/]+/test|POST /api/servers/[^/]+/(docker/refresh|docker/updates|firewall/scan))$`)
+	`POST /api/phones/pairing|DELETE /api/me/whatsapp/messages/[0-9]+|(PATCH|DELETE) /api/phones/[^/]+|POST /api/phones/[^/]+/test|POST /api/servers/[^/]+/(docker/refresh|docker/updates|firewall/scan))$`)
 
 // Writes operators may also make: operate apps and handle incidents, not configure.
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +

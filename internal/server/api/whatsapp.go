@@ -1,8 +1,10 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"fleetwatch/internal/server/auth"
@@ -153,5 +155,40 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /api/me/whatsapp/test", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		test(w, r, linkKey(sess))
+	}))
+
+	// Messages passed on between the team: the owner sees all, a member their own.
+	mux.HandleFunc("GET /api/me/whatsapp/messages", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		names := map[string]string{}
+		for _, p := range people() {
+			names[p.ID] = p.Name
+		}
+		me, list := linkKey(sess), s.WhatsApp.Notes(linkKey(sess))
+		if sess.Owner() {
+			list = s.WhatsApp.Notes("")
+		}
+		type item struct {
+			whatsapp.Note
+			FromName  string `json:"fromName"`
+			ToName    string `json:"toName"`
+			CanCancel bool   `json:"canCancel"`
+		}
+		out := []item{}
+		for _, n := range list {
+			out = append(out, item{n, cmp.Or(names[n.From], "(removed)"), cmp.Or(names[n.To], "(removed)"), n.Status == "waiting" && (sess.Owner() || n.From == me)})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out, "me": me})
+	}))
+	mux.HandleFunc("DELETE /api/me/whatsapp/messages/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		by := linkKey(sess)
+		if sess.Owner() {
+			by = ""
+		}
+		if err := s.WhatsApp.CancelNote(id, by); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 }

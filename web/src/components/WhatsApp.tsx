@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Info, KeyRound, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users } from "lucide-react";
+import { AlertTriangle, Check, Info, KeyRound, MessageSquareText, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Input, SectionTitle, Select, Spinner, WhatsApp } from "./ui";
@@ -118,6 +118,7 @@ export function WhatsAppSetup() {
       </Card>
       <PeopleCard people={data.data!.people} linked={st.linked} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
+      {st.linked && <MessagesCard />}
       {st.linked && <Card><SectionTitle icon={<KeyRound size={15} />} title="Your action PIN" sub="What you say or write to confirm an action on WhatsApp, when PINs are asked for." /><PinField /></Card>}
       <ConfirmDialog open={unlink} title="Unlink WhatsApp?" confirmLabel="Unlink" danger
         message="The dashboard is signed out of your WhatsApp and stops sending from it. People's numbers are kept."
@@ -238,6 +239,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
       )}
       <div className="mb-3"><PinField /></div>
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
+      <div className="mt-6"><MessagesCard bare /></div>
     </Card>
   );
 }
@@ -309,4 +311,66 @@ function PinField() {
       {me.data?.requirePin && !me.data.hasPin && <p className="flex items-center gap-1.5 text-xs text-warn"><AlertTriangle size={12} />Actions need a PIN on this dashboard: set yours to restart things by voice or chat.</p>}
     </div>
   );
+}
+
+interface Note {
+  id: number;
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  text: string;
+  via: "text" | "call" | "later";
+  at: number;
+  deliveredAt: number;
+  status: "waiting" | "delivered" | "canceled" | "expired";
+  canCancel: boolean;
+}
+
+const VIA = { text: "texted", call: "by a call", later: "on their next call or chat" };
+const NOTE_TONE = { waiting: "warn", delivered: "ok", canceled: undefined, expired: undefined } as const;
+
+/** Messages passed on between the team through the AI: waiting ones can be canceled. */
+function MessagesCard({ bare }: { bare?: boolean }) {
+  const { toast } = useStore();
+  const list = useApi<{ items: Note[]; me: string }>("/api/me/whatsapp/messages");
+  const [shown, setShown] = useState(8);
+  const items = list.data?.items ?? [];
+  const waiting = items.filter((n) => n.status === "waiting").length;
+  const cancel = async (id: number) => {
+    try {
+      await api("DELETE", `/api/me/whatsapp/messages/${id}`);
+      list.reload();
+      toast("Message canceled");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  const body = (
+    <>
+      <SectionTitle icon={<MessageSquareText size={15} />} title="Messages passed on"
+        sub={`What the team asked the AI to tell each other ("tell Sara…", "when Omar calls, tell him…"). Waiting ones are passed on at the person's next call or chat, for ${7} days.`}
+        action={waiting > 0 ? <Badge tone="warn">{waiting} waiting</Badge> : undefined} />
+      {items.length === 0 && <p className="text-sm text-muted">None yet. Ask the AI on WhatsApp to pass a message on to a teammate.</p>}
+      <ul className="space-y-2">
+        {items.slice(0, shown).map((n) => (
+          <li key={n.id} className="flex items-start gap-3 rounded-2xl border border-line px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs text-muted">
+                <b className="text-fg">{n.from === list.data!.me ? "You" : n.fromName}</b> → <b className="text-fg">{n.to === list.data!.me ? "you" : n.toName}</b> · {new Date(n.at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </div>
+              <p className="mt-0.5 break-words text-sm">{n.text}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                <Badge tone={NOTE_TONE[n.status]}>{n.status}</Badge>
+                {n.status === "delivered" ? <span>{VIA[n.via]}, {new Date(n.deliveredAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span> : n.status === "waiting" ? <span>{n.via === "call" ? "calling them, or " : ""}on their next call or chat</span> : null}
+              </div>
+            </div>
+            {n.canCancel && <Button size="sm" variant="ghost" onClick={() => cancel(n.id)}><X size={13} /> Cancel</Button>}
+          </li>
+        ))}
+      </ul>
+      {items.length > shown && <button className="mt-2 text-xs font-medium text-muted hover:text-fg" onClick={() => setShown(shown + 20)}>Show more</button>}
+    </>
+  );
+  return bare ? body : <Card>{body}</Card>;
 }

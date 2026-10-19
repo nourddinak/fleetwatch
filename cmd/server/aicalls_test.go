@@ -123,13 +123,28 @@ func TestPassMessageLater(t *testing.T) {
 	if err := run(map[string]any{"name": "sara", "message": "renew the domain today", "how": "later"}); err != nil {
 		t.Fatal(err)
 	}
-	notes := deps.notesFor("mem_sara")
+	notes := wa.Waiting("mem_sara")
 	if len(notes) != 1 || !strings.Contains(deps.notesBrief(notes), "from Nour") || !strings.Contains(deps.notesBrief(notes), "renew the domain today") {
 		t.Fatal("kept for Sara", notes)
 	}
 	deps.delivered("mem_sara", notes)
-	if len(deps.notesFor("mem_sara")) != 0 {
+	if len(wa.Waiting("mem_sara")) != 0 {
 		t.Fatal("passed on twice")
+	}
+	if l := wa.Notes("mem_sara"); len(l) != 1 || l[0].Status != "delivered" || l[0].Via != "later" {
+		t.Fatal("the list", l)
+	}
+	id, _ := wa.LeaveNote(oncall.Owner, "mem_sara", "second", "later", false)
+	if wa.CancelNote(id, "mem_sara") == nil {
+		t.Fatal("only the sender (or the owner) cancels")
+	}
+	if wa.CancelNote(id, oncall.Owner) != nil || len(wa.Waiting("mem_sara")) != 0 || wa.Deliver(id) {
+		t.Fatal("a canceled message is not passed on")
+	}
+	old, _ := wa.LeaveNote(oncall.Owner, "mem_sara", "old", "later", false)
+	d.Exec(`UPDATE whatsapp_notes SET created_at = ? WHERE id = ?`, time.Now().Add(-8*24*time.Hour).UnixMilli(), old)
+	if len(wa.Waiting("mem_sara")) != 0 || wa.Notes("")[0].Status != "expired" {
+		t.Fatal("a week-old message expires")
 	}
 }
 
