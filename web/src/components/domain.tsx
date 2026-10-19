@@ -252,7 +252,7 @@ export function IncidentDrawer({ incidentId, onClose }: { incidentId: string | n
 }
 
 /* ---------------- notifications ---------------- */
-export const providerLabel: Record<string, string> = { ntfy: "ntfy", telegram: "Telegram", discord: "Discord", webhook: "Webhook", push: "Push" };
+export const providerLabel: Record<string, string> = { telegram: "Telegram", discord: "Discord", webhook: "Webhook", push: "Push" };
 export function NotificationItem({ n, onClick }: { n: NotificationRec; onClick?: () => void }) {
   const { getApp, getServer } = useStore();
   const failed = n.result === "failed";

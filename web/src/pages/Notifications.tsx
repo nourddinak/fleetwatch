@@ -27,7 +27,7 @@ export function Notifications() {
 
   return (
     <>
-      <PageHeader title="Notifications" sub="Delivery history for ntfy, Telegram, Discord and webhooks" actions={<Button variant="secondary" size="sm" onClick={() => { markAllRead(); toast("All marked as read"); }}><Check size={14} /> Mark all read</Button>} />
+      <PageHeader title="Notifications" sub="Delivery history for Telegram, Discord and webhooks" actions={<Button variant="secondary" size="sm" onClick={() => { markAllRead(); toast("All marked as read"); }}><Check size={14} /> Mark all read</Button>} />
       <Gate>
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
           <MetricCard icon={<Send size={14} />} label="Total sent" value={notifications.length} />
@@ -38,7 +38,7 @@ export function Notifications() {
         <FilterBar>
           <SearchInput value={q} onChange={setQ} placeholder="Search notifications…" className="lg:w-64" />
           <Select value={provider} onChange={(e) => setProvider(e.target.value)} className="lg:!w-auto">
-            <option value="all">All providers</option><option value="ntfy">ntfy</option><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="webhook">Webhook</option><option value="push">Push</option>
+            <option value="all">All providers</option><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="webhook">Webhook</option>
           </Select>
           <Select value={event} onChange={(e) => setEvent(e.target.value)} className="lg:!w-auto">
             <option value="all">All events</option>

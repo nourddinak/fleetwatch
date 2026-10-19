@@ -68,7 +68,7 @@ type Person struct {
 	Name     string `json:"name"`
 	Username string `json:"username,omitempty"`
 	Email    string `json:"email"`
-	Devices  int    `json:"devices"` // phones with push turned on
+	Devices  int    `json:"devices"` // phones paired with the app
 }
 
 // Shift is one stretch of on-call duty.

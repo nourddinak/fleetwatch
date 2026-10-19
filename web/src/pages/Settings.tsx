@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Activity, Bell, BookOpen, Bot, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, KeySquare, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, deviceLabel, useApi, type ApiError, type AuditRow, type SecuritySettings as SecurityConfig, type SessionInfo } from "../api/client";
@@ -8,7 +8,6 @@ import { Badge, Button, Card, ErrorState, Field, Gate, Input, KV, LoadingState, 
 import { cn } from "../utils/cn";
 import { UpdateCard } from "../components/PlatformUpdate";
 import { DashboardUsage } from "../components/DashboardUsage";
-import { PushCard } from "../components/PushCard";
 import { MobileCard } from "../components/MobileCard";
 import { AlertRulesCard } from "../components/AlertRulesCard";
 
@@ -106,7 +105,6 @@ export function AccountSettings() {
         <>
           <MobileCard />
           <AlertRulesCard />
-          <PushCard personal enabled onChange={() => {}} />
         </>
       )}
       <Card>
@@ -580,8 +578,8 @@ export function MetricsSettings() {
 }
 
 /* ---------------- Notifications ---------------- */
-interface Channel {
-  provider: "push" | "ntfy" | "telegram" | "discord" | "webhook";
+export interface Channel {
+  provider: "telegram" | "discord" | "webhook";
   enabled: boolean;
   configured: boolean;
   fields: Record<string, string>;
@@ -589,12 +587,7 @@ interface Channel {
 }
 type NotifyRules = Record<string, boolean>;
 type FieldDef = [key: string, label: string, placeholder: string, secret?: boolean];
-const CHANNEL_FIELDS: Record<Exclude<Channel["provider"], "push">, { title: string; help: string; fields: FieldDef[] }> = {
-  ntfy: {
-    title: "ntfy",
-    help: "Use a hard-to-guess topic on ntfy.sh, or your own ntfy server. Token or username/password only if the topic is protected.",
-    fields: [["url", "Server URL", "https://ntfy.sh"], ["topic", "Topic", "fleetwatch-…"], ["token", "Access token", "tk_…", true], ["username", "Username", "optional"], ["password", "Password", "optional", true]],
-  },
+export const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: string; fields: FieldDef[] }> = {
   telegram: {
     title: "Telegram",
     help: "Create a bot with @BotFather, send it a message, then use your chat ID (or a group ID starting with -100).",
@@ -612,9 +605,9 @@ const CHANNEL_FIELDS: Record<Exclude<Channel["provider"], "push">, { title: stri
   },
 };
 
-function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => void }) {
+export function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => void }) {
   const { toast } = useStore();
-  const def = CHANNEL_FIELDS[ch.provider as Exclude<Channel["provider"], "push">];
+  const def = CHANNEL_FIELDS[ch.provider];
   const [enabled, setEnabled] = useState(ch.enabled);
   const [f, setF] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"" | "save" | "test">("");
@@ -683,17 +676,18 @@ const NOTIFY_RULE_ROWS: [string, string, string][] = [
   ["otherResolved", "Other recoveries", "Resolution of resource, error and other incidents"],
 ];
 
+/** Settings → Notifications: which events notify, and which reach your phone. Where they
+ * go (Telegram, Discord, webhooks, WhatsApp, the phone app) is in Integrations. */
 export function NotificationSettings() {
   const { toast } = useStore();
-  const chans = useApi<Channel[]>("/api/notifications/channels");
   const rules = useApi<NotifyRules>("/api/settings/notify-rules");
   const [r, setR] = useState<NotifyRules | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (rules.data) setR(rules.data);
   }, [rules.data]);
-  if (chans.error || rules.error) return <ErrorState message={(chans.error || rules.error)!} onRetry={() => { chans.reload(); rules.reload(); }} />;
-  if (!chans.data || !r || !rules.data) return <LoadingState />;
+  if (rules.error) return <ErrorState message={rules.error} onRetry={rules.reload} />;
+  if (!r || !rules.data) return <LoadingState />;
   const saveRules = async () => {
     setBusy(true);
     try {
@@ -706,17 +700,8 @@ export function NotificationSettings() {
   };
   return (
     <div className="space-y-6">
-      {chans.data.map((ch) =>
-        ch.provider === "push" ? (
-          <div key="push" className="space-y-6">
-            <MobileCard />
-            <AlertRulesCard />
-            <PushCard enabled={ch.enabled} onChange={chans.reload} />
-          </div>
-        ) : (
-          <ChannelCard key={ch.provider + JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />
-        ),
-      )}
+      <p className="flex items-center gap-2 rounded-2xl bg-surface2/60 p-3 text-xs text-muted"><Info size={13} className="shrink-0" />
+        <span>Where alerts go (Telegram, Discord, webhooks, WhatsApp, the phone app) is set up in <Link to="/integrations" className="font-medium text-fg underline">Integrations</Link>.</span></p>
       <Card>
         <SectionTitle icon={<Bell size={15} />} title="Notification rules" sub="Which incident events send a notification. Per-server and per-app overrides live on their settings pages. A 10-minute cooldown prevents repeats." />
         <div className="divide-y divide-line">
@@ -724,6 +709,7 @@ export function NotificationSettings() {
         </div>
         <SaveBar dirty={JSON.stringify(r) !== JSON.stringify(rules.data)} busy={busy} onSave={saveRules} onReset={() => setR(rules.data)} />
       </Card>
+      <AlertRulesCard />
     </div>
   );
 }

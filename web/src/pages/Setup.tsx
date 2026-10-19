@@ -103,7 +103,7 @@ export function Setup() {
             {[
               { to: "/settings/2fa", icon: <ShieldCheck size={16} />, title: "Turn on two-factor authentication", sub: "Protects the dashboard that controls your servers" },
               { to: "/servers/new", icon: <Server size={16} />, title: "Add your first server", sub: "One command on the VPS installs the agent" },
-              { to: "/settings/notifications", icon: <Bell size={16} />, title: "Set up alerts", sub: "ntfy, Telegram, Discord or a custom webhook" },
+              { to: "/integrations", icon: <Bell size={16} />, title: "Set up alerts", sub: "Telegram, Discord, WhatsApp or a custom webhook" },
             ].map((x) => (
               <Link key={x.to} to={x.to} className="flex items-center gap-3 rounded-2xl border border-line px-4 py-3 transition hover:border-fg/30">
                 <span className="text-muted">{x.icon}</span>

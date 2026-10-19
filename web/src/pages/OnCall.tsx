@@ -165,7 +165,7 @@ export function OnCallPage() {
               ))}
             </div>
             <ol className="mt-4 space-y-1.5 text-xs text-muted">
-              <li><b className="text-fg">1.</b> The person on call is paged: the phone app rings, a browser push, an email{wa.data?.status.linked ? ", and a WhatsApp call with the AI" : ""}.</li>
+              <li><b className="text-fg">1.</b> The person on call is paged: the phone app rings, an email{wa.data?.status.linked ? ", and a WhatsApp call with the AI" : ""}.</li>
               <li><b className="text-fg">2.</b> They tap <b className="text-fg">I'm on it</b> (or say it on the call): the incident is acknowledged and the paging stops.</li>
               <li><b className="text-fg">3.</b> Nobody answers within {c.escalateAfterMin} minutes? The next person is paged, and so on, finally you. Maintenance mode pauses all of it.</li>
             </ol>

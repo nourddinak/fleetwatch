@@ -44,11 +44,11 @@ func TestIncidentLifecycleAndChannels(t *testing.T) {
 		return y["status"] == "resolved" && y["resolvedBy"] == "auto"
 	})
 
-	if st, _ := c.do("PUT", "/api/notifications/channels/ntfy", map[string]any{"enabled": true, "fields": map[string]string{"url": "https://ntfy.sh", "topic": "fw-test", "token": "tk_supersecret"}}); st != 200 {
+	if st, _ := c.do("PUT", "/api/notifications/channels/telegram", map[string]any{"enabled": true, "fields": map[string]string{"botToken": "123:supersecret", "chatId": "42"}}); st != 200 {
 		t.Fatalf("save channel: %d", st)
 	}
 	raw, _ := json.Marshal(c.list("/api/notifications/channels"))
-	if strings.Contains(string(raw), "supersecret") || !strings.Contains(string(raw), `"token":true`) {
+	if strings.Contains(string(raw), "supersecret") || !strings.Contains(string(raw), `"botToken":true`) {
 		t.Fatalf("channels: %s", raw)
 	}
 	if st, _ := c.do("PUT", "/api/notifications/channels/pagerduty", map[string]any{"enabled": true}); st != 404 {

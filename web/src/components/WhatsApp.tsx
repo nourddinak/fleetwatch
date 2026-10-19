@@ -186,7 +186,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, voice, onSaved 
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={quiet} onChange={(e) => setF({ ...f, quietFrom: e.target.checked ? "22:00" : "", quietTo: e.target.checked ? "07:00" : "" })} />
-        Quiet hours (no WhatsApp; push notifications still come)
+        Quiet hours (no WhatsApp; the phone app still rings)
       </label>
       {quiet && (
         <div className="grid gap-3 sm:grid-cols-2">

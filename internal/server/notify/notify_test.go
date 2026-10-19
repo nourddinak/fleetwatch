@@ -42,18 +42,10 @@ func TestProviders(t *testing.T) {
 	ctx := context.Background()
 	m := Message{Title: "App <down>", Body: "API on VPS-1", Severity: "critical", Link: "https://ops.example/#/incidents"}
 
-	if err := (Ntfy{URL: srv.URL, Topic: "ops", Token: "tk"}).Send(ctx, m); err != nil {
-		t.Fatal(err)
-	}
-	g := <-ch
-	if g.path != "/ops" || g.auth != "Bearer tk" || g.title != "App <down>" || g.prio != "5" || string(g.body) != "API on VPS-1" {
-		t.Fatalf("ntfy: %+v", g)
-	}
-
 	if err := (Telegram{BotToken: "1:abc", ChatID: "42", apiBase: srv.URL}).Send(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	g = <-ch
+	g := <-ch
 	var tg map[string]any
 	json.Unmarshal(g.body, &tg)
 	if g.path != "/bot1:abc/sendMessage" || tg["chat_id"] != "42" || !strings.Contains(tg["text"].(string), "App &lt;down&gt;") {
@@ -96,40 +88,46 @@ func setup(t *testing.T) *Service {
 func TestChannelsKeepSecrets(t *testing.T) {
 	s := setup(t)
 	srv, ch := recorder(t, 200)
-	if err := s.SaveChannel("ntfy", true, map[string]string{"url": srv.URL, "topic": "ops", "token": "s3cret"}); err != nil {
+	if err := s.SaveChannel("webhook", true, map[string]string{"url": srv.URL + "/hooks/s3cret", "secret": "sign"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveChannel("ntfy", true, map[string]string{"url": srv.URL, "topic": "ops2", "token": ""}); err != nil {
+	if err := s.SaveChannel("webhook", true, map[string]string{"url": "", "secret": ""}); err != nil { // empty: kept
 		t.Fatal(err)
 	}
 	views, _ := s.Channels()
 	raw, _ := json.Marshal(views)
-	var ntfy ChannelView
+	var hook ChannelView
 	for _, v := range views {
+		if v.Provider == "webhook" {
+			hook = v
+		}
 		if v.Provider == "ntfy" {
-			ntfy = v
+			t.Fatal("ntfy is gone")
 		}
 	}
-	if strings.Contains(string(raw), "s3cret") || !ntfy.Secrets["token"] || ntfy.Fields["topic"] != "ops2" {
+	if strings.Contains(string(raw), "s3cret") || !hook.Secrets["url"] || !hook.Secrets["secret"] || !strings.HasSuffix(hook.Fields["urlHint"], "/…") {
 		t.Fatalf("view: %s", raw)
 	}
 	var enc []byte
-	s.db.QueryRow(`SELECT config_enc FROM notification_channels WHERE provider = 'ntfy'`).Scan(&enc)
+	s.db.QueryRow(`SELECT config_enc FROM notification_channels WHERE provider = 'webhook'`).Scan(&enc)
 	if bytes.Contains(enc, []byte("s3cret")) {
 		t.Fatal("secret stored in plaintext")
 	}
-	if err := s.SaveChannel("ntfy", true, map[string]string{"evil": "x"}); err == nil {
+	if err := s.SaveChannel("webhook", true, map[string]string{"evil": "x"}); err == nil {
 		t.Fatal("unknown field accepted")
+	}
+	if err := s.SaveChannel("ntfy", true, map[string]string{"url": srv.URL, "topic": "ops"}); err == nil {
+		t.Fatal("ntfy accepted")
 	}
 	if err := s.SaveChannel("telegram", true, map[string]string{"botToken": "nocolon", "chatId": "1"}); err == nil {
 		t.Fatal("invalid telegram token accepted")
 	}
 
-	h, err := s.Test(context.Background(), "ntfy")
+	h, err := s.Test(context.Background(), "webhook")
 	if err != nil || h.Result != "delivered" {
 		t.Fatalf("test: %+v %v", h, err)
 	}
-	if g := <-ch; g.auth != "Bearer s3cret" || g.path != "/ops2" {
+	if g := <-ch; g.path != "/hooks/s3cret" {
 		t.Fatalf("kept secret not used: %+v", g)
 	}
 	if list, _ := s.History(0, 0); len(list) != 1 || list[0].Read {

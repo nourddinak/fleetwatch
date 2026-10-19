@@ -1,4 +1,4 @@
-// Package notify delivers alerts through pluggable providers (ntfy, Telegram,
+// Package notify delivers alerts through pluggable providers (Telegram,
 // Discord) and keeps a delivery history.
 package notify
 
@@ -76,45 +76,6 @@ func redact(err error) error {
 		return fmt.Errorf("%s request failed: %v", ue.Op, ue.Err)
 	}
 	return err
-}
-
-// ---------- ntfy ----------
-
-type Ntfy struct {
-	URL      string `json:"url"`
-	Topic    string `json:"topic"`
-	Token    string `json:"token"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-func (n Ntfy) validate() error {
-	u, err := url.Parse(n.URL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return valid.Error("ntfy server URL must look like https://ntfy.sh")
-	}
-	if n.Topic == "" || strings.ContainsAny(n.Topic, "/?# ") || len(n.Topic) > 64 {
-		return valid.Error("ntfy topic must be a single word (letters, digits, - and _)")
-	}
-	return nil
-}
-
-func (n Ntfy) Send(ctx context.Context, m Message) error {
-	prio := map[string]string{"critical": "5", "warning": "4", "info": "3", "ok": "3"}[m.Severity]
-	tags := map[string]string{"critical": "rotating_light", "warning": "warning", "ok": "white_check_mark", "info": "information_source"}[m.Severity]
-	h := map[string]string{"Title": m.Title, "Priority": prio, "Tags": tags}
-	if m.Link != "" {
-		h["Click"] = m.Link
-	}
-	switch {
-	case n.Token != "":
-		h["Authorization"] = "Bearer " + n.Token
-	case n.Username != "":
-		req, _ := http.NewRequest("GET", "/", nil)
-		req.SetBasicAuth(n.Username, n.Password)
-		h["Authorization"] = req.Header.Get("Authorization")
-	}
-	return post(ctx, strings.TrimRight(n.URL, "/")+"/"+url.PathEscape(n.Topic), "text/plain; charset=utf-8", []byte(m.Body), h)
 }
 
 // ---------- Telegram ----------

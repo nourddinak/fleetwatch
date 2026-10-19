@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ChevronRight, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users } from "lucide-react";
+import { Activity, ArrowLeft, ChevronRight, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -8,7 +8,9 @@ import { CloudflareSetup, DnsAccounts } from "../components/DnsAccounts";
 import { MyWhatsApp, WhatsAppSetup } from "../components/WhatsApp";
 import { goGitHub } from "./Sites";
 import { AISetup } from "../components/AISetup";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, WhatsApp, Gemini, CopyButton, PageHeader, SearchInput } from "../components/ui";
+import { MobileCard } from "../components/MobileCard";
+import { CHANNEL_FIELDS, ChannelCard, type Channel } from "./Settings";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, WhatsApp, Gemini, Telegram, Discord, CopyButton, PageHeader, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -70,12 +72,15 @@ export function IntegrationsSettings() {
   if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
   if (!data.data) return <LoadingState />;
   const cf = data.data.cloudflare;
-  const tab = params.get("tab") === "cloudflare" && cf ? "cloudflare" : params.get("tab") === "whatsapp" ? "whatsapp" : params.get("tab") === "ai" ? "ai" : params.get("tab") === "github" ? "github" : "";
+  const asked = params.get("tab") ?? "";
+  const tab = asked === "cloudflare" && !cf ? "" : ["cloudflare", "whatsapp", "ai", "github", ...ALERT_TABS].includes(asked) ? asked : "";
   if (!tab) return <IntegrationCards github={data.data.github} cf={cf} open={(t) => setParams({ tab: t })} />;
   return (
     <div className="space-y-6">
       <button className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg" onClick={() => setParams({})}><ArrowLeft size={14} /> All integrations</button>
-      {tab === "whatsapp" ? (
+      {ALERT_TABS.includes(tab) ? (
+        <AlertChannel tab={tab} />
+      ) : tab === "whatsapp" ? (
         <WhatsAppSetup />
       ) : tab === "ai" ? (
         <AISetup />
@@ -192,6 +197,13 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
   const aiSt = useApi<{ status: { configured: boolean; usedSeconds: number; config: { model: string; monthlyMinutes: number } } }>("/api/integrations/ai");
   const wa = useApi<{ status: { linked: boolean; number?: string }; people: { phone: string }[] }>("/api/integrations/whatsapp");
   const people = dns.data?.everyone?.length ?? 0;
+  const chans = useApi<Channel[]>("/api/notifications/channels");
+  const ch = (p: string) => chans.data?.find((c) => c.provider === p);
+  const alert = (p: "telegram" | "discord" | "webhook", logo: ReactNode, desc: string) => {
+    const c = ch(p);
+    return { key: p, logo, name: CHANNEL_FIELDS[p].title, on: !!c?.enabled && !!c.configured, desc,
+      status: c?.configured ? (c.enabled ? "Sending alerts" : "Set up, turned off") : "Not set up" };
+  };
   const items = [
     { key: "github", logo: <Github size={28} />, name: "GitHub", on: github.connected,
       desc: "Deploy sites from your repositories, again on every push, and see which apps run which repository.",
@@ -205,6 +217,12 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
     { key: "ai", logo: <Gemini size={30} />, name: "AI", on: !!aiSt.data?.status.configured,
       desc: "Gemini Live answers on-call calls: it explains the incident, answers questions from the dashboard's data, and acknowledges it for you.",
       status: aiSt.data?.status.configured ? `${aiSt.data.status.config.model} · ${Math.round(aiSt.data.status.usedSeconds / 60)} of ${aiSt.data.status.config.monthlyMinutes} minutes this month` : "Paste a Gemini API key once" },
+    { key: "phone", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-accent-fg"><Activity size={22} /></span>, name: "Phone app", on: false,
+      desc: "The Fleetwatch app on Android: alerts that ring like a call, one tap to acknowledge, your servers at a glance.",
+      status: "Pair a phone with a QR code" },
+    alert("telegram", <Telegram size={30} />, "Alerts in a Telegram chat or group, through your own bot."),
+    alert("discord", <Discord size={30} />, "Alerts in a Discord channel, through a channel webhook."),
+    alert("webhook", <Webhook size={28} color="#C73A63" strokeWidth={2.2} />, "Alerts as JSON to your own URL: n8n, Zapier, Slack workflows, Home Assistant, your code."),
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -471,5 +489,22 @@ function Repos() {
         </div>
       )}
     </Card>
+  );
+}
+
+const ALERT_TABS = ["telegram", "discord", "webhook", "phone"];
+
+/** One place alerts can go: its settings, opened from its card. */
+function AlertChannel({ tab }: { tab: string }) {
+  const chans = useApi<Channel[]>("/api/notifications/channels");
+  if (tab === "phone") return <MobileCard />;
+  if (chans.error) return <ErrorState message={chans.error} onRetry={chans.reload} />;
+  const ch = chans.data?.find((c) => c.provider === tab);
+  if (!ch) return <LoadingState />;
+  return (
+    <>
+      <ChannelCard key={JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />
+      <p className="text-xs text-muted">Which events send alerts: <Link to="/settings/notifications" className="underline">Settings → Notifications</Link>.</p>
+    </>
   );
 }

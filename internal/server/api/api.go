@@ -35,7 +35,6 @@ import (
 	"fleetwatch/internal/server/mobile"
 	"fleetwatch/internal/server/notify"
 	"fleetwatch/internal/server/oncall"
-	"fleetwatch/internal/server/push"
 	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/security"
 	"fleetwatch/internal/server/sites"
@@ -69,7 +68,6 @@ type Deps struct {
 	Maint      *maintenance.Service
 	Domains    *domains.Checker
 	Tokens     *tokens.Service
-	Push       *push.Service
 	Status     *statuspage.Service
 	Disk       *disk.Service
 	Forecast   *forecast.Service
@@ -128,9 +126,6 @@ func New(d Deps) http.Handler {
 	}
 	if d.Incidents != nil {
 		s.incidentRoutes(mux)
-	}
-	if d.Push != nil {
-		s.pushRoutes(mux)
 	}
 	if d.Tokens != nil {
 		s.tokenRoutes(mux)

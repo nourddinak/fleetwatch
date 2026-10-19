@@ -174,6 +174,13 @@ func (s *Service) Authenticate(token string) (Device, error) {
 }
 
 // Devices lists one person's phones.
+// Count is how many phones someone paired ("" = the owner).
+func (s *Service) Count(memberID string) int {
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM mobile_devices WHERE member_id = ?`, memberID).Scan(&n)
+	return n
+}
+
 func (s *Service) Devices(memberID string) ([]Device, error) {
 	rows, err := s.db.Query(`SELECT `+deviceCols+` FROM mobile_devices WHERE member_id = ? ORDER BY created_at`, memberID)
 	if err != nil {
