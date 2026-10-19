@@ -184,7 +184,7 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
     }
     setBusy(false);
   };
-  const perms = ["Zone: Read", "DNS: Write", "Cache: Purge", "Zone Settings: Write", "Firewall Services: Write"];
+  const perms = ["Zone Read", "DNS Write", "Cache Purge", "Zone Settings Write", "Firewall Services Write"];
   return (
     <Card>
       <SectionTitle icon={<Cloudflare size={17} />} title="Sign in with Cloudflare"
@@ -201,20 +201,29 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
       ) : (
         <div className="space-y-4">
           <ol className="list-decimal space-y-2.5 pl-5 text-sm text-muted">
-            <li>Open <a className="font-medium text-fg underline" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noreferrer">Cloudflare → Manage account → OAuth clients</a> and create a client. Type: <b className="text-fg">Confidential</b>; grants: <b className="text-fg">Authorization code</b> and <b className="text-fg">Refresh token</b>.</li>
+            <li>Open <a className="font-medium text-fg underline" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noreferrer">Cloudflare → Manage account → OAuth clients</a> and select <b className="text-fg">Create client</b>.</li>
             <li>
-              Redirect URI:
-              <span className="mt-1 flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded-lg bg-surface2 px-2 py-1 font-mono text-xs text-fg">{redirectUri}</code>
-                <CopyButton text={redirectUri} />
-              </span>
+              Fill in the form:
+              <ul className="mt-1.5 space-y-1 text-xs">
+                <li><b className="text-fg">Client Name</b>: Fleetwatch</li>
+                <li><b className="text-fg">Response Type</b>: code</li>
+                <li><b className="text-fg">Grant Type</b>: Authorization Code <i>and</i> Refresh Token</li>
+                <li><b className="text-fg">Token Authentication Method</b>: Client Secret Basic</li>
+                <li>
+                  <b className="text-fg">Redirect (Callback) URLs</b>:
+                  <span className="mt-1 flex items-center gap-2">
+                    <code className="min-w-0 flex-1 truncate rounded-lg bg-surface2 px-2 py-1 font-mono text-xs text-fg">{redirectUri}</code>
+                    <CopyButton text={redirectUri} />
+                  </span>
+                </li>
+              </ul>
             </li>
             <li>
-              Permissions: {perms.map((p) => <Badge key={p} className="mr-1 mt-1">{p}</Badge>)}
-              <span className="mt-1 block text-[11px]">Scopes: <code className="font-mono">{scopes.join(" ")}</code></span>
+              Select <b className="text-fg">Continue</b> and pick these scopes (leave them Required): {perms.map((p) => <Badge key={p} className="mr-1 mt-1">{p}</Badge>)}
+              <span className="mt-1 block text-[11px]">If an <b>offline access</b> scope is listed, pick it too. The sign-in asks for: <code className="font-mono">{scopes.join(" ")}</code></span>
             </li>
-            <li>For team members who are not in your Cloudflare account: switch the client to <b className="text-fg">Public</b> (Cloudflare asks for a TXT record on your domain once).</li>
-            <li>Paste the client ID and secret here.</li>
+            <li>Select <b className="text-fg">Create client</b>, then paste the <b className="text-fg">Client ID</b> and <b className="text-fg">Client Secret</b> here (Cloudflare shows the secret only once).</li>
+            <li>Teammates who are not members of your Cloudflare account can only sign in once the client is <b className="text-fg">Public</b>: that needs a logo, a Client URL and a TXT record on your domain.</li>
           </ol>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Client ID"><Input value={id} onChange={(e) => setId(e.target.value)} className="font-mono" autoComplete="off" /></Field>

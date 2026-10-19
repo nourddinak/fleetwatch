@@ -37,7 +37,7 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 		defer f.mu.Unlock()
 		if strings.HasPrefix(r.URL.Path, "/oauth2/") {
 			r.ParseForm()
-			if r.Form.Get("client_id") != "cid" || r.Form.Get("client_secret") != "csec" {
+			if id, secret, _ := r.BasicAuth(); id != "cid" || secret != "csec" || r.Form.Get("client_secret") != "" {
 				w.WriteHeader(401)
 				json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
 				return

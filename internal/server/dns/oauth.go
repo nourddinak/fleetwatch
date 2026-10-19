@@ -66,6 +66,12 @@ func (s *Service) AppClientID() string {
 	return k.ClientID
 }
 
+// basic signs a request to Cloudflare's token endpoints as the client, the way the
+// dashboard's client form defaults to ("Client Secret Basic"; both parts form-encoded).
+func (k appKeys) basic(req *http.Request) {
+	req.SetBasicAuth(url.QueryEscape(k.ClientID), url.QueryEscape(k.ClientSecret))
+}
+
 // SetApp keeps the OAuth client the owner created in Cloudflare.
 func (s *Service) SetApp(clientID, secret string) error {
 	clientID, secret = strings.TrimSpace(clientID), strings.TrimSpace(secret)
@@ -116,9 +122,8 @@ func (s *Service) SignInURL(publicURL, owner string) (string, error) {
 
 // tokenCall asks Cloudflare's token endpoint for tokens.
 func (s *Service) tokenCall(ctx context.Context, k appKeys, form url.Values) (tokens, error) {
-	form.Set("client_id", k.ClientID)
-	form.Set("client_secret", k.ClientSecret)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, CloudflareWeb+"/oauth2/token", strings.NewReader(form.Encode()))
+	k.basic(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
@@ -248,10 +253,11 @@ func (s *Service) revoke(id string, enc []byte) {
 	if !ok || err != nil || json.Unmarshal(plain, &t) != nil || t.Refresh == "" {
 		return
 	}
-	form := url.Values{"token": {t.Refresh}, "token_type_hint": {"refresh_token"}, "client_id": {k.ClientID}, "client_secret": {k.ClientSecret}}
+	form := url.Values{"token": {t.Refresh}, "token_type_hint": {"refresh_token"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, CloudflareWeb+"/oauth2/revoke", strings.NewReader(form.Encode()))
+	k.basic(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if resp, err := client.Do(req); err == nil {
 		resp.Body.Close()
