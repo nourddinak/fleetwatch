@@ -42,6 +42,7 @@ type Provider interface {
 // CDN is what Cloudflare adds.
 type CDN interface {
 	Purge(ctx context.Context, z Zone, urls []string) error
+	PurgeHosts(ctx context.Context, z Zone, hosts []string) error // everything cached for those hostnames
 	SecurityLevel(ctx context.Context, z Zone) (string, error)
 	SetSecurityLevel(ctx context.Context, z Zone, level string) error
 	SetProxied(ctx context.Context, z Zone, id string, on bool) error
@@ -164,6 +165,11 @@ func (c cloudflare) DeleteA(ctx context.Context, z Zone, id string) error {
 
 func (c cloudflare) Purge(ctx context.Context, z Zone, urls []string) error {
 	_, err := c.call(ctx, http.MethodPost, "/zones/"+z.ID+"/purge_cache", map[string]any{"files": urls}, nil)
+	return err
+}
+
+func (c cloudflare) PurgeHosts(ctx context.Context, z Zone, hosts []string) error {
+	_, err := c.call(ctx, http.MethodPost, "/zones/"+z.ID+"/purge_cache", map[string]any{"hosts": hosts}, nil)
 	return err
 }
 

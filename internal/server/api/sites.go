@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"fleetwatch/internal/server/auth"
@@ -169,6 +171,56 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, t)
+	}))
+	mux.HandleFunc("POST /api/sites/{id}/purge", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		st, err := s.Sites.Get(r.PathValue("id"))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		if s.DNS == nil {
+			fail(w, dns.ErrNoZone)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		done, err := s.DNS.PurgeSite(ctx, sites.DNSOwner(st), st.Domains)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "site.purge", st.ID, strings.Join(done, ", "))
+		writeJSON(w, http.StatusOK, map[string]any{"purged": done})
+	}))
+	attack := func(w http.ResponseWriter, r *http.Request, on *bool) {
+		st, err := s.Sites.Get(r.PathValue("id"))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		if s.DNS == nil {
+			fail(w, dns.ErrNoZone)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		v, err := s.DNS.SiteUnderAttack(ctx, sites.DNSOwner(st), st.Domains, on)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if on != nil {
+			s.audit(r, "site.under_attack", st.ID, fmt.Sprintf("%v", *on))
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"on": v})
+	}
+	mux.HandleFunc("GET /api/sites/{id}/attack", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { attack(w, r, nil) }))
+	mux.HandleFunc("PUT /api/sites/{id}/attack", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ On bool }
+		if !decode(w, r, &in) {
+			return
+		}
+		attack(w, r, &in.On)
 	}))
 	// Where each of a site's domains points right now, as public DNS answers.
 	mux.HandleFunc("GET /api/sites/{id}/dns/check", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {

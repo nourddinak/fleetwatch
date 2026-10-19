@@ -10,6 +10,7 @@ import (
 	"fleetwatch/internal/server/ai"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/secret"
 	"fleetwatch/internal/server/whatsapp"
@@ -235,5 +236,25 @@ func TestReminders(t *testing.T) {
 	}
 	if status["check the backup"] != "done" || status["CPU below 50%"] != "expired" || status["later"] != "active" {
 		t.Fatal(status)
+	}
+}
+
+// Certificates and domains ending within 14 days, to tell the owner (and the site's).
+func TestExpiring(t *testing.T) {
+	now := time.Now()
+	in := func(days float64) int64 { return now.Add(time.Duration(days * 24 * float64(time.Hour))).UnixMilli() }
+	list := []domains.Domain{
+		{Host: "shop.example.com", Public: domains.Cert{NotAfter: in(5)}, Registered: "example.com", Expires: in(10)},
+		{Host: "api.example.com", Public: domains.Cert{NotAfter: in(1), AutoRenew: true}, Registered: "example.com", Expires: in(10)},
+		{Host: "far.org", Public: domains.Cert{NotAfter: in(60)}, Registered: "far.org", Expires: in(300)},
+	}
+	got := (&callDeps{}).expiring(list, now)
+	if len(got) != 2 || got[0].key != "ssl|shop.example.com" || got[1].key != "domain|example.com" || got[0].people[0] != oncall.Owner {
+		t.Fatal(got)
+	}
+	for left, mark := range map[int]int{20: 0, 13: 14, 6: 7, 0: 1} {
+		if markFor(left) != mark {
+			t.Fatal(left, markFor(left))
+		}
 	}
 }

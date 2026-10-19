@@ -247,6 +247,63 @@ func (s *Service) Purge(ctx context.Context, owner string, domains []string) {
 	}
 }
 
+// PurgeSite empties Cloudflare's cache for a site's domains: all they cached. It
+// answers the domains done (an error when none could be).
+func (s *Service) PurgeSite(ctx context.Context, owner string, domains []string) ([]string, error) {
+	byZone := map[string][]string{}
+	zones, accounts := map[string]Zone{}, map[string]string{}
+	for _, d := range domains {
+		if a, z, ok := s.zoneFor(owner, d); ok && a.Provider == "cloudflare" {
+			byZone[z.ID] = append(byZone[z.ID], d)
+			zones[z.ID], accounts[z.ID] = z, a.ID
+		}
+	}
+	if len(byZone) == 0 {
+		return nil, ErrNoZone
+	}
+	var done []string
+	var last error
+	for id, hosts := range byZone {
+		_, p, err := s.account(owner, accounts[id])
+		if err == nil {
+			if cdn, ok := p.(CDN); ok {
+				err = cdn.PurgeHosts(ctx, zones[id], hosts)
+			}
+		}
+		if err != nil {
+			last = err
+			continue
+		}
+		done = append(done, hosts...)
+	}
+	if len(done) == 0 {
+		return nil, last
+	}
+	return done, nil
+}
+
+// SiteUnderAttack reads (on=nil) or switches "Under attack" for the zones of a site's domains.
+func (s *Service) SiteUnderAttack(ctx context.Context, owner string, domains []string, on *bool) (bool, error) {
+	seen := map[string]bool{}
+	any, found := false, false
+	for _, d := range domains {
+		a, z, ok := s.zoneFor(owner, d)
+		if !ok || a.Provider != "cloudflare" || seen[z.ID] {
+			continue
+		}
+		seen[z.ID], found = true, true
+		v, err := s.UnderAttack(ctx, owner, a.ID, z.Name, on)
+		if err != nil {
+			return false, err
+		}
+		any = any || v
+	}
+	if !found {
+		return false, ErrNoZone
+	}
+	return any, nil
+}
+
 func (s *Service) cdn(owner, accountID, zoneName string) (Account, CDN, Zone, error) {
 	a, p, err := s.account(owner, accountID)
 	if err != nil {

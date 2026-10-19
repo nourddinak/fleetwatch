@@ -131,8 +131,12 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 			delete(f.records, strings.TrimPrefix(p, "/zones/z1/dns_records/"))
 			ok(nil)
 		case p == "/zones/z1/purge_cache":
-			for _, u := range body["files"].([]any) {
-				f.purged = append(f.purged, u.(string))
+			for _, k := range []string{"files", "hosts"} {
+				if list, has := body[k].([]any); has {
+					for _, u := range list {
+						f.purged = append(f.purged, u.(string))
+					}
+				}
 			}
 			ok(nil)
 		case p == "/zones/z1/settings/security_level":
@@ -272,10 +276,20 @@ func TestCloudflare(t *testing.T) {
 	if len(f.purged) == 0 || f.purged[0] != "https://shop.example.com/" {
 		t.Fatal(f.purged)
 	}
+	f.purged = nil
+	if done, err := s.PurgeSite(ctx, "mem_1", []string{"shop.example.com", "other.org"}); err != nil || len(done) != 1 || len(f.purged) != 1 || f.purged[0] != "shop.example.com" {
+		t.Fatal("a site's hosts, whole", done, err, f.purged)
+	}
+	if _, err := s.PurgeSite(ctx, "mem_2", []string{"shop.example.com"}); err != ErrNoZone {
+		t.Fatal("another person's account was used to purge", err)
+	}
 	if st, err := s.SetProxied(ctx, "mem_1", got["shop.example.com"], true); err != nil || !st.Proxied {
 		t.Fatal(st, err)
 	}
 	on := true
+	if v, err := s.SiteUnderAttack(ctx, "mem_1", []string{"shop.example.com"}, nil); err != nil || v {
+		t.Fatal("read for a site", v, err)
+	}
 	if v, err := s.UnderAttack(ctx, "mem_1", a.ID, "example.com", &on); err != nil || !v || f.level != "under_attack" {
 		t.Fatal(v, err, f.level)
 	}

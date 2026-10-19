@@ -19,7 +19,9 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/disk"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
+	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
@@ -57,6 +59,8 @@ type callDeps struct {
 	maint     *maintenance.Service
 	people    func() []oncall.Person
 	oncall    *oncall.Service
+	dns       *dns.Service
+	domains   *domains.Checker
 }
 
 const maxCall = 5 * time.Minute
@@ -568,11 +572,11 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				}
 				return d.pastIncidents(x, 10), nil
 			}},
-		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
+		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy; purge its Cloudflare cache; on or off: Cloudflare's Under attack mode), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
 			Params: map[string]any{
 				"kind":   map[string]any{"type": "STRING", "enum": actionKinds},
 				"target": map[string]any{"type": "STRING", "description": "What to act on: an app, container, site, cleanup, incident id, server or IP"},
-				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "clean", "mute", "on", "off", "block"}},
+				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "purge", "clean", "mute", "on", "off", "block"}},
 				"server": map[string]any{"type": "STRING", "description": "The server's name, where it matters (containers, disk); without it, the incident's server"},
 				"amount": map[string]any{"type": "INTEGER", "description": "Minutes for maintenance, hours for an IP block"},
 			}, Required: []string{"kind", "target", "action"},
@@ -766,12 +770,12 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 			return "the container is being " + action + "ed; it takes a few seconds", nil
 		}
 	case "site":
-		if action != "redeploy" {
-			return nil, valid.Error("a site can be redeployed")
+		if action != "redeploy" && action != "purge" && action != "on" && action != "off" {
+			return nil, valid.Error("a site can be redeployed, its cache purged, or Under attack mode turned on or off")
 		}
 		var site *sites.Site
 		for _, st := range g.d.sites.List() {
-			if strings.EqualFold(st.Name, target) {
+			if strings.EqualFold(st.Name, target) || containsFold(st.Domains, target) {
 				site = &st
 			}
 		}
@@ -780,6 +784,33 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 		}
 		if err := g.allowed(site.ServerID, false); err != nil {
 			return nil, err
+		}
+		if action != "redeploy" {
+			if g.d.dns == nil {
+				return nil, valid.Error("Cloudflare is not connected")
+			}
+			owner, domains := sites.DNSOwner(*site), site.Domains
+			switch action {
+			case "purge":
+				a.what = "purge Cloudflare's cache for " + site.Name
+				a.run = func(ctx context.Context) (any, error) {
+					done, err := g.d.dns.PurgeSite(ctx, owner, domains)
+					if err != nil {
+						return nil, err
+					}
+					return "purged: " + strings.Join(done, ", "), nil
+				}
+			default:
+				on := action == "on"
+				a.what = "turn Cloudflare's Under attack mode " + action + " for " + site.Name
+				a.run = func(ctx context.Context) (any, error) {
+					if _, err := g.d.dns.SiteUnderAttack(ctx, owner, domains, &on); err != nil {
+						return nil, err
+					}
+					return "Under attack mode is " + action, nil
+				}
+			}
+			break
 		}
 		a.what = "redeploy the site " + site.Name
 		id := site.ID

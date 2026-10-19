@@ -800,9 +800,59 @@ function SiteTraffic({ site }: { site: Site }) {
           ) : (
             <p className="text-xs text-muted">No visits in the last 24 hours.</p>
           )}
+          <CloudflareControls site={site} traffic={t} />
         </>
       )}
     </Panel>
+  );
+}
+
+/** How many times its usual level the last hour's traffic is (0 when too little to tell). */
+function spike(t: Traffic) {
+  const hours = t.hours.map((h) => h.requests);
+  const last = hours[hours.length - 1] ?? 0;
+  const before = hours.slice(0, -1).filter((v) => v > 0);
+  if (last < 500 || before.length < 3) return 0;
+  const usual = before.reduce((a, b) => a + b, 0) / before.length;
+  return usual > 0 && last / usual >= 5 ? Math.round(last / usual) : 0;
+}
+
+/** Cloudflare's cache and "Under attack" for the site's domains. */
+function CloudflareControls({ site, traffic }: { site: Site; traffic: Traffic }) {
+  const { toast } = useStore();
+  const attack = useApi<{ on: boolean }>(`/api/sites/${site.id}/attack`);
+  const [busy, setBusy] = useState("");
+  const jump = spike(traffic);
+  const run = async (what: string, fn: () => Promise<unknown>, done: string) => {
+    setBusy(what);
+    try {
+      await fn();
+      toast(done);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy("");
+  };
+  const setAttack = (on: boolean) => run("attack", async () => attack.setData(await api<{ on: boolean }>("PUT", `/api/sites/${site.id}/attack`, { on })), on ? "Under attack mode on" : "Under attack mode off");
+  return (
+    <div className="space-y-3 border-t border-line pt-3">
+      {jump > 0 && !attack.data?.on && (
+        <div className="flex flex-col gap-2 rounded-2xl bg-warn-soft p-3 text-xs text-warn sm:flex-row sm:items-center">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span className="flex-1">Traffic in the last hour is about <b>{jump}×</b> its usual level{traffic.threats ? `, with ${traffic.threats.toLocaleString()} threats stopped` : ""}. If you don't expect it (a launch, a campaign), it may be an attack: <b>Under attack</b> mode makes visitors pass a quick browser check first.</span>
+          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => setAttack(true)}>Turn it on</Button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => run("purge", () => api("POST", `/api/sites/${site.id}/purge`), "Cloudflare's cache emptied for this site")}>
+          {busy === "purge" ? <Spinner size={13} /> : <RefreshCw size={13} />} Purge cache
+        </Button>
+        <label className="flex items-center gap-2 text-sm" title="Visitors pass a quick browser check before reaching the site.">
+          <Toggle checked={!!attack.data?.on} disabled={!attack.data || !!busy} onChange={setAttack} /> Under attack mode
+        </label>
+        {attack.error && <span className="text-xs text-muted">{attack.error}</span>}
+      </div>
+    </div>
   );
 }
 

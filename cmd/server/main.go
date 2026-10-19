@@ -632,8 +632,8 @@ func serve() error {
 		return ids
 	}
 	sec := security.New(d)
-	calls.security = sec                                                                    // the AI on calls reads security too
-	calls.docker, calls.sites, calls.disk, calls.maint = dockerSvc, siteSvc, diskSvc, maint // and acts with these
+	calls.security = sec                                                                                       // the AI on calls reads security too
+	calls.docker, calls.sites, calls.disk, calls.maint, calls.dns = dockerSvc, siteSvc, diskSvc, maint, dnsSvc // and acts with these
 	waSvc.Alert = func(title, body, severity string) {
 		notifier.Notice("WhatsApp", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
 	}
@@ -659,6 +659,7 @@ func serve() error {
 	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
 		ServerIDs: serverIDs}
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
+	calls.domains = domainChecks
 	domainChecks.PublicURL = os.Getenv("OPS_PUBLIC_URL")
 	appSvc.OnViews = func(serverID string, views []apps.View) { detector.Apps(serverID, views, time.Now()) }
 	logStore.OnStored = func(lines []logs.Line) { detector.Logs(lines, time.Now()) }
@@ -796,6 +797,7 @@ func serve() error {
 				c, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				dockerSvc.CheckUpdates(c, false) // asks only about images not checked for 6 hours
 				cancel()
+				calls.expiryAlerts(ctx) // certificates and domains about to expire, on WhatsApp
 			}
 		}
 	}()
