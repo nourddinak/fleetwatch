@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"fleetwatch/internal/server/auth"
@@ -12,10 +13,11 @@ import (
 )
 
 type onCallView struct {
-	Config   oncall.Config   `json:"config"`
-	People   []oncall.Person `json:"people"`
-	Now      string          `json:"now"` // person on call right now
-	Schedule []oncall.Shift  `json:"schedule"`
+	Config   oncall.Config         `json:"config"`
+	People   []oncall.Person       `json:"people"`
+	Now      string                `json:"now"` // person on call right now
+	Schedule []oncall.Shift        `json:"schedule"`
+	Cover    []oncall.CoverRequest `json:"cover"`
 }
 
 // onCallRoutes: the schedule (owner only, under /api/oncall) and the acknowledge
@@ -23,8 +25,31 @@ type onCallView struct {
 func (s *server) onCallRoutes(mux *http.ServeMux) {
 	view := func() onCallView {
 		c := s.OnCall.Config()
-		return onCallView{Config: c, People: s.OnCall.People(), Now: c.OnCall(time.Now()), Schedule: c.Schedule(time.Now(), 6)}
+		return onCallView{Config: c, People: s.OnCall.People(), Now: c.OnCall(time.Now()), Schedule: c.Schedule(time.Now(), 6), Cover: s.OnCall.CoverRequests()}
 	}
+	mux.HandleFunc("POST /api/oncall/cover", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct {
+			Person   string
+			From, To int64
+			Note     string
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if _, err := s.OnCall.AskCover(in.Person, time.UnixMilli(in.From), time.UnixMilli(in.To), strings.TrimSpace(in.Note)); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view())
+	}))
+	mux.HandleFunc("DELETE /api/oncall/cover/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err := s.OnCall.CancelCover(id, ""); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view())
+	}))
 	mux.HandleFunc("GET /api/oncall", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		writeJSON(w, http.StatusOK, view())
 	}))

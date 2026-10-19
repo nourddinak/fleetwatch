@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BellRing, CalendarDays, CalendarRange, Check, Clock, Mail, PhoneCall, Plus, Siren, Smartphone, Trash2, Users, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BellRing, CalendarDays, CalendarRange, CalendarX2, Check, Clock, Hand, Mail, MoonStar, PhoneCall, Plus, Siren, Smartphone, Trash2, Trophy, Users, UserRound, X } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { Badge, Button, Card, ErrorState, Field, IconButton, Input, LoadingState, PageHeader, SectionTitle, Segmented, Select, Spinner, Toggle, WhatsApp } from "../components/ui";
+import { Badge, Button, Card, ErrorState, Field, IconButton, Input, LoadingState, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, Toggle, WhatsApp } from "../components/ui";
+import { fmtDur } from "../mock/util";
 import { cn } from "../utils/cn";
 
 interface Person {
@@ -28,6 +29,27 @@ interface Config {
   overrides: Override[];
   start: number;
   fixedOrder?: boolean;
+  daysOff?: Override[];
+  quietNights?: boolean;
+  quietFrom: number;
+  quietTo: number;
+}
+interface CoverRequest {
+  id: number;
+  person: string;
+  from: number;
+  to: number;
+  note: string;
+  takenBy: string;
+  status: "open" | "taken" | "canceled" | "past";
+}
+interface PersonStats {
+  person: string;
+  name: string;
+  pages: number;
+  acked: number;
+  medianAckMs: number;
+  missed: number;
 }
 interface Shift {
   person: string;
@@ -40,6 +62,7 @@ interface View {
   people: Person[];
   now: string;
   schedule: Shift[];
+  cover: CoverRequest[];
 }
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -214,11 +237,26 @@ export function OnCallPage() {
                 </Select>
               </Field>
             </div>
+            <label className="flex items-center justify-between gap-3 border-t border-line pt-3 text-sm font-medium">
+              <span className="flex items-center gap-2"><MoonStar size={14} /> Quiet nights</span>
+              <Toggle checked={!!c.quietNights} onChange={(on) => set({ quietNights: on })} />
+            </label>
+            <p className="text-xs text-muted">{c.quietNights ? `Warnings opened between ${hour(c.quietFrom)} and ${hour(c.quietTo)} (${c.timeZone || "UTC"}) wait until ${hour(c.quietTo)} to page whoever is on call then. Critical incidents still wake people.` : "Off: warnings page at any hour (when they page at all)."}</p>
+            {c.quietNights && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="From"><Select value={c.quietFrom} onChange={(e) => set({ quietFrom: Number(e.target.value) })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hour(h)}</option>)}</Select></Field>
+                <Field label="Until"><Select value={c.quietTo} onChange={(e) => set({ quietTo: Number(e.target.value) })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hour(h)}</option>)}</Select></Field>
+              </div>
+            )}
           </Step>
         </div>
 
         <div className="space-y-6">
-          <Overrides c={c} people={people} name={name} set={set} />
+          <Periods title="Cover and swaps" sub="Someone else on call for a while: a holiday, a swap." icon={<CalendarRange size={15} />}
+            list={c.overrides} people={people} name={name} pick="Who covers…" add="Add cover" onChange={(overrides) => set({ overrides })} />
+          <Periods title="Days off" sub="Not on call then: the next person in the rotation takes over, and they are not paged." icon={<CalendarX2 size={15} />}
+            list={c.daysOff ?? []} people={people.filter((p) => c.rotation.includes(p.id))} name={name} pick="Who is off…" add="Add days off" onChange={(daysOff) => set({ daysOff })} />
+          <CoverRequests view={v.data} people={people.filter((p) => c.rotation.includes(p.id))} name={name} onChange={v.setData} />
           {(v.data.schedule?.length ?? 0) > 0 && (
             <Card>
               <SectionTitle icon={<CalendarDays size={15} />} title={v.data.config.fixedOrder ? "Schedule" : "Coming weeks"} />
@@ -235,6 +273,7 @@ export function OnCallPage() {
               </ol>
             </Card>
           )}
+          <WhoHandled />
         </div>
       </div>
 
@@ -284,38 +323,112 @@ function Step({ n, title, sub, children }: { n: number; title: string; sub: stri
   );
 }
 
-/** Someone else on call for a while: holiday cover, a swap. */
-function Overrides({ c, people, name, set }: { c: Config; people: Person[]; name: (id: string) => string; set: (p: Partial<Config>) => void }) {
+/** Stretches of time for someone: cover (they are on call) or days off (they are not). */
+function Periods({ title, sub, icon, list, people, name, pick, add: addLabel, onChange }: { title: string; sub: string; icon: ReactNode; list: Override[]; people: Person[]; name: (id: string) => string; pick: string; add: string; onChange: (l: Override[]) => void }) {
   const [add, setAdd] = useState<Override>({ person: "", from: 0, to: 0 });
   return (
     <Card>
-      <SectionTitle icon={<CalendarRange size={15} />} title="Cover and swaps" sub="Someone else on call for a while: a holiday, a swap." />
+      <SectionTitle icon={icon} title={title} sub={sub} />
       <div className="space-y-2">
-        {c.overrides.length === 0 && <p className="text-sm text-muted">None.</p>}
-        {c.overrides.map((o, i) => (
+        {list.length === 0 && <p className="text-sm text-muted">None.</p>}
+        {list.map((o, i) => (
           <div key={i} className="flex items-center gap-2 rounded-2xl border border-line px-3 py-2 text-sm">
             <UserRound size={13} className="shrink-0 text-muted" />
             <div className="min-w-0 flex-1">
               <div className="font-medium">{name(o.person)}</div>
               <div className="text-xs text-muted">{when(o.from)} → {when(o.to)}</div>
             </div>
-            <IconButton aria-label="Remove" onClick={() => set({ overrides: c.overrides.filter((_, k) => k !== i) })}><Trash2 size={14} /></IconButton>
+            <IconButton aria-label="Remove" onClick={() => onChange(list.filter((_, k) => k !== i))}><Trash2 size={14} /></IconButton>
           </div>
         ))}
         <div className="space-y-2 rounded-2xl bg-surface2/60 p-3">
           <Select value={add.person} onChange={(e) => setAdd({ ...add, person: e.target.value })}>
-            <option value="">Who covers…</option>
+            <option value="">{pick}</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
             <Field label="From"><Input type="datetime-local" value={toLocal(add.from)} onChange={(e) => setAdd({ ...add, from: fromLocal(e.target.value) })} /></Field>
             <Field label="Until"><Input type="datetime-local" value={toLocal(add.to)} onChange={(e) => setAdd({ ...add, to: fromLocal(e.target.value) })} /></Field>
           </div>
-          <Button size="sm" variant="secondary" disabled={!add.person || !add.from || add.to <= add.from} onClick={() => (set({ overrides: [...c.overrides, add] }), setAdd({ person: "", from: 0, to: 0 }))}>
-            <Plus size={14} /> Add cover
+          <Button size="sm" variant="secondary" disabled={!add.person || !add.from || add.to <= add.from} onClick={() => (onChange([...list, add]), setAdd({ person: "", from: 0, to: 0 }))}>
+            <Plus size={14} /> {addLabel}
           </Button>
         </div>
       </div>
+    </Card>
+  );
+}
+
+/** "Can someone cover me Saturday?": asked here or on WhatsApp; the first yes on WhatsApp takes it. */
+function CoverRequests({ view, people, name, onChange }: { view: View; people: Person[]; name: (id: string) => string; onChange: (v: View) => void }) {
+  const { toast } = useStore();
+  const [ask, setAsk] = useState({ person: "", from: 0, to: 0, note: "" });
+  const [busy, setBusy] = useState(false);
+  const list = (view.cover ?? []).filter((r) => r.status === "open" || r.status === "taken").slice(0, 6);
+  const run = async (fn: () => Promise<View>, done: string) => {
+    setBusy(true);
+    try {
+      onChange(await fn());
+      toast(done);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <SectionTitle icon={<Hand size={15} />} title="Cover requests" sub="Ask the rotation to cover someone: they get a WhatsApp message, and the first to answer “I'll cover” is put on call. Anyone can also ask the AI on WhatsApp." />
+      <div className="space-y-2">
+        {list.length === 0 && <p className="text-sm text-muted">None open.</p>}
+        {list.map((r) => (
+          <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-line px-3 py-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{name(r.person)} {r.status === "taken" ? <Badge tone="ok">covered by {name(r.takenBy)}</Badge> : <Badge tone="warn">waiting</Badge>}</div>
+              <div className="text-xs text-muted">{when(r.from)} → {when(r.to)}{r.note ? ` · ${r.note}` : ""}</div>
+            </div>
+            {r.status === "open" && <IconButton aria-label="Cancel" disabled={busy} onClick={() => run(() => api<View>("DELETE", `/api/oncall/cover/${r.id}`), "Request canceled")}><X size={14} /></IconButton>}
+          </div>
+        ))}
+        <div className="space-y-2 rounded-2xl bg-surface2/60 p-3">
+          <Select value={ask.person} onChange={(e) => setAsk({ ...ask, person: e.target.value })}>
+            <option value="">Who needs cover…</option>
+            {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+            <Field label="From"><Input type="datetime-local" value={toLocal(ask.from)} onChange={(e) => setAsk({ ...ask, from: fromLocal(e.target.value) })} /></Field>
+            <Field label="Until"><Input type="datetime-local" value={toLocal(ask.to)} onChange={(e) => setAsk({ ...ask, to: fromLocal(e.target.value) })} /></Field>
+          </div>
+          <Textarea rows={2} value={ask.note} onChange={(e) => setAsk({ ...ask, note: e.target.value })} placeholder="Why (optional)" />
+          <Button size="sm" variant="secondary" disabled={busy || !ask.person || !ask.from || ask.to <= ask.from}
+            onClick={() => run(() => api<View>("POST", "/api/oncall/cover", ask), "Asked the team").then(() => setAsk({ person: "", from: 0, to: 0, note: "" }))}>
+            <Hand size={14} /> Ask the team
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** Who acknowledged incidents, how fast, in the last 30 days. */
+function WhoHandled() {
+  const r = useApi<{ people: PersonStats[] }>("/api/reports/oncall?days=30");
+  const people = (r.data?.people ?? []).filter((p) => p.pages > 0 || p.acked > 0).sort((a, b) => b.acked - a.acked);
+  return (
+    <Card>
+      <SectionTitle icon={<Trophy size={15} />} title="Who handled what" sub="The last 30 days: incidents acknowledged after a page, and how fast." action={<Link to="/team" className="text-xs text-muted underline">Full report in Team</Link>} />
+      {people.length === 0 && <p className="text-sm text-muted">No pages yet.</p>}
+      <ul className="space-y-2">
+        {people.map((p, i) => (
+          <li key={p.person} className="flex items-center gap-3 text-sm">
+            <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold", i === 0 && p.acked > 0 ? "bg-accent text-accent-fg" : "bg-surface2")}>{initials(p.name)}</span>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{p.name}</div>
+              <div className="text-xs text-muted">{p.acked} handled · {p.pages} pages{p.missed ? ` · ${p.missed} missed` : ""}</div>
+            </div>
+            <span className="text-xs tabular-nums text-muted" title="Median time to acknowledge">{p.medianAckMs ? fmtDur(Math.max(1, Math.round(p.medianAckMs / 1000))) : "—"}</span>
+          </li>
+        ))}
+      </ul>
     </Card>
   );
 }

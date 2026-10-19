@@ -132,7 +132,7 @@ function OnCallTab() {
     }
   };
   if (!handoff.enabled || !handoff.current) {
-    return <EmptyState icon={<PhoneCall size={20} />} title="No on-call schedule" desc="The owner sets up the rotation under Settings → On-call." />;
+    return <EmptyState icon={<PhoneCall size={20} />} title="No on-call schedule" desc="The owner sets up the rotation on the On-call page." />;
   }
   return (
     <div className="space-y-6">

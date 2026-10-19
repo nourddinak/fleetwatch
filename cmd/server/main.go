@@ -409,7 +409,7 @@ func serve() error {
 	}
 	// Answered calls talk with the AI (Gemini Live), when the owner set it up.
 	aiSvc := ai.New(d, box)
-	calls := &callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, uptime: upSvc, admin: admin, people: func() []oncall.Person { return onCall.People() }}
+	calls := &callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, uptime: upSvc, admin: admin, people: func() []oncall.Person { return onCall.People() }, oncall: onCall}
 	waSvc.Talker = func(person, incident string) whatsapp.Talker { return calls.talker(person, incident) }
 	waSvc.Inbound = func(person string) whatsapp.Talker { return calls.inbound(person) }
 	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes

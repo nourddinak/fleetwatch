@@ -181,3 +181,68 @@ func TestFixedOrder(t *testing.T) {
 		t.Fatal("shifts on: the person changes weekly")
 	}
 }
+
+func TestDaysOffAndQuietNights(t *testing.T) {
+	c := Defaults()
+	c.Rotation, c.FixedOrder = []string{"a", "b", "c"}, true
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	c.DaysOff = []Override{{Person: "a", From: now.Add(time.Hour).UnixMilli(), To: now.Add(25 * time.Hour).UnixMilli()}}
+	if c.OnCall(now) != "a" || c.OnCall(now.Add(2*time.Hour)) != "b" || c.OnCall(now.Add(26*time.Hour)) != "a" {
+		t.Fatal("b covers a's day off")
+	}
+	if got := strings.Join(c.chain(now.Add(2*time.Hour)), ","); got != "b,c,owner" {
+		t.Fatal("nobody off is paged", got)
+	}
+	sched := c.Schedule(now, 1)
+	if len(sched) != 3 || sched[1].Person != "b" || !sched[1].Override || sched[2].Person != "a" {
+		t.Fatal("the schedule shows the day off", sched)
+	}
+
+	c.QuietNights = true // 22:00 → 08:00 UTC
+	if _, q := c.QuietUntil(now); q {
+		t.Fatal("noon is not quiet")
+	}
+	until, q := c.QuietUntil(time.Date(2026, 10, 14, 23, 30, 0, 0, time.UTC))
+	if !q || !until.Equal(time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)) {
+		t.Fatal("until 08:00 the next morning", until, q)
+	}
+	if until, q := c.QuietUntil(time.Date(2026, 10, 15, 3, 0, 0, 0, time.UTC)); !q || until.Hour() != 8 || until.Day() != 15 {
+		t.Fatal("after midnight, until 08:00 that day", until)
+	}
+}
+
+func TestCoverRequests(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, make([]byte, 32))
+	s.People = func() []Person { return []Person{{ID: Owner, Name: "Owner"}, {ID: "ana"}, {ID: "ben"}, {ID: "cy"}} }
+	if _, err := s.Save(Config{Enabled: true, Rotation: []string{"ana", "ben"}, HandoverDay: 1, HandoverHour: 9, TimeZone: "UTC", EscalateAfterMin: 10, Severity: "critical"}); err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan CoverRequest, 1)
+	s.OnCoverAsked = func(r CoverRequest) { asked <- r }
+	from := time.Now().Add(48 * time.Hour)
+	r, err := s.AskCover("ana", from, from.Add(24*time.Hour), "a wedding")
+	if err != nil || r.Status != "open" || (<-asked).ID != r.ID {
+		t.Fatal(r, err)
+	}
+	if _, err := s.TakeCover(r.ID, "ana"); err == nil {
+		t.Fatal("one's own request")
+	}
+	if r, err = s.TakeCover(r.ID, "cy"); err != nil || r.Status != "taken" || r.TakenBy != "cy" {
+		t.Fatal(r, err)
+	}
+	if s.Config().OnCall(from.Add(time.Hour)) != "cy" {
+		t.Fatal("the cover is an override")
+	}
+	if _, err := s.TakeCover(r.ID, "ben"); err == nil {
+		t.Fatal("taken twice")
+	}
+	r2, _ := s.AskCover("ben", from, from.Add(time.Hour), "")
+	if s.CancelCover(r2.ID, "ana") == nil || s.CancelCover(r2.ID, "ben") != nil || s.CoverRequests()[0].Status != "canceled" {
+		t.Fatal("only its person (or the owner) cancels")
+	}
+}

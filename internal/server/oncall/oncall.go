@@ -48,10 +48,18 @@ type Config struct {
 	// FixedOrder turns weekly shifts off: Rotation[0] is always on call, and the others
 	// are paged in that order (overrides still apply).
 	FixedOrder bool `json:"fixedOrder"`
+	// DaysOff are when someone cannot be on call (holidays): the next person in the
+	// rotation takes their place, and they are not paged.
+	DaysOff []Override `json:"daysOff"`
+	// QuietNights: warnings opened between QuietFrom and QuietTo (hours, TimeZone) wait
+	// until QuietTo to page; critical incidents still wake people.
+	QuietNights bool `json:"quietNights"`
+	QuietFrom   int  `json:"quietFrom"`
+	QuietTo     int  `json:"quietTo"`
 }
 
 func Defaults() Config {
-	return Config{HandoverDay: 1, HandoverHour: 9, TimeZone: "UTC", EscalateAfterMin: 10, Severity: "critical", Rotation: []string{}, Overrides: []Override{}}
+	return Config{HandoverDay: 1, HandoverHour: 9, TimeZone: "UTC", EscalateAfterMin: 10, Severity: "critical", Rotation: []string{}, Overrides: []Override{}, DaysOff: []Override{}, QuietFrom: 22, QuietTo: 8}
 }
 
 // Person is someone who can be on call.
@@ -91,6 +99,8 @@ type Service struct {
 	Now       func() time.Time
 	// OnHandover tells the person coming on call (with the note the last one left).
 	OnHandover func(from, to Person, note *Note, openIncidents int)
+	// OnCoverAsked tells the team about a cover request; OnCoverTaken, who took it.
+	OnCoverAsked, OnCoverTaken func(CoverRequest)
 
 	key       []byte
 	mu        sync.Mutex
@@ -177,6 +187,21 @@ func (s *Service) Save(c Config) (Config, error) {
 			return c, valid.Error("each override needs a person and a time range")
 		}
 	}
+	if c.DaysOff == nil {
+		c.DaysOff = []Override{}
+	}
+	c.DaysOff = slices.DeleteFunc(c.DaysOff, func(o Override) bool { return o.To < now-week.Milliseconds() })
+	if len(c.DaysOff) > 100 {
+		return c, valid.Error("too many days off")
+	}
+	for _, o := range c.DaysOff {
+		if !known[o.Person] || o.From <= 0 || o.To <= o.From {
+			return c, valid.Error("each day off needs a person and a time range")
+		}
+	}
+	if c.QuietFrom < 0 || c.QuietFrom > 23 || c.QuietTo < 0 || c.QuietTo > 23 || (c.QuietNights && c.QuietFrom == c.QuietTo) {
+		return c, valid.Error("quiet nights need a start and an end hour")
+	}
 	old := s.Config()
 	// A new rotation starts with its first person in the current week.
 	if !slices.Equal(old.Rotation, c.Rotation) || old.HandoverDay != c.HandoverDay || old.HandoverHour != c.HandoverHour || old.TimeZone != c.TimeZone || old.Start == 0 {
@@ -210,41 +235,75 @@ func (c Config) OnCall(t time.Time) string {
 		}
 	}
 	p, _, _ := c.rotationAt(t)
-	return p
+	if !c.off(p, ms) {
+		return p
+	}
+	i := slices.Index(c.Rotation, p)
+	for k := 1; k < len(c.Rotation); k++ {
+		if q := c.Rotation[(i+k)%len(c.Rotation)]; !c.off(q, ms) {
+			return q
+		}
+	}
+	return p // everyone is off: the rotation's person still
 }
 
-// Schedule lists the shifts of the coming weeks, overrides cut in.
+// off reports whether someone has a day off at ms.
+func (c Config) off(person string, ms int64) bool {
+	for _, o := range c.DaysOff {
+		if o.Person == person && o.From <= ms && ms < o.To {
+			return true
+		}
+	}
+	return false
+}
+
+// QuietUntil is when a quiet night running at t ends (false when none is).
+func (c Config) QuietUntil(t time.Time) (time.Time, bool) {
+	if !c.QuietNights || c.QuietFrom == c.QuietTo {
+		return time.Time{}, false
+	}
+	l := t.In(c.loc())
+	h := l.Hour()
+	in := (c.QuietFrom < c.QuietTo && h >= c.QuietFrom && h < c.QuietTo) || (c.QuietFrom > c.QuietTo && (h >= c.QuietFrom || h < c.QuietTo))
+	if !in {
+		return time.Time{}, false
+	}
+	end := time.Date(l.Year(), l.Month(), l.Day(), c.QuietTo, 0, 0, 0, l.Location())
+	if !end.After(l) {
+		end = end.AddDate(0, 0, 1)
+	}
+	return end, true
+}
+
+// Schedule lists the shifts of the coming weeks, overrides and days off cut in.
 func (c Config) Schedule(from time.Time, weeks int) []Shift {
 	out := []Shift{}
 	t := from
 	end := from.AddDate(0, 0, 7*weeks)
 	for t.Before(end) && len(out) < 200 {
 		ms := t.UnixMilli()
-		var shift Shift
-		found := false
-		for i := len(c.Overrides) - 1; i >= 0 && !found; i-- {
-			if o := c.Overrides[i]; o.From <= ms && ms < o.To {
-				shift, found = Shift{Person: o.Person, From: ms, To: o.To, Override: true}, true
-			}
+		p := c.OnCall(t)
+		rot, _, to := c.rotationAt(t)
+		if p == "" {
+			break
 		}
-		if !found {
-			p, _, to := c.rotationAt(t)
-			if p == "" {
-				break
-			}
-			shift = Shift{Person: p, From: ms, To: to.UnixMilli()}
-			for _, o := range c.Overrides { // an override starting during this shift cuts it short
-				if o.From > ms && o.From < shift.To {
-					shift.To = o.From
+		next := to.UnixMilli()
+		for _, list := range [][]Override{c.Overrides, c.DaysOff} { // the next change cuts this shift
+			for _, o := range list {
+				for _, edge := range []int64{o.From, o.To} {
+					if edge > ms && edge < next {
+						next = edge
+					}
 				}
 			}
 		}
+		shift := Shift{Person: p, From: ms, To: next, Override: p != rot}
 		if n := len(out); n > 0 && out[n-1].Person == shift.Person && out[n-1].Override == shift.Override && out[n-1].To == shift.From {
 			out[n-1].To = shift.To
 		} else {
 			out = append(out, shift)
 		}
-		t = time.UnixMilli(shift.To)
+		t = time.UnixMilli(next)
 	}
 	return out
 }
@@ -264,6 +323,8 @@ func (c Config) chain(t time.Time) []string {
 	} else {
 		out = append(out, c.Rotation...)
 	}
+	ms := t.UnixMilli()
+	out = slices.DeleteFunc(out, func(id string) bool { return id != first && c.off(id, ms) })
 	out = append(out, Owner)
 	return slices.Compact(dedupe(out))
 }
@@ -294,9 +355,13 @@ func (s *Service) OnEvent(ev incidents.Event) {
 	if s.Muted != nil && s.Muted(x.ServerID, app) {
 		return
 	}
+	at, chain := s.Now(), c.chain(s.Now())
+	if until, quiet := c.QuietUntil(at); quiet && x.Severity != "critical" {
+		at, chain = until, nil // whoever is on call in the morning
+	}
 	s.mu.Lock()
 	if _, ok := s.queue[x.ID]; !ok {
-		s.queue[x.ID] = &step{incident: x.ID, chain: c.chain(s.Now()), at: s.Now()}
+		s.queue[x.ID] = &step{incident: x.ID, chain: chain, at: at}
 	}
 	s.mu.Unlock()
 	go s.tick(context.Background())
@@ -339,6 +404,9 @@ func (s *Service) tick(ctx context.Context) {
 		}
 		if now.Before(st.at) {
 			continue
+		}
+		if st.chain == nil {
+			st.chain = c.chain(now)
 		}
 		if st.next >= len(st.chain) {
 			delete(s.queue, id) // everyone was paged
