@@ -771,13 +771,16 @@ func serve() error {
 			}
 		}()
 	}
+	unusual := &anomaly.Service{DB: d, Incidents: incStore, ServerIDs: serverIDs, Name: serverName, Now: time.Now,
+		Enabled: func() bool { return detector.Rules().Anomalies }}
+	detector.Learned = unusual.Learned // "learned limits only" needs to know which servers are learned
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -828,8 +831,6 @@ func serve() error {
 			admin.Tick(connected)
 		}
 	}()
-	unusual := &anomaly.Service{DB: d, Incidents: incStore, ServerIDs: serverIDs, Name: serverName, Now: time.Now,
-		Enabled: func() bool { return detector.Rules().Anomalies }}
 	go func() {
 		for {
 			select {

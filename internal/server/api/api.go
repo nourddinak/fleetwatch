@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"fleetwatch/internal/server/ai"
+	"fleetwatch/internal/server/anomaly"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
@@ -49,6 +50,7 @@ import (
 type Deps struct {
 	UI         fs.FS
 	DataDir    string // OPS_DATA_DIR, for the dashboard's own storage use
+	Anomaly    *anomaly.Service
 	Version    string
 	DB         *sql.DB
 	Auth       *auth.Service
@@ -102,6 +104,14 @@ func New(d Deps) http.Handler {
 	s.memberRoutes(mux)
 	s.activityRoutes(mux)
 	mux.HandleFunc("GET /api/system/usage", s.authed(s.usage))
+	// What a server normally does at this hour (learned): the server page shows it.
+	mux.HandleFunc("GET /api/servers/{id}/normal", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		out := map[string]anomaly.Range{}
+		if s.Anomaly != nil {
+			out = s.Anomaly.Normal(r.PathValue("id"))
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
 	mux.HandleFunc("POST /api/system/cleanup", s.authed(s.cleanup))
 	if d.Fleet != nil {
 		s.serverRoutes(mux)

@@ -33,6 +33,9 @@ type Rules struct {
 	SSLWarnDays        int  `json:"sslWarnDays"`    // certificate expiry warning
 	DomainWarnDays     int  `json:"domainWarnDays"` // domain registration expiry warning
 	Anomalies          bool `json:"anomalies"`      // unusual CPU, memory or traffic for the time of day
+	// LearnedOnly: once a server's normal is learned, its CPU and memory alerts come only
+	// from that (Anomalies), not from the fixed thresholds.
+	LearnedOnly bool `json:"learnedOnly"`
 }
 
 func DefaultRules() Rules {
@@ -82,6 +85,8 @@ type serverState struct {
 
 // Detector turns observations into Ensure/Record/Clear calls on the store.
 type Detector struct {
+	// Learned reports whether a server's normal CPU and memory are known (see Rules.LearnedOnly).
+	Learned    func(serverID string) bool
 	Store      *Store
 	db         *sql.DB
 	Connected  func(serverID string) bool
@@ -179,6 +184,12 @@ func (d *Detector) ServerSample(serverID string, s metrics.Sample, now time.Time
 	cpuFire := track(&st.cpuSince, s.CPU, r.CPUThreshold, r.CPUMinutes, now)
 	ramFire := track(&st.ramSince, s.Mem, r.RAMThreshold, r.RAMMinutes, now)
 	d.mu.Unlock()
+	if r.LearnedOnly && r.Anomalies && d.Learned != nil && d.Learned(serverID) && cpuFire == 1 {
+		cpuFire = 0 // its own normal decides, not the fixed limit
+	}
+	if r.LearnedOnly && r.Anomalies && d.Learned != nil && d.Learned(serverID) && ramFire == 1 {
+		ramFire = 0
+	}
 	name := d.ServerName(serverID)
 	for _, c := range []struct {
 		typ, label string

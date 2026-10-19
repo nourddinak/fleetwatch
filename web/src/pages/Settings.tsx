@@ -779,6 +779,10 @@ export function IncidentRulesSettings() {
         ))}
         <ToggleRow label="Unusual activity" desc="Learns what each server normally does at each hour over two weeks, and opens “Unusual Activity” when CPU, memory or network traffic is far above that (e.g. 80% CPU at 3am on a server that idles at 10%)."
           checked={!!f.anomalies} onChange={(v) => setF({ ...f, anomalies: v })} />
+        {!!f.anomalies && (
+          <ToggleRow label="Learned limits only" desc="Once a server's normal CPU and memory are learned (about five days), alert only when it is unusual for that server: the fixed CPU and RAM limits above then only apply to servers still being learned. Disk keeps its fixed limit."
+            checked={!!f.learnedOnly} onChange={(v) => setF({ ...f, learnedOnly: v })} />
+        )}
       </div>
       <SaveBar dirty={JSON.stringify(f) !== JSON.stringify(rules.data)} busy={busy} onSave={save} onReset={() => setF(rules.data)} />
     </Card>

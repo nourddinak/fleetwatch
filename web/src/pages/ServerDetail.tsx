@@ -100,6 +100,8 @@ export function ServerOverview() {
   const { apps, incidents } = useStore();
   const events = useApi<ServerEvent[]>(`/api/servers/${s.id}/events`);
   const fc = useApi<Forecasts>("/api/forecasts").data?.servers?.[s.id];
+  const normal = useApi<Record<string, { low: number; high: number; alert: number }>>(`/api/servers/${s.id}/normal`).data;
+  const usual = (k: string) => (normal?.[k] ? ` · usually ${Math.round(normal[k].low)}–${Math.round(normal[k].high)}% now` : "");
   const c = serverCounts(s.id, apps, incidents);
   const dc = s.status === "disconnected";
   if (s.status === "pending")
@@ -115,8 +117,8 @@ export function ServerOverview() {
         </div>
       )}
       <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", dc && "opacity-60")}>
-        <MetricCard label="CPU" value={s.cpu.toFixed(1)} unit="%" progress={s.cpu} icon={<Cpu size={14} />} tone={levelTone(s.cpu) === "ok" ? undefined : levelTone(s.cpu)} sub={`${s.cpuCores} cores · ${s.arch}`} />
-        <MetricCard label="RAM" value={s.ram.toFixed(1)} unit="%" progress={s.ram} icon={<MemoryStick size={14} />} sub={`${((s.ramGb * s.ram) / 100).toFixed(1)} / ${s.ramGb} GB · swap ${s.swap.toFixed(0)}% of ${s.swapGb} GB`} />
+        <MetricCard label="CPU" value={s.cpu.toFixed(1)} unit="%" progress={s.cpu} icon={<Cpu size={14} />} tone={levelTone(s.cpu) === "ok" ? undefined : levelTone(s.cpu)} sub={`${s.cpuCores} cores · ${s.arch}${usual("cpu")}`} />
+        <MetricCard label="RAM" value={s.ram.toFixed(1)} unit="%" progress={s.ram} icon={<MemoryStick size={14} />} sub={`${((s.ramGb * s.ram) / 100).toFixed(1)} / ${s.ramGb} GB · swap ${s.swap.toFixed(0)}% of ${s.swapGb} GB${usual("mem")}`} />
         <MetricCard label="Disk" value={s.disk.toFixed(1)} unit="%" progress={s.disk} icon={<HardDrive size={14} />} tone={levelTone(s.disk, 80, 90) === "ok" ? undefined : levelTone(s.disk, 80, 90)} sub={fc ? `${Math.round((s.diskGb * s.disk) / 100)} / ${s.diskGb} GB · full in ~${fullIn(fc.fullDays)}` : `${Math.round((s.diskGb * s.disk) / 100)} / ${s.diskGb} GB`} />
         <MetricCard label="Load average" value={s.load[0].toFixed(2)} sub={`5m ${s.load[1]} · 15m ${s.load[2]}`} icon={<Activity size={14} />} />
         <MetricCard label="Network" value={`↓${s.netRx.toFixed(1)}`} unit="Mbps" sub={`↑ ${s.netTx.toFixed(1)} Mbps`} icon={<Network size={14} />} />

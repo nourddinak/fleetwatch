@@ -331,3 +331,28 @@ func TestIntendedRestartsNotCounted(t *testing.T) {
 		t.Fatal("restarts asked for counted as a crash loop")
 	}
 }
+
+// "Learned limits only": a learned server's CPU is judged by its own normal; a new one
+// still by the fixed limit.
+func TestLearnedOnly(t *testing.T) {
+	e := setup(t)
+	r := e.d.Rules()
+	r.LearnedOnly = true
+	if err := e.d.SaveRules(r); err != nil {
+		t.Fatal(err)
+	}
+	learned := true
+	e.d.Learned = func(string) bool { return learned }
+	start := time.Now()
+	for m := 0; m <= 5; m++ {
+		e.d.ServerSample("s1", metrics.Sample{CPU: 97, Mem: 40, Disk: 50}, start.Add(time.Duration(m)*time.Minute))
+	}
+	if _, ok := e.open(t)["high_cpu"]; ok {
+		t.Fatal("the fixed limit fired for a learned server")
+	}
+	learned = false
+	e.d.ServerSample("s1", metrics.Sample{CPU: 97, Mem: 40, Disk: 50}, start.Add(6*time.Minute))
+	if _, ok := e.open(t)["high_cpu"]; !ok {
+		t.Fatal("a server not learned yet keeps the fixed limit")
+	}
+}

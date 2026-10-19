@@ -61,6 +61,13 @@ func TestCheck(t *testing.T) {
 	if len(list) != 1 || list[0].TypeKey != "anomaly" || list[0].Title != "Unusual CPU on VPS-1: 85%" {
 		t.Fatalf("%+v", list)
 	}
+	n := s.Normal("s1")
+	if r := n["cpu"]; r.Mean != 10 || r.Low != 10 || r.High != 10 || r.Alert != 40 || n["mem"].Mean != 30 || !s.Learned("s1") {
+		t.Fatalf("the normal range: %+v", n)
+	}
+	if s.Learned("s2") || len(s.Normal("s2")) != 0 {
+		t.Fatal("a server without history is not learned")
+	}
 	on = false
 	s.Check()
 	if list, _ := inc.List(incidents.Filter{Status: "open"}); len(list) != 0 {
