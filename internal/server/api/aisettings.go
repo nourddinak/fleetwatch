@@ -18,6 +18,9 @@ func (s *server) aiRoutes(mux *http.ServeMux) {
 			} else {
 				out["error"] = err.Error()
 			}
+			if chats, err := s.AI.ChatModels(r.Context()); err == nil {
+				out["chatModels"] = chats
+			}
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))

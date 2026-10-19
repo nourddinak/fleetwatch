@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -204,5 +205,81 @@ func TestBooster(t *testing.T) {
 		if f := b.apply(frame(0.004)); f[0] == 0 {
 			t.Fatal("speech muted")
 		}
+	}
+}
+
+func TestPickChat(t *testing.T) {
+	ids := []string{"gemini-2.5-flash", "gemini-3.1-flash-preview", "gemini-3.1-flash", "gemini-3.1-flash-lite", "gemini-3.8-live",
+		"gemini-3.1-flash-image", "gemini-2.5-pro", "text-embedding-004"}
+	if got := pickChat(ids); got != "gemini-3.1-flash" {
+		t.Fatal(got)
+	}
+	if got := pickChat([]string{"gemini-2.5-pro"}); got != "" {
+		t.Fatal(got)
+	}
+}
+
+func TestChatReply(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1beta/models":
+			w.Write([]byte(`{"models":[{"name":"models/gemini-3.8-live","supportedGenerationMethods":["bidiGenerateContent"]},` +
+				`{"name":"models/gemini-3.1-flash","supportedGenerationMethods":["generateContent"]}]}`))
+		case r.URL.Path == "/v1beta/models/gemini-3.1-flash:generateContent":
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			bodies = append(bodies, string(b))
+			n := len(bodies)
+			mu.Unlock()
+			if n%2 == 1 { // first a tool call, with a thought signature to keep
+				w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"list_servers","args":{}},"thoughtSignature":"sig1"}]}}]}`))
+				return
+			}
+			w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"thinking","thought":true},{"text":"web-1 is fine."}]}}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	API = srv.URL
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	s := New(d, box)
+	ctx := context.Background()
+	if st, err := s.SetKey(ctx, "k"); err != nil || st.Config.ChatModel != "gemini-3.1-flash" {
+		t.Fatal(st, err)
+	}
+	ran := 0
+	c := &Chat{Instructions: "be brief", Tools: []Tool{{Name: "list_servers", Run: func(context.Context, map[string]any) (any, error) { ran++; return "web-1 ok", nil }}}}
+	reply, err := s.Reply(ctx, c, "status?", nil, "")
+	if err != nil || reply != "web-1 is fine." || ran != 1 {
+		t.Fatal(reply, err, ran)
+	}
+	if !strings.Contains(bodies[1], "sig1") || !strings.Contains(bodies[1], "web-1 ok") || !strings.Contains(bodies[1], "be brief") {
+		t.Fatal("the second request must carry the call, its signature and the result:", bodies[1])
+	}
+	if _, err := s.Reply(ctx, c, "", []byte("OggS"), "audio/ogg"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[2], `"mimeType":"audio/ogg"`) || !strings.Contains(bodies[2], "status?") {
+		t.Fatal("a voice note goes as audio, after the history:", bodies[2])
+	}
+	for range 12 {
+		s.Reply(ctx, c, "again", nil, "")
+	}
+	if strings.Contains(string(c.contents[0]), "status?") || strings.Contains(strings.Join(func() []string {
+		var out []string
+		for _, r := range c.contents {
+			out = append(out, string(r))
+		}
+		return out
+	}(), ""), "T2dnUw") {
+		t.Fatal("old turns and voice notes must not be kept")
 	}
 }

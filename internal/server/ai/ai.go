@@ -40,6 +40,7 @@ type Config struct {
 	Model          string `json:"model"`
 	Voice          string `json:"voice"`
 	MonthlyMinutes int    `json:"monthlyMinutes"` // call minutes a month; 0 = no calls with the AI
+	ChatModel      string `json:"chatModel"`      // WhatsApp messages; "" = the newest flash model
 }
 
 // Status is what the dashboard shows.
@@ -121,6 +122,11 @@ func (s *Service) Remaining() time.Duration {
 
 // liveModels lists the models the key can hold live conversations with.
 func liveModels(ctx context.Context, key string) ([]string, error) {
+	return modelsWith(ctx, key, "bidiGenerateContent")
+}
+
+// modelsWith lists the models the key can use with a generation method.
+func modelsWith(ctx context.Context, key, method string) ([]string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, API+"/v1beta/models?pageSize=1000", nil)
 	req.Header.Set("x-goog-api-key", key)
 	resp, err := client.Do(req)
@@ -145,13 +151,13 @@ func liveModels(ctx context.Context, key string) ([]string, error) {
 		}
 		return nil, errors.New("Gemini: " + strings.TrimSuffix(msg, "."))
 	}
-	var live []string
+	var ids []string
 	for _, m := range out.Models {
-		if slices.Contains(m.Methods, "bidiGenerateContent") {
-			live = append(live, strings.TrimPrefix(m.Name, "models/"))
+		if slices.Contains(m.Methods, method) {
+			ids = append(ids, strings.TrimPrefix(m.Name, "models/"))
 		}
 	}
-	return live, nil
+	return ids, nil
 }
 
 // ModelInfo is a live model as the dashboard offers it for calls.
@@ -235,6 +241,9 @@ func (s *Service) SetKey(ctx context.Context, key string) (Status, error) {
 	if c.Voice == "" {
 		c.Voice = Voices[0]
 	}
+	if chats, err := chatModels(ctx, key); err == nil && !slices.Contains(chats, c.ChatModel) {
+		c.ChatModel = pickChat(chats)
+	}
 	if c.MonthlyMinutes == 0 {
 		c.MonthlyMinutes = 60
 	}
@@ -259,6 +268,9 @@ func (s *Service) SetConfig(ctx context.Context, c Config) (Status, error) {
 	if ids, err := liveModels(ctx, key); err == nil && !slices.ContainsFunc(usable(ids), func(m ModelInfo) bool { return m.ID == c.Model }) {
 		return Status{}, valid.Error("this key cannot hold calls with " + c.Model)
 	}
+	if ids, err := chatModels(ctx, key); err == nil && c.ChatModel != "" && !slices.Contains(ids, c.ChatModel) {
+		return Status{}, valid.Error("this key cannot write with " + c.ChatModel)
+	}
 	if err := s.save(c, key); err != nil {
 		return Status{}, err
 	}
@@ -275,4 +287,26 @@ func (s *Service) Clear() error {
 func liveURL(key string) string {
 	u := strings.Replace(API, "http", "ws", 1) + "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 	return u + "?key=" + url.QueryEscape(key)
+}
+
+// ChatModels lists the text models of the saved key, the one chats would pick first.
+func (s *Service) ChatModels(ctx context.Context) ([]string, error) {
+	_, key, ok := s.load()
+	if !ok {
+		return nil, valid.Error("add a Gemini API key first")
+	}
+	ids, err := chatModels(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var flash []string
+	if p := pickChat(ids); p != "" {
+		flash = append(flash, p)
+	}
+	for _, id := range ids {
+		if strings.Contains(id, "gemini") && !strings.Contains(id, "embedding") && !slices.Contains(flash, id) {
+			flash = append(flash, id)
+		}
+	}
+	return flash, nil
 }

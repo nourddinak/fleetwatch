@@ -412,6 +412,7 @@ func serve() error {
 	calls := &callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, uptime: upSvc, admin: admin, people: func() []oncall.Person { return onCall.People() }}
 	waSvc.Talker = func(person, incident string) whatsapp.Talker { return calls.talker(person, incident) }
 	waSvc.Inbound = func(person string) whatsapp.Talker { return calls.inbound(person) }
+	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

@@ -72,7 +72,7 @@ export function WhatsAppSetup() {
     <>
       <Card>
         <SectionTitle icon={<WhatsApp size={18} />} title="Your WhatsApp"
-          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message, and the team can call it to ask the AI about anything (only from the numbers saved below; other calls are declined)."
+          sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message, and the team can call it or write to it (voice notes too) to ask the AI about anything: only from the numbers saved below, others get no answer."
           action={st.linked ? <Badge tone={st.connected ? "ok" : "warn"} dot>{st.connected ? "Connected" : "Reconnecting"}</Badge> : undefined} />
         {st.linked ? (
           <div className="flex flex-wrap items-center gap-3">
@@ -223,7 +223,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
       <SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="Where on-call alerts reach you on WhatsApp, in which language, and when not to." />
       {data.data.number && (
         <p className="mb-1 flex items-center gap-2 rounded-xl bg-surface2/60 p-3 text-xs text-muted"><PhoneCall size={13} className="shrink-0" />
-          <span>Call <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp, from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Calls from other numbers are declined.</span></p>
+          <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Other numbers get no answer.</span></p>
       )}
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
     </Card>

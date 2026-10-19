@@ -73,6 +73,9 @@ type Service struct {
 	// Inbound answers a call a known person makes to the linked number; nil, or a nil
 	// Talker, declines it. Calls from numbers nobody saved are always declined.
 	Inbound func(person string) Talker
+	// OnMessage answers a team member's message (text, or a voice note's audio and
+	// type); "" sends nothing. Messages from numbers nobody saved never reach it.
+	OnMessage func(ctx context.Context, person, text string, audio []byte, mime string) string
 	// Alert tells the owner something went wrong with the link (the watchdog).
 	Alert func(title, body, severity string)
 
@@ -263,6 +266,13 @@ func (s *Service) watchQR(ch <-chan whatsmeow.QRChannelItem) {
 }
 
 func (s *Service) onEvent(evt any) {
+	if m, ok := evt.(*events.Message); ok {
+		s.mu.Lock()
+		cl := s.client
+		s.mu.Unlock()
+		go s.onMessage(cl, m)
+		return
+	}
 	switch evt.(type) {
 	case *events.PairSuccess:
 		s.mu.Lock()

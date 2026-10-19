@@ -633,3 +633,48 @@ func (g *voiceActions) status(ctx context.Context) (any, error) {
 	}
 	return r.what + " is still running: say so, and offer to check again", nil
 }
+
+// chats are the team's WhatsApp conversations with the AI, by person.
+var (
+	chatsMu sync.Mutex
+	chats   = map[string]*ai.Chat{}
+)
+
+const chatIdle = 30 * time.Minute // a quiet conversation starts over
+
+// message answers a team member's WhatsApp message with the AI.
+func (d *callDeps) message(ctx context.Context, person, text string, audio []byte, mime string) string {
+	if !d.ai.Status().Configured {
+		return "" // no AI: nothing answers, as before
+	}
+	name := person
+	for _, p := range d.people() {
+		if p.ID == person {
+			name = p.Name
+		}
+	}
+	chatsMu.Lock()
+	c := chats[person]
+	if c == nil || c.Idle(time.Now()) > chatIdle {
+		wp, _ := d.wa.PersonOf(person)
+		lang := "Answer in the language they write in."
+		if n, ok := whatsapp.LanguageNames[wp.Language]; ok {
+			lang = "Answer in " + n + ", or in the language they write in if it is another."
+		}
+		c = &ai.Chat{Tools: d.toolkit(person, name, ""), Instructions: "You are Fleetwatch's assistant on WhatsApp, chatting with " + name +
+			" about their servers, apps, sites, incidents, logs, uptime and security. They may also send voice notes: answer what they say.\n" +
+			`- This is a chat: short, plain answers; a few short lines or a small list is fine, no markdown headings or tables.
+- Use the tools for every fact. Never invent numbers or events; if a tool has nothing, say so.
+- You can start, stop, restart or reload an app: call propose_action, then ask them to reply "yes"; only after their yes, call do_action, then action_status, and tell them how it went. If a tool refuses, tell them why.
+- When they say they will handle an incident, are on it, or will check it, call acknowledge for it.
+` + lang}
+		chats[person] = c
+	}
+	chatsMu.Unlock()
+	reply, err := d.ai.Reply(ctx, c, text, audio, mime)
+	if err != nil {
+		slog.Warn("whatsapp chat", "person", name, "err", err)
+		return "Sorry, I could not answer that: " + err.Error()
+	}
+	return reply
+}

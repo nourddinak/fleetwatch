@@ -9,6 +9,7 @@ interface AIConfig {
   model: string;
   voice: string;
   monthlyMinutes: number;
+  chatModel: string;
 }
 interface AIStatus {
   configured: boolean;
@@ -20,7 +21,7 @@ interface AIStatus {
 /** Integrations → AI: the Gemini key, live model, voice and monthly cap of on-call calls. */
 export function AISetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: AIStatus; models: { id: string; note: string; recommended?: boolean }[]; error?: string; lastCall?: LastCall | null }>("/api/integrations/ai");
+  const data = useApi<{ status: AIStatus; models: { id: string; note: string; recommended?: boolean }[]; error?: string; lastCall?: LastCall | null; chatModels?: string[] }>("/api/integrations/ai");
   const [key, setKey] = useState("");
   const [f, setF] = useState<AIConfig | null>(null);
   const [busy, setBusy] = useState("");
@@ -79,6 +80,11 @@ export function AISetup() {
                 <Input type="number" min={0} value={f.monthlyMinutes} onChange={(e) => setF({ ...f, monthlyMinutes: Number(e.target.value) })} />
               </Field>
             </div>
+            <Field label="Chat model (WhatsApp messages)" hint="Answers what the team writes or sends as voice notes to the WhatsApp number. Not counted in the call minutes.">
+              <Select value={f.chatModel} onChange={(e) => setF({ ...f, chatModel: e.target.value })} className="sm:w-80">
+                {(data.data!.chatModels?.length ? data.data!.chatModels : [f.chatModel]).map((m, i) => <option key={m} value={m}>{m}{i === 0 ? " (recommended)" : ""}</option>)}
+              </Select>
+            </Field>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs text-muted"><span className="inline-flex items-center gap-1"><Gauge size={12} /> This month</span><span>{used} of {f.monthlyMinutes} minutes</span></div>
               <div className="h-1.5 overflow-hidden rounded-full bg-surface2"><div className="h-full rounded-full bg-[var(--chart1)]" style={{ width: `${Math.min(100, f.monthlyMinutes ? (used / f.monthlyMinutes) * 100 : 0)}%` }} /></div>
