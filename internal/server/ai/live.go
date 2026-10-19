@@ -61,6 +61,9 @@ type Talk struct {
 	Say          func([]float32)  // queue 16 kHz audio for the person
 	Hush         func()           // drop the queued audio: they talked over it
 	MaxLength    time.Duration
+	// ProtectOpening lets the AI's first turn play out whole: talking over it does not
+	// cut it off (an on-call call's explanation), later turns can be.
+	ProtectOpening bool
 }
 
 // Converse runs a conversation until the AI ends it, the person hangs up (In closes)
@@ -109,7 +112,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		// Half a second of quiet ends their turn, so answers come quickly (speech is
 		// still detected as eagerly as Gemini does by default).
 		"realtimeInputConfig": map[string]any{"automaticActivityDetection": map[string]any{
-			"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 450}},
+			"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 450}, "activityHandling": activity(t.ProtectOpening)},
 	}}); err != nil {
 		return nil, 0, err
 	}
@@ -132,6 +135,10 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	hungUp := false
 	var lastSpeech time.Time // when they last spoke, to time the replies
 	interrupts := 0
+	var protectUntil time.Time // talking over the AI does not cut it off before then
+	if t.ProtectOpening {
+		protectUntil = start.Add(time.Hour) // until the opening is known to have played
+	}
 	go func() {
 		run := 0 // frames of their speech in a row
 		for frame := range t.In {
@@ -143,7 +150,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			} else {
 				run = 0
 			}
-			if run == bargeFrames { // they talk over the AI: what it was still going to say is dropped
+			if run == bargeFrames && !s.Now().Before(protectUntil) { // they talk over the AI: what it was still going to say is dropped
 				t.Hush()
 				interrupts++
 			}
@@ -200,6 +207,8 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 	var replies []time.Duration // from the end of their speech to the AI's first sound
 	turnEnded := start          // when the AI's last turn ended
 	newTurn := true
+	var firstSound time.Time // when the AI started speaking, for the opening's length
+	openingDone := false
 	for {
 		_, raw, err := ws.Read(ctx)
 		if err != nil {
@@ -248,6 +257,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 						continue
 					}
 					if b, err := base64.StdEncoding.DecodeString(p.InlineData.Data); err == nil {
+						if firstSound.IsZero() {
+							firstSound = s.Now()
+						}
 						if newTurn {
 							newTurn = false
 							boostMu.Lock()
@@ -278,6 +290,14 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			}
 			if sc.TurnComplete {
 				newTurn, turnEnded = true, s.Now()
+				if !openingDone && !firstSound.IsZero() { // the opening is protected while it plays
+					openingDone = true
+					boostMu.Lock()
+					if t.ProtectOpening {
+						protectUntil = firstSound.Add(spoken + 300*time.Millisecond)
+					}
+					boostMu.Unlock()
+				}
 				if ending {
 					select { // let the goodbye play out
 					case <-time.After(spoken + 500*time.Millisecond):
@@ -483,4 +503,14 @@ func (b *booster) apply(f []float32) []float32 {
 		out[i] = float32(max(-1, min(1, float64(v)*b.gain)))
 	}
 	return out
+}
+
+// activity is how Gemini treats speech over its answers: with a protected opening it
+// keeps answering (what they said is heard after), otherwise it stops at once. Either
+// way the dashboard drops queued audio itself (see bargeFrames).
+func activity(protect bool) string {
+	if protect {
+		return "NO_INTERRUPTION"
+	}
+	return "START_OF_ACTIVITY_INTERRUPTS"
 }

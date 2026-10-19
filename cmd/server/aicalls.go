@@ -76,10 +76,10 @@ func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talk
 		lang = "Speak " + n + ". If they switch to another language, switch with them."
 	}
 	rules := `- This is a phone call: answer at once, keep every answer short and plain, no lists, no markdown, no IDs read out unless asked.
-- Before you call a tool, say two or three words first (like "one moment" or "let me check") so they are not left in silence.
+- Before you call a tool, say two or three words first (like "one moment" or "let me check") so they are not left in silence. Never leave them in silence while you wait.
 - If they talk while you speak, stop and listen to them.
 - Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
-- You can start, stop, restart or reload an app. First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action, then say how it went. If a tool refuses, tell them why.
+- You can start, stop, restart or reload an app. First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action. It only starts it: say it is under way ("restarting now, give me a few seconds"), then call action_status and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang
@@ -98,10 +98,11 @@ func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talk
 			talk.Opening = "The test call just connected."
 		default:
 			x, _ := d.incidents.Get(incidentID)
-			talk.Instructions = fmt.Sprintf("You are Fleetwatch's on-call voice assistant, calling %s on WhatsApp about an incident: %q (%s, severity %s) on the server %s, first seen %s ago. get_incident has its details and acknowledge (without an id) acknowledges it.\n%s",
-				name, x.Title, x.Type, x.Severity, d.serverName(x.ServerID), time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), rules)
+			talk.Instructions = fmt.Sprintf("You are Fleetwatch's on-call voice assistant, calling %s on WhatsApp about an incident: %q (%s, severity %s) on the server %s, first seen %s ago. get_incident has its details and acknowledge (without an id) acknowledges it.\n%s\n%s",
+				name, x.Title, x.Type, x.Severity, d.serverName(x.ServerID), time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute), d.recentLogs(x), rules)
 			talk.Tools = kit
-			talk.Opening = "The call just connected. Greet " + name + ", say in one or two sentences what happened, and ask if they can handle it."
+			talk.ProtectOpening = true
+			talk.Opening = "The call just connected. Greet " + name + " and explain fully what happened: the incident, then what the latest app and server log lines above show (in plain words, the most telling ones). Then ask if they can handle it."
 		}
 		lines, took, err := d.ai.Converse(ctx, talk)
 		d.ai.AddUsage(took)
@@ -134,6 +135,40 @@ func (d callDeps) session(person, incidentID string, inbound bool) whatsapp.Talk
 			audit.Record(d.db, audit.Event{Action: "whatsapp.call", OK: true, Actor: name, Detail: how + " AI call, " + took.Round(time.Second).String()})
 		}
 	}
+}
+
+// recentLogs is the incident's latest warnings and errors, of its app and of its server,
+// for the AI to explain them at once.
+func (d callDeps) recentLogs(x incidents.Incident) string {
+	since := time.Now().Add(-30 * time.Minute).UnixMilli()
+	shown := map[int64]bool{} // a server line already listed as the app's
+	format := func(title string, q logs.Query) string {
+		q.Severities, q.From, q.Limit = []string{"warning", "error", "critical"}, since, 8
+		lines, err := d.logs.Search(q)
+		if err != nil || len(lines) == 0 {
+			return title + ": none in the last 30 minutes.\n"
+		}
+		slices.SortFunc(lines, func(a, b logs.Line) int { return int(a.TS - b.TS) }) // oldest first
+		var b strings.Builder
+		b.WriteString(title + " (oldest first):\n")
+		for _, l := range lines {
+			if shown[l.ID] {
+				continue
+			}
+			shown[l.ID] = true
+			msg := l.Message
+			if len(msg) > 220 {
+				msg = msg[:220]
+			}
+			fmt.Fprintf(&b, "  %s [%s] %s\n", time.UnixMilli(l.TS).UTC().Format("15:04:05"), l.Severity, msg)
+		}
+		return b.String()
+	}
+	out := ""
+	if x.AppID != nil {
+		out += format("Latest app logs", logs.Query{AppID: *x.AppID})
+	}
+	return out + format("Latest server logs", logs.Query{ServerID: x.ServerID})
 }
 
 func (d callDeps) serverName(id string) string {
@@ -408,8 +443,10 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 			Run: func(_ context.Context, args map[string]any) (any, error) {
 				return gate.propose(str(args, "app"), str(args, "action"))
 			}},
-		{Name: "do_action", Description: "Run the action propose_action got ready, once the person has clearly said yes to it.",
+		{Name: "do_action", Description: "Start the action propose_action got ready, once the person has clearly said yes to it. It returns at once; then call action_status.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.do(ctx) }},
+		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
+			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
 	}
 }
 
@@ -423,7 +460,10 @@ type voiceActions struct {
 
 	mu      sync.Mutex
 	pending *voiceAction
+	running *voiceRun // the action started last
 }
+
+type voiceRun struct{ id, what string }
 
 type voiceAction struct {
 	appID, appName, server, action string
@@ -519,32 +559,42 @@ func (g *voiceActions) do(ctx context.Context) (any, error) {
 	if strings.TrimSpace(ai.HeardSince(ctx, p.at)) == "" {
 		return nil, valid.Error("they have not answered yet: ask them to confirm and wait for their yes")
 	}
-	g.mu.Lock()
-	g.pending = nil
-	g.mu.Unlock()
 	run, err := g.d.commands.Start(p.appID, "builtin:"+p.action, g.name+" by voice, on a WhatsApp call")
 	if err != nil {
 		return nil, err
 	}
+	g.mu.Lock()
+	g.pending, g.running = nil, &voiceRun{id: run.ID, what: p.action + " " + p.appName}
+	g.mu.Unlock()
 	if p.action != "start" {
 		g.d.detector.Intended(p.appID, time.Now()) // stopping it on purpose is not an incident
 	}
 	audit.Record(g.d.db, audit.Event{Action: "command.run", OK: true, Actor: g.name, Detail: p.appName + ": " + p.action + " (by voice, on a WhatsApp call)"})
-	for range 30 { // say how it went, when the agent answers in time
+	return "started " + p.action + " of " + p.appName + ". Tell them it is under way and to give you a few seconds, then call action_status.", nil
+}
+
+// status waits for the action started last to finish, and says how it went.
+func (g *voiceActions) status(ctx context.Context) (any, error) {
+	g.mu.Lock()
+	r := g.running
+	g.mu.Unlock()
+	if r == nil {
+		return nil, valid.Error("no action was started on this call")
+	}
+	for range 25 {
+		run, err := g.d.commands.GetRun(r.id)
+		if err == nil && run.Status != "running" {
+			out := strings.TrimSpace(run.Stderr + "\n" + run.Stdout)
+			if len(out) > 300 {
+				out = out[len(out)-300:]
+			}
+			return map[string]any{"action": r.what, "status": run.Status, "exitCode": run.ExitCode, "error": run.Error, "output": out}, nil
+		}
 		select {
 		case <-ctx.Done():
-			return "started " + p.action + "; it is still running", nil
+			return r.what + " is still running", nil
 		case <-time.After(time.Second):
 		}
-		r, err := g.d.commands.GetRun(run.ID)
-		if err != nil || r.Status == "running" {
-			continue
-		}
-		out := strings.TrimSpace(r.Stderr + "\n" + r.Stdout)
-		if len(out) > 300 {
-			out = out[len(out)-300:]
-		}
-		return map[string]any{"status": r.Status, "exitCode": r.ExitCode, "error": r.Error, "output": out}, nil
 	}
-	return "started " + p.action + "; it is still running", nil
+	return r.what + " is still running: say so, and offer to check again", nil
 }

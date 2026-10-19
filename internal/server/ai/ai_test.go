@@ -139,6 +139,21 @@ func TestKeyAndConversation(t *testing.T) {
 	if r := s.LastCall(); r == nil || r.Frames != 24 || r.Heard != "I'm on it" || r.Said == "" || r.Ended == "" || r.Interruptions != 1 || hushed != 1 {
 		t.Fatalf("last call report: %+v", r)
 	}
+	// An on-call call's explanation is not cut off by talking over it.
+	in2 := make(chan []float32, 64)
+	for range 20 {
+		in2 <- tone(0.0005)
+	}
+	for range 4 {
+		in2 <- tone(0.05)
+	}
+	hushed = 0
+	if _, _, err := s.Converse(ctx, Talk{Instructions: "test", Opening: "go", MaxLength: time.Minute, In: in2, ProtectOpening: true,
+		Say: func([]float32) {}, Hush: func() { mu.Lock(); hushed++; mu.Unlock() },
+		Tools: []Tool{{Name: "get_incident", Run: func(context.Context, map[string]any) (any, error) { return "disk full on web-1", nil }}},
+	}); err != nil || hushed != 0 || s.LastCall().Interruptions != 0 {
+		t.Fatal("the opening was cut off", err, hushed)
+	}
 	s.AddUsage(90 * time.Second)
 	if s.Remaining() != time.Hour-90*time.Second {
 		t.Fatal(s.Remaining())
