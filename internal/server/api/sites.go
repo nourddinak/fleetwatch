@@ -301,6 +301,20 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		s.audit(r, "site.redeploy", st.ServerID, st.Name)
 		writeJSON(w, http.StatusAccepted, st)
 	}))
+	mux.HandleFunc("POST /api/sites/{id}/rollback", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ TS int64 }
+		if !decode(w, r, &in) {
+			return
+		}
+		d, err := s.Sites.Rollback(r.Context(), r.PathValue("id"), in.TS, s.actor(r))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		st, _ := s.Sites.Get(r.PathValue("id"))
+		s.audit(r, "site.rollback", st.ServerID, st.Name+" to "+shortCommit(d.Commit))
+		writeJSON(w, http.StatusAccepted, st)
+	}))
 	mux.HandleFunc("DELETE /api/sites/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		if _, ok := own(w, r, sess); !ok {
 			return
@@ -314,3 +328,5 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 }
+
+func shortCommit(sha string) string { return sha[:min(7, len(sha))] }

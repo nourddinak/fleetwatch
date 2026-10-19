@@ -365,3 +365,45 @@ func TestCustomCaddy(t *testing.T) {
 		t.Fatal("huge config accepted")
 	}
 }
+
+// A rollback deploys the previous working version, and pushes wait for a newer commit.
+func TestRollback(t *testing.T) {
+	s, gh, sent := setup(t)
+	ctx := context.Background()
+	st, err := s.Create(ctx, Input{Repo: "me/blog", ServerID: "s1"}, "Nour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSent(t, sent, 1)
+	if _, err := s.Rollback(ctx, st.ID, 0, "Nour"); err == nil {
+		t.Fatal("rolled back while deploying")
+	}
+	answer(s, (*sent)[0], true)
+	if _, err := s.Rollback(ctx, st.ID, 0, "Nour"); err == nil {
+		t.Fatal("nothing earlier to go back to")
+	}
+	gh.mu.Lock()
+	gh.heads["me/blog@main"] = "b2"
+	gh.mu.Unlock()
+	s.Sync(ctx)
+	answer(s, (*sent)[1], true) // b2 is live
+	d, err := s.Rollback(ctx, st.ID, 0, "Nour")
+	if err != nil || d.Deployed != "b1" || len(*sent) != 3 || !strings.HasSuffix((*sent)[2].Archive, "/b1") {
+		t.Fatal("back to b1", d, err, len(*sent))
+	}
+	answer(s, (*sent)[2], true)
+	if st, _ := s.Get(st.ID); st.Commit != "b1" || st.Pinned != "b2" || s.History(st.ID)[0].By != "Nour (rollback)" {
+		t.Fatalf("%+v", st)
+	}
+	s.Sync(ctx)
+	if len(*sent) != 3 {
+		t.Fatal("the push it was rolled back from came back")
+	}
+	gh.mu.Lock()
+	gh.heads["me/blog@main"] = "b3"
+	gh.mu.Unlock()
+	s.Sync(ctx)
+	if len(*sent) != 4 || !strings.HasSuffix((*sent)[3].Archive, "/b3") {
+		t.Fatal("a newer commit deploys again", len(*sent))
+	}
+}

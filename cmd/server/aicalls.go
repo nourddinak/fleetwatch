@@ -572,11 +572,11 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				}
 				return d.pastIncidents(x, 10), nil
 			}},
-		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy; purge its Cloudflare cache; on or off: Cloudflare's Under attack mode), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
+		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy; rollback to its previous deploy; purge its Cloudflare cache; on or off: Cloudflare's Under attack mode), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
 			Params: map[string]any{
 				"kind":   map[string]any{"type": "STRING", "enum": actionKinds},
 				"target": map[string]any{"type": "STRING", "description": "What to act on: an app, container, site, cleanup, incident id, server or IP"},
-				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "purge", "clean", "mute", "on", "off", "block"}},
+				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "rollback", "purge", "clean", "mute", "on", "off", "block"}},
 				"server": map[string]any{"type": "STRING", "description": "The server's name, where it matters (containers, disk); without it, the incident's server"},
 				"amount": map[string]any{"type": "INTEGER", "description": "Minutes for maintenance, hours for an IP block"},
 			}, Required: []string{"kind", "target", "action"},
@@ -770,8 +770,8 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 			return "the container is being " + action + "ed; it takes a few seconds", nil
 		}
 	case "site":
-		if action != "redeploy" && action != "purge" && action != "on" && action != "off" {
-			return nil, valid.Error("a site can be redeployed, its cache purged, or Under attack mode turned on or off")
+		if action != "redeploy" && action != "rollback" && action != "purge" && action != "on" && action != "off" {
+			return nil, valid.Error("a site can be redeployed, rolled back to its previous deploy, its cache purged, or Under attack mode turned on or off")
 		}
 		var site *sites.Site
 		for _, st := range g.d.sites.List() {
@@ -784,6 +784,18 @@ func (g *voiceActions) propose(kind, target, action, server string, amount int) 
 		}
 		if err := g.allowed(site.ServerID, false); err != nil {
 			return nil, err
+		}
+		if action == "rollback" {
+			id := site.ID
+			a.what = "roll the site " + site.Name + " back to its previous deploy"
+			a.run = func(ctx context.Context) (any, error) {
+				d, err := g.d.sites.Rollback(ctx, id, 0, g.name+" (WhatsApp)")
+				if err != nil {
+					return nil, err
+				}
+				return "rolling back to " + d.Commit[:min(7, len(d.Commit))] + " (" + d.Message + "); it takes a minute", nil
+			}
+			break
 		}
 		if action != "redeploy" {
 			if g.d.dns == nil {

@@ -39,6 +39,7 @@ interface Site {
   deployedAt: number;
   error?: string;
   buildUrl?: string;
+  pinned?: string;
   createdAt: number;
   createdBy?: string;
   atPath: boolean;
@@ -71,6 +72,7 @@ interface Deploy {
   error?: string;
   log?: string;
   by: string;
+  deployed?: string;
 }
 
 const STATUS: Record<Site["status"], [Tone, string]> = {
@@ -863,6 +865,15 @@ export function SitePage() {
   const [tab, setTab] = useState("overview");
   const { me, getServer, toast } = useStore();
   const data = useApi<{ site: Site; history: Deploy[] }>(`/api/sites/${id}`);
+  const rollback = async (ts: number) => {
+    try {
+      await api("POST", `/api/sites/${id}/rollback`, { ts });
+      toast("Rolling back: the earlier version is being deployed");
+      data.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
   const owner = !!data.data?.site.mine; // who added it, or the dashboard owner
   const env = useApi<{ env: string; exampleFile?: string; example?: string }>(owner ? `/api/sites/${id}/env` : `/api/sites/${id}`);
   const [domains, setDomains] = useState<string | null>(null);
@@ -936,12 +947,16 @@ export function SitePage() {
           <>
             {site.buildUrl && site.plan.kind === "build" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={14} /> Last build</Button></a>}
             {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={14} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
+            {me?.role !== "viewer" && data.data!.history.filter((d) => d.ok).length > 1 && <Button size="sm" variant="secondary" onClick={() => rollback(0)} disabled={site.status === "deploying"} title="Deploy the previous working version again"><Undo2 size={14} /> Roll back</Button>}
             {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary"><ExternalLink size={14} /> Open site</Button></a>}
             {owner && <Button size="sm" disabled={!dirty} onClick={save}><Check size={14} /> Save</Button>}
           </>
         }
       />
       <div className="mb-5 empty:hidden"><SiteError site={site} onRetry={() => redeploySite(site, toast)} /></div>
+      {site.pinned && site.autoDeploy && (
+        <p className="mb-5 flex items-center gap-2 rounded-2xl bg-info-soft p-3 text-xs text-info"><Undo2 size={13} className="shrink-0" />Rolled back: new pushes are deployed again once there is a commit newer than the one rolled back from. Redeploy to go back to the latest now.</p>
+      )}
       <div className="mb-5 overflow-x-auto">
         <Segmented value={current} onChange={setTab} options={tabs.map((t) => ({ value: t.value, label: <span className="inline-flex items-center gap-1.5"><t.icon size={13} />{t.label}</span> }))} />
       </div>
@@ -963,6 +978,9 @@ export function SitePage() {
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[11px] text-muted">
                   <span>{d.by}</span>
                   <span>{relTime(d.ts)}</span>
+                  {d.ok && i > 0 && (d.deployed || site.plan.kind !== "build") && me?.role !== "viewer" && site.status !== "deploying" && d.commit !== site.commit && (
+                    <button className="inline-flex items-center gap-1 hover:text-fg" onClick={() => rollback(d.ts)}><Undo2 size={11} /> Roll back to this</button>
+                  )}
                   {d.log && <button className="inline-flex items-center gap-1 hover:text-fg" onClick={() => setLog(log === i ? null : i)}><Terminal size={11} /> {log === i ? "Hide log" : "Log"}</button>}
                 </div>
                 {d.error && <p className="mt-1 text-xs text-crit">{upper(d.error)}</p>}

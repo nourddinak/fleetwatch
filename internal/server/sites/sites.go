@@ -76,8 +76,11 @@ type Site struct {
 	DeployedAt int64  `json:"deployedAt"`
 	Error      string `json:"error,omitempty"`
 	BuildURL   string `json:"buildUrl,omitempty"` // the GitHub Actions run
-	CreatedAt  int64  `json:"createdAt"`
-	CreatedBy  string `json:"createdBy"`
+	// Pinned, after a rollback, is the deploy branch's head then: automatic deploys wait
+	// for a newer commit instead of undoing the rollback.
+	Pinned    string `json:"pinned,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+	CreatedBy string `json:"createdBy"`
 
 	tried string // last deploy-branch commit attempted (no automatic retry of a failure)
 }
@@ -91,6 +94,9 @@ type Deploy struct {
 	Error   string `json:"error,omitempty"`
 	Log     string `json:"log,omitempty"`
 	By      string `json:"by"`
+	// Deployed is the exact commit of the deploy branch that went live (for builds, the
+	// built commit, not its source): what a rollback deploys again.
+	Deployed string `json:"deployed,omitempty"`
 }
 
 // GitHub is what deploys use of the GitHub integration (*github.Service).
@@ -625,6 +631,7 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 	if err != nil {
 		return err
 	}
+	st.Pinned = "" // the latest again
 	if st.Plan.Kind == "build" {
 		env, _ := s.Env(st.ID)
 		if err := s.setupBuild(ctx, st, env); err != nil { // adds the workflow if it is missing, else starts a build
@@ -650,6 +657,49 @@ const CustomAgent = "v0.9.72"
 
 // SetCaddy replaces the site's generated Caddy config with the owner's ("" goes back to
 // the generated one) and deploys the live commit again, so Caddy checks and loads it.
+// Rollback deploys an earlier successful deploy again: the one at ts, or (ts 0) the last
+// one before what is live. Automatic deploys then wait for a newer commit.
+func (s *Service) Rollback(ctx context.Context, id string, ts int64, by string) (Deploy, error) {
+	st, err := s.Get(id)
+	if err != nil {
+		return Deploy{}, err
+	}
+	if st.Status == "deploying" {
+		return Deploy{}, valid.Error("a deploy is running: wait for it to finish")
+	}
+	live := ""
+	var target *Deploy
+	for _, d := range s.History(id) { // newest first
+		sha := d.Deployed
+		if sha == "" && st.Plan.Kind != "build" {
+			sha = d.Commit // older entries: for a plain site, the same commit
+		}
+		if !d.OK || sha == "" {
+			continue
+		}
+		if live == "" && ts == 0 {
+			live = sha // what is live now
+			continue
+		}
+		if (ts == 0 && sha != live) || (ts != 0 && d.TS == ts) {
+			d.Deployed = sha
+			target = &d
+			break
+		}
+	}
+	if target == nil {
+		return Deploy{}, valid.Error("there is no earlier successful deploy to go back to")
+	}
+	if head, _, err := s.GitHub.Head(ctx, st.Repo, s.deployBranch(st)); err == nil {
+		st.Pinned = head
+	}
+	msg := target.Message
+	if st.Plan.Kind == "build" {
+		msg = "Build of " + target.Commit // so the history shows its source commit again
+	}
+	return *target, s.deploy(ctx, st, target.Deployed, msg, by+" (rollback)")
+}
+
 func (s *Service) SetCaddy(id, config, by string) (Site, error) {
 	st, err := s.Get(id)
 	if err != nil {
@@ -746,7 +796,7 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	if src, ok := strings.CutPrefix(msg, "Build of "); ok && st.Plan.Kind == "build" {
 		commit, msg = src, "Build of "+shortSHA(src) // the source commit, as people know it
 	}
-	s.remember(st.ID, Deploy{TS: s.Now().UnixMilli(), Commit: commit, Message: msg, OK: res.OK, Error: res.Error, Log: res.Log, By: p.by})
+	s.remember(st.ID, Deploy{TS: s.Now().UnixMilli(), Commit: commit, Message: msg, OK: res.OK, Error: res.Error, Log: res.Log, By: p.by, Deployed: p.commit})
 	if res.OK {
 		if s.DNS != nil && len(st.Domains) > 0 {
 			go func(owner string, domains []string) { // visitors get the new version, not Cloudflare's copy
@@ -819,9 +869,10 @@ func (s *Service) Sync(ctx context.Context) {
 			}
 		}
 		sha, msg, err := s.GitHub.Head(ctx, st.Repo, s.deployBranch(st))
-		if err != nil || sha == "" || sha == st.tried {
+		if err != nil || sha == "" || sha == st.tried || sha == st.Pinned {
 			continue
 		}
+		st.Pinned = "" // a newer commit than the rolled-back one: deploys resume
 		if err := s.deploy(ctx, st, sha, msg, "push"); err != nil {
 			slog.Warn("site deploy", "site", st.Name, "err", err)
 		}
