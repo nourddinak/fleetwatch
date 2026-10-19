@@ -83,6 +83,8 @@ type Service struct {
 	// OnMessage answers a team member's message (text, or a voice note's audio and
 	// type); "" sends nothing. Messages from numbers nobody saved never reach it.
 	OnMessage func(ctx context.Context, person, text string, audio []byte, mime string) string
+	// DataDir and HelperPath let it ask the root helper for ffmpeg (see ffmpeg.go).
+	DataDir, HelperPath string
 	// Speak turns a reply into speech (16-bit mono PCM at rate), for voice-note replies.
 	Speak func(ctx context.Context, text string) (pcm []byte, rate int, err error)
 	// Alert tells the owner something went wrong with the link (the watchdog).
@@ -428,6 +430,9 @@ func (s *Service) SetPerson(id string, p Person) (Person, error) {
 	}
 	raw, _ := json.Marshal(p)
 	_, err = s.db.Exec(`INSERT INTO whatsapp_people (person, data) VALUES (?, ?) ON CONFLICT (person) DO UPDATE SET data = excluded.data`, id, string(raw))
+	if err == nil && p.Replies != "" {
+		s.EnsureVoice() // voice answers need ffmpeg: the helper installs it
+	}
 	return p, err
 }
 

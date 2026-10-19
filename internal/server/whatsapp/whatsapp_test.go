@@ -3,7 +3,10 @@ package whatsapp
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,5 +224,47 @@ func TestToOpus(t *testing.T) {
 	ogg, err := toOpus(context.Background(), make([]byte, 2*24000), 24000)
 	if err != nil || !bytes.HasPrefix(ogg, []byte("OggS")) {
 		t.Fatal(err, len(ogg))
+	}
+}
+
+// Voice answers ask the root helper for ffmpeg; a failure shows, and is not retried at once.
+func TestFFmpegRequest(t *testing.T) {
+	had := CanSpeak
+	CanSpeak = func() bool { return false }
+	defer func() { CanSpeak = had }()
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, dir, nil)
+	s.DataDir, s.HelperPath = dir, filepath.Join(dir, "helper.path")
+	if s.VoiceSetup().State != "manual" {
+		t.Fatal("no helper: install it by hand")
+	}
+	os.WriteFile(s.HelperPath, nil, 0o644)
+	if _, err := s.SetPerson("owner", Person{Phone: "+212600000001", Language: "en", Replies: "voice"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40 && !FFmpegRequested(dir); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !FFmpegRequested(dir) || s.VoiceSetup().State != "installing" {
+		t.Fatal("asked the helper", s.VoiceSetup())
+	}
+	installer = func(context.Context) ([]byte, error) {
+		return []byte("E: Unable to locate package ffmpeg"), errors.New("exit status 100")
+	}
+	if InstallFFmpeg(dir) == nil || FFmpegRequested(dir) {
+		t.Fatal("the helper reports and clears the request")
+	}
+	if v := s.VoiceSetup(); v.State != "failed" || !strings.Contains(v.Error, "Unable to locate") {
+		t.Fatal(v)
+	}
+	s.EnsureVoice()
+	time.Sleep(100 * time.Millisecond)
+	if FFmpegRequested(dir) {
+		t.Fatal("no retry loop after a failure")
 	}
 }

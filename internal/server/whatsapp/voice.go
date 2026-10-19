@@ -18,7 +18,7 @@ import (
 // voice notes are) by ffmpeg, which Go has no encoder for.
 
 // CanSpeak reports whether voice-note replies can be made here: ffmpeg is installed.
-func CanSpeak() bool {
+var CanSpeak = func() bool {
 	_, err := exec.LookPath("ffmpeg")
 	return err == nil
 }

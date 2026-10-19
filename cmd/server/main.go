@@ -172,6 +172,10 @@ func selfUpdate() error {
 	if dir := env("OPS_DATA_DIR", "data"); statuspage.CaddyRequested(dir) {
 		return statuspage.CaddySync(dir, env("OPS_LISTEN", "127.0.0.1:8090"))
 	}
+	// And installs ffmpeg, for WhatsApp voice-note answers.
+	if dir := env("OPS_DATA_DIR", "data"); whatsapp.FFmpegRequested(dir) {
+		return whatsapp.InstallFFmpeg(dir)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	tag, err := release.Install(ctx, env("OPS_UPDATE_SOURCE", release.DefaultSource), env("OPS_DATA_DIR", "data"), exe)
@@ -404,6 +408,8 @@ func serve() error {
 	// button) and an email when they have an address and email is set up.
 	// The owner's WhatsApp, linked like WhatsApp Web, pages people there too.
 	waSvc := whatsapp.New(d, env("OPS_DATA_DIR", "data"), bus)
+	waSvc.DataDir, waSvc.HelperPath = env("OPS_DATA_DIR", "data"), release.HelperUnit
+	waSvc.EnsureVoice() // voice-note answers asked for before ffmpeg was there
 	if err := waSvc.Start(context.Background()); err != nil {
 		slog.Warn("whatsapp", "err", err)
 	}

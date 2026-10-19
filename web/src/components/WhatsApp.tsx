@@ -44,7 +44,7 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Integrations → WhatsApp: the owner links their WhatsApp and sets how each person is reached. */
 export function WhatsAppSetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions; canSpeak: boolean }>("/api/integrations/whatsapp");
+  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions; voice: VoiceSetup }>("/api/integrations/whatsapp");
   const [phone, setPhone] = useState("");
   const [byPhone, setByPhone] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -118,7 +118,7 @@ export function WhatsAppSetup() {
           </div>
         )}
       </Card>
-      <PeopleCard people={data.data!.people} linked={st.linked} canSpeak={data.data!.canSpeak} onChange={reload} />
+      <PeopleCard people={data.data!.people} linked={st.linked} voice={data.data!.voice} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
       {st.linked && <MessagesCard />}
       {st.linked && <RemindersCard />}
@@ -130,19 +130,19 @@ export function WhatsAppSetup() {
   );
 }
 
-function PeopleCard({ people, linked, canSpeak, onChange }: { people: (WaPerson & { id: string; name: string })[]; linked: boolean; canSpeak: boolean; onChange: () => void }) {
+function PeopleCard({ people, linked, voice, onChange }: { people: (WaPerson & { id: string; name: string })[]; linked: boolean; voice: VoiceSetup; onChange: () => void }) {
   return (
     <Card>
       <SectionTitle icon={<Users size={15} />} title="Who gets WhatsApp alerts"
         sub={<>Add each person's number the first time; they can change it later in their account. Who is alerted, in which order and for which incidents is set in <Link to="/oncall" className="underline">On-call</Link>.</>} />
       <div className="space-y-3">
-        {people.map((p) => <PersonRow key={p.id} id={p.id} name={p.name} saved={p} linked={linked} canSpeak={canSpeak} onSaved={onChange} />)}
+        {people.map((p) => <PersonRow key={p.id} id={p.id} name={p.name} saved={p} linked={linked} voice={voice} onSaved={onChange} />)}
       </div>
     </Card>
   );
 }
 
-function PersonRow({ id, name, saved, linked, canSpeak, onSaved }: { id: string; name: string; saved: WaPerson; linked: boolean; canSpeak: boolean; onSaved: () => void }) {
+function PersonRow({ id, name, saved, linked, voice, onSaved }: { id: string; name: string; saved: WaPerson; linked: boolean; voice: VoiceSetup; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-line p-3">
@@ -151,13 +151,13 @@ function PersonRow({ id, name, saved, linked, canSpeak, onSaved }: { id: string;
         {saved.phone ? <span className="font-mono text-xs text-muted">+{saved.phone}</span> : <span className="text-xs text-muted">No number</span>}
         {saved.quietFrom && <Badge><MoonStar size={11} /> {saved.quietFrom}–{saved.quietTo}</Badge>}
       </button>
-      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} callUrl={linked ? `/api/integrations/whatsapp/people/${id}/call` : undefined} self={id === "owner"} canSpeak={canSpeak} onSaved={() => { onSaved(); setOpen(false); }} />}
+      {open && <PersonForm saved={saved} url={`/api/integrations/whatsapp/people/${id}`} testUrl={linked ? `/api/integrations/whatsapp/people/${id}/test` : undefined} callUrl={linked ? `/api/integrations/whatsapp/people/${id}/call` : undefined} self={id === "owner"} voice={voice} onSaved={() => { onSaved(); setOpen(false); }} />}
     </div>
   );
 }
 
 /** Someone's number, language and quiet hours. */
-export function PersonForm({ saved, url, testUrl, callUrl, self, canSpeak, onSaved }: { saved: WaPerson; url: string; testUrl?: string; callUrl?: string; self?: boolean; canSpeak?: boolean; onSaved: () => void }) {
+export function PersonForm({ saved, url, testUrl, callUrl, self, voice, onSaved }: { saved: WaPerson; url: string; testUrl?: string; callUrl?: string; self?: boolean; voice?: VoiceSetup; onSaved: () => void }) {
   const { toast } = useStore();
   const [f, setF] = useState<WaPerson>({ ...saved, timeZone: saved.timeZone || zone() });
   const [busy, setBusy] = useState("");
@@ -202,7 +202,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, canSpeak, onSav
         <input type="checkbox" checked={!!f.weekly} onChange={(e) => setF({ ...f, weekly: e.target.checked })} />
         Weekly summary on Mondays (incidents, uptime, slowest checks{f.briefing ? `, at ${f.briefing}` : ", at 09:00"})
       </label>
-      <Field label="Answers to chats" hint={canSpeak === false ? "Voice answers need ffmpeg on the dashboard's server (sudo apt install ffmpeg); until then they come as text." : "Voice answers are read out in the AI's call voice."} className="sm:w-80">
+      <Field label="Answers to chats" hint={voiceHint(voice, !!f.replies)} className="sm:w-80">
         <Select value={f.replies ?? ""} onChange={(e) => setF({ ...f, replies: e.target.value as WaPerson["replies"] })}>
           <option value="">Text</option>
           <option value="voice">A voice note when I send one</option>
@@ -239,7 +239,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, canSpeak, onSav
 
 /** Settings → Account: one's own WhatsApp number, language and quiet hours. */
 export function MyWhatsApp({ explain }: { explain?: boolean }) {
-  const data = useApi<{ available: boolean; person: WaPerson; number?: string; canSpeak?: boolean }>("/api/me/whatsapp");
+  const data = useApi<{ available: boolean; person: WaPerson; number?: string; voice?: VoiceSetup }>("/api/me/whatsapp");
   if (data.data && !data.data.available && explain) {
     return <Card><SectionTitle icon={<WhatsApp size={17} />} title="Your WhatsApp" sub="The dashboard owner has not linked WhatsApp yet. Once they have, set your number here to get on-call alerts and calls." /></Card>;
   }
@@ -252,7 +252,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
           <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, to restart an app, or to pass a message on to a teammate (“call Sara and tell her…”, “when Omar calls, tell him…”). Other numbers get no answer.</span></p>
       )}
       <div className="mb-3"><PinField /></div>
-      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} canSpeak={data.data.canSpeak} onSaved={data.reload} />
+      <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} voice={data.data.voice} onSaved={data.reload} />
       <div className="mt-6"><MessagesCard bare /></div>
       <div className="mt-6"><RemindersCard bare /></div>
     </Card>
@@ -452,4 +452,23 @@ function RemindersCard({ bare }: { bare?: boolean }) {
     </>
   );
   return bare ? body : <Card>{body}</Card>;
+}
+
+interface VoiceSetup {
+  state: "ready" | "installing" | "failed" | "manual";
+  error?: string;
+}
+
+/** Where voice-note answers stand: they need ffmpeg, which the dashboard installs itself. */
+function voiceHint(v: VoiceSetup | undefined, wanted: boolean) {
+  switch (v?.state) {
+    case "installing":
+      return wanted ? "Installing ffmpeg on the dashboard's server for voice answers (a minute or two). Until then, answers come as text." : "Voice answers are read out in the AI's call voice.";
+    case "failed":
+      return `ffmpeg could not be installed by itself (${v.error ?? "unknown error"}). Run "sudo apt install ffmpeg" on the dashboard's server; until then, answers come as text.`;
+    case "manual":
+      return "Voice answers need ffmpeg on the dashboard's server, and one-click updates (which install it) are not set up there: run \"sudo apt install ffmpeg\". Until then, answers come as text.";
+    default:
+      return "Voice answers are read out in the AI's call voice. Saving installs what they need on the dashboard's server, if it is missing.";
+  }
 }
