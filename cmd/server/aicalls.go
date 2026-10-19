@@ -541,15 +541,13 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				if incidentID == "" {
 					return nil, valid.Error("there is no incident on this call to call someone about")
 				}
-				who := ""
-				for _, p := range d.people() {
-					if strings.EqualFold(p.Name, str(args, "name")) || strings.EqualFold(p.Username, str(args, "name")) {
-						who = p.ID
-					}
+				who, err := d.teammate(str(args, "name"))
+				if err != nil {
+					return nil, err
 				}
-				wp, ok := d.wa.PersonOf(who)
-				if who == "" || !ok {
-					return nil, valid.Error("no teammate called " + str(args, "name") + " has a WhatsApp number saved")
+				wp, err := d.reachable(who)
+				if err != nil {
+					return nil, err
 				}
 				go func() {
 					c, cancel := context.WithTimeout(context.Background(), 8*time.Minute)

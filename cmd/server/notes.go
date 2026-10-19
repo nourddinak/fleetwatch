@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"fleetwatch/internal/server/ai"
+	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/valid"
 	"fleetwatch/internal/server/whatsapp"
 )
@@ -142,18 +145,16 @@ func (d callDeps) passMessage(from string) ai.Tool {
 			if msg == "" {
 				return nil, valid.Error("what should I tell them?")
 			}
-			to := ""
-			for _, p := range d.people() {
-				if strings.EqualFold(p.Name, name) || strings.EqualFold(p.Username, name) {
-					to = p.ID
-				}
-			}
-			wp, ok := d.wa.PersonOf(to)
-			if to == "" || !ok || wp.Phone == "" {
-				return nil, valid.Error("no teammate called " + name + " has a WhatsApp number saved")
+			to, err := d.teammate(name)
+			if err != nil {
+				return nil, err
 			}
 			if to == from {
 				return nil, valid.Error("that is the person you are talking to")
+			}
+			wp, err := d.reachable(to)
+			if err != nil {
+				return nil, err
 			}
 			sender := d.nameOf(from)
 			switch how {
@@ -198,4 +199,91 @@ func (d callDeps) passMessage(from string) ai.Tool {
 			}
 			return nil, valid.Error("how: text, call or later")
 		}}
+}
+
+// teammate finds who a name means, as heard on a call or written in a chat. A first
+// name or username is enough; a name that only sounds close is asked back, never guessed.
+func (d callDeps) teammate(name string) (string, error) {
+	norm := func(s string) string {
+		return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " ")
+	}
+	q := norm(name)
+	if q == "" {
+		return "", valid.Error("which teammate?")
+	}
+	people := d.people()
+	var names []string
+	for _, p := range people {
+		names = append(names, p.Name)
+	}
+	team := "The team: " + strings.Join(names, ", ") + "."
+	pick := func(match func(p oncall.Person) bool) []oncall.Person {
+		var out []oncall.Person
+		for _, p := range people {
+			if match(p) {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	found := pick(func(p oncall.Person) bool { return norm(p.Name) == q })
+	if len(found) == 0 { // a username, a first or last name
+		found = pick(func(p oncall.Person) bool {
+			return norm(p.Username) == q || slices.Contains(strings.Fields(norm(p.Name)), q)
+		})
+	}
+	switch {
+	case len(found) == 1:
+		return found[0].ID, nil
+	case len(found) > 1:
+		var which []string
+		for _, p := range found {
+			which = append(which, p.Name)
+		}
+		return "", valid.Error("more than one teammate is called " + name + ": " + strings.Join(which, ", ") + ". Ask which one they mean.")
+	}
+	var near []string // misheard or misspelled: ask back
+	for _, p := range people {
+		for _, w := range append(strings.Fields(norm(p.Name)), norm(p.Username)) {
+			if w != "" && editDistance(w, q) <= max(1, len(q)/4) {
+				near = append(near, p.Name)
+				break
+			}
+		}
+	}
+	if len(near) > 0 {
+		return "", valid.Error("nobody is called exactly " + name + ". Did they mean " + strings.Join(near, " or ") + "? Ask them, then try again with that name.")
+	}
+	return "", valid.Error("nobody on the team is called " + name + ". " + team + " Ask who they meant.")
+}
+
+// reachable is a teammate's WhatsApp number, or why there is none.
+func (d callDeps) reachable(id string) (whatsapp.Person, error) {
+	wp, ok := d.wa.PersonOf(id)
+	if !ok || wp.Phone == "" {
+		return wp, valid.Error(d.nameOf(id) + " is on the team but has no WhatsApp number saved, so I cannot text or call them. They can add one in Integrations, WhatsApp.")
+	}
+	return wp, nil
+}
+
+// editDistance counts the letters to change, add or remove to turn a into b.
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
 }

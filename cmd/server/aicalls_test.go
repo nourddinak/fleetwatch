@@ -159,3 +159,21 @@ func TestTellOnCall(t *testing.T) {
 	default:
 	}
 }
+
+// Names as heard: first names work, close ones are asked back, unknown ones get the team.
+func TestTeammate(t *testing.T) {
+	deps := callDeps{people: func() []oncall.Person {
+		return []oncall.Person{{ID: oncall.Owner, Name: "Nour"}, {ID: "m1", Name: "Sara Ali", Username: "sara"}, {ID: "m2", Name: "Omar Haddad", Username: "omar"},
+			{ID: "m3", Name: "Sara Bennani", Username: "sbennani"}}
+	}}
+	for in, want := range map[string]string{"omar": "m2", "Omar Haddad": "m2", "haddad": "m2", "NOUR": oncall.Owner, "sbennani": "m3", "Sara Ali": "m1"} {
+		if got, err := deps.teammate(in); got != want {
+			t.Fatal(in, got, err)
+		}
+	}
+	for in, says := range map[string]string{"Sara": "which one", "Omer": "Did they mean Omar Haddad", "Karim": "The team: Nour, Sara Ali", "": "which teammate"} {
+		if _, err := deps.teammate(in); err == nil || !strings.Contains(err.Error(), says) {
+			t.Fatal(in, err)
+		}
+	}
+}
