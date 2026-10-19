@@ -803,6 +803,7 @@ func serve() error {
 			admin.Sweep()
 			waSvc.Watch()        // tells the owner when WhatsApp stays disconnected
 			calls.followUps(ctx) // resolved messages, follow-up calls
+			calls.briefings(ctx) // morning briefings, at each person's time
 			var connected []string
 			for _, id := range serverIDs() {
 				if hub.Connected(id) {

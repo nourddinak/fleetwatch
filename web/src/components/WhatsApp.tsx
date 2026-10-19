@@ -11,6 +11,7 @@ export interface WaPerson {
   quietFrom?: string;
   quietTo?: string;
   timeZone?: string;
+  briefing?: string;
 }
 interface WaStatus {
   linked: boolean;
@@ -183,11 +184,20 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
         Quiet hours (no WhatsApp; push notifications still come)
       </label>
       {quiet && (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="From"><Input type="time" value={f.quietFrom} onChange={(e) => setF({ ...f, quietFrom: e.target.value })} /></Field>
           <Field label="Until"><Input type="time" value={f.quietTo} onChange={(e) => setF({ ...f, quietTo: e.target.value })} /></Field>
-          <Field label="Time zone"><Input value={f.timeZone} onChange={(e) => setF({ ...f, timeZone: e.target.value })} placeholder="Africa/Casablanca" /></Field>
         </div>
+      )}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={!!f.briefing} onChange={(e) => setF({ ...f, briefing: e.target.checked ? "08:00" : "" })} />
+        Morning briefing (a WhatsApp summary of the last 24 hours)
+      </label>
+      {f.briefing && <Field label="At" className="sm:w-40"><Input type="time" value={f.briefing} onChange={(e) => setF({ ...f, briefing: e.target.value })} /></Field>}
+      {(quiet || f.briefing) && (
+        <Field label="Time zone" hint="For the quiet hours and the briefing." className="sm:w-72">
+          <Input value={f.timeZone} onChange={(e) => setF({ ...f, timeZone: e.target.value })} placeholder="Africa/Casablanca" />
+        </Field>
       )}
       <div className="flex flex-wrap justify-end gap-2">
         {callUrl && saved.phone && (
@@ -204,7 +214,7 @@ export function PersonForm({ saved, url, testUrl, callUrl, self, onSaved }: { sa
             {busy === "test" ? <Spinner size={13} /> : <Send size={13} />} Send a test
           </Button>
         )}
-        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", timeZone: quiet ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
+        <Button size="sm" disabled={!!busy} onClick={() => run("save", async () => { await api("PUT", url, { phone: f.phone, language: f.language, quietFrom: quiet ? f.quietFrom : "", quietTo: quiet ? f.quietTo : "", briefing: f.briefing ?? "", timeZone: quiet || f.briefing ? f.timeZone : "" }); toast("Saved"); onSaved(); })}>
           {busy === "save" ? <Spinner size={13} /> : <Check size={13} />} Save
         </Button>
       </div>

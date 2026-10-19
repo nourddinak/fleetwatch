@@ -58,6 +58,7 @@ type Person struct {
 	QuietFrom string `json:"quietFrom,omitempty"` // "22:00": no WhatsApp from then…
 	QuietTo   string `json:"quietTo,omitempty"`   // …until then, in TimeZone
 	TimeZone  string `json:"timeZone,omitempty"`
+	Briefing  string `json:"briefing,omitempty"` // "08:00": a morning summary then, in TimeZone; "" = none
 }
 
 // Languages people may pick ("" follows the conversation).
@@ -410,6 +411,9 @@ func (s *Service) SetPerson(id string, p Person) (Person, error) {
 	if (p.QuietFrom == "") != (p.QuietTo == "") || p.QuietFrom != "" && (!clock.MatchString(p.QuietFrom) || !clock.MatchString(p.QuietTo)) {
 		return p, valid.Error("quiet hours need a start and an end, like 22:00 and 07:00")
 	}
+	if p.Briefing != "" && !clock.MatchString(p.Briefing) {
+		return p, valid.Error("the briefing time is like 08:00")
+	}
 	if p.TimeZone != "" {
 		if _, err := time.LoadLocation(p.TimeZone); err != nil {
 			return p, valid.Error("unknown time zone")
@@ -522,4 +526,29 @@ func (s *Service) CheckPIN(person, pin string) bool {
 	}
 	pin = nonDigits.ReplaceAllString(pin, "")
 	return subtle.ConstantTimeCompare([]byte(hashPIN(h.Salt, pin)), []byte(h.Hash)) == 1
+}
+
+// BriefingDue reports whether someone's morning briefing is due at now, given the day
+// it was last sent ("2006-01-02", their time); it answers today's day to remember.
+func (p Person) BriefingDue(now time.Time, lastSent string) (string, bool) {
+	if p.Briefing == "" {
+		return "", false
+	}
+	if loc, err := time.LoadLocation(p.TimeZone); err == nil {
+		now = now.In(loc)
+	}
+	day := now.Format("2006-01-02")
+	return day, day != lastSent && now.Format("15:04") >= p.Briefing && now.Format("15:04") < addMinutes(p.Briefing, 30)
+}
+
+// addMinutes moves a "15:04" clock forward (it stops at 23:59: no briefing wraps to tomorrow).
+func addMinutes(clock string, m int) string {
+	t, err := time.Parse("15:04", clock)
+	if err != nil {
+		return clock
+	}
+	if end := t.Add(time.Duration(m) * time.Minute); end.Day() == t.Day() {
+		return end.Format("15:04")
+	}
+	return "23:59"
 }

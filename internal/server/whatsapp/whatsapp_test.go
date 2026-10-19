@@ -148,3 +148,31 @@ func TestWatchdogAndOptions(t *testing.T) {
 		t.Fatal("not saved")
 	}
 }
+
+func TestBriefingDue(t *testing.T) {
+	loc, _ := time.LoadLocation("Africa/Casablanca")
+	at := func(hm string) time.Time {
+		h, _ := time.ParseInLocation("15:04", hm, loc)
+		return time.Date(2026, 10, 19, h.Hour(), h.Minute(), 0, 0, loc)
+	}
+	p := Person{Briefing: "08:00", TimeZone: "Africa/Casablanca"}
+	if _, due := p.BriefingDue(at("07:59"), ""); due {
+		t.Fatal("before its time")
+	}
+	day, due := p.BriefingDue(at("08:00"), "")
+	if !due || day != "2026-10-19" {
+		t.Fatal("at its time", day, due)
+	}
+	if _, due := p.BriefingDue(at("08:05"), day); due {
+		t.Fatal("twice the same day")
+	}
+	if _, due := p.BriefingDue(at("09:00"), ""); due {
+		t.Fatal("hours late: a missed briefing is skipped, not sent at lunch")
+	}
+	if _, due := (Person{}).BriefingDue(at("08:00"), ""); due {
+		t.Fatal("no briefing chosen")
+	}
+	if late := (Person{Briefing: "23:50"}); func() bool { _, d := late.BriefingDue(time.Date(2026, 10, 19, 23, 55, 0, 0, time.UTC), ""); return d }() == false {
+		t.Fatal("a late-evening briefing")
+	}
+}
