@@ -7,6 +7,7 @@ import { relTime, dateTime, fmtMB } from "../mock/util";
 import { Badge, Button, Card, ErrorState, Field, Gate, Input, KV, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, ServerStatus, Spinner, Table, Textarea, Td, Toggle, ToggleRow, Tr, CopyButton } from "../components/ui";
 import { cn } from "../utils/cn";
 import { UpdateCard } from "../components/PlatformUpdate";
+import { DashboardUsage } from "../components/DashboardUsage";
 import { PushCard } from "../components/PushCard";
 import { MobileCard } from "../components/MobileCard";
 import { AlertRulesCard } from "../components/AlertRulesCard";
@@ -855,6 +856,7 @@ export function SystemSettings() {
   };
   return (
     <div className="space-y-6">
+      <DashboardUsage />
       <Card>
         <SectionTitle icon={<Radar size={15} />} title="Discovery" sub="PM2 processes and systemd services are found wherever they live. These directories are additionally scanned for project folders (one level deep)." />
         <Field label="Project folder roots" hint="One absolute path per line, up to 10">

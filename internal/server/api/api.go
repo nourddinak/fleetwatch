@@ -48,6 +48,7 @@ import (
 
 type Deps struct {
 	UI         fs.FS
+	DataDir    string // OPS_DATA_DIR, for the dashboard's own storage use
 	Version    string
 	DB         *sql.DB
 	Auth       *auth.Service
@@ -100,6 +101,7 @@ func New(d Deps) http.Handler {
 	s.authRoutes(mux)
 	s.memberRoutes(mux)
 	s.activityRoutes(mux)
+	mux.HandleFunc("GET /api/system/usage", s.authed(s.usage))
 	if d.Fleet != nil {
 		s.serverRoutes(mux)
 		s.agentRoutes(mux)

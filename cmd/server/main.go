@@ -761,7 +761,7 @@ func serve() error {
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Deps{
-			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
+			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
 			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
