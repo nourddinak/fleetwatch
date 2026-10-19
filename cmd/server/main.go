@@ -353,9 +353,13 @@ func serve() error {
 		}
 		return out
 	}
+	var groupPost func(incidents.Event) // the team's WhatsApp group, set once WhatsApp is set up below
 	incStore.Notify = func(ev incidents.Event) {
 		notifier.Incident(ev)
 		onCall.OnEvent(ev)
+		if groupPost != nil {
+			go groupPost(ev)
+		}
 	}
 	// The start of someone's on-call week: tell them, with the note the last person left.
 	onCall.OnHandover = func(from, to oncall.Person, note *oncall.Note, open int) {
@@ -421,6 +425,7 @@ func serve() error {
 	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes
 	waSvc.Speak = aiSvc.Speak       // and get voice notes back, if they like
 	calls.status = status           // the owner posts to status pages from WhatsApp
+	groupPost = calls.groupIncident
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

@@ -44,7 +44,7 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Integrations → WhatsApp: the owner links their WhatsApp and sets how each person is reached. */
 export function WhatsAppSetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions; voice: VoiceSetup }>("/api/integrations/whatsapp");
+  const data = useApi<{ status: WaStatus; people: (WaPerson & { id: string; name: string })[]; options: WaOptions; voice: VoiceSetup; group: WaGroup }>("/api/integrations/whatsapp");
   const [phone, setPhone] = useState("");
   const [byPhone, setByPhone] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -120,6 +120,7 @@ export function WhatsAppSetup() {
       </Card>
       <PeopleCard people={data.data!.people} linked={st.linked} voice={data.data!.voice} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
+      {st.linked && <GroupCard group={data.data!.group} people={data.data!.people.filter((x) => x.phone).length} onChange={reload} />}
       {st.linked && <MessagesCard />}
       {st.linked && <RemindersCard />}
       {st.linked && <Card><SectionTitle icon={<KeyRound size={15} />} title="Your action PIN" sub="What you say or write to confirm an action on WhatsApp, when PINs are asked for." /><PinField /></Card>}
@@ -471,4 +472,77 @@ function voiceHint(v: VoiceSetup | undefined, wanted: boolean) {
     default:
       return "Voice answers are read out by the calls' Live model, in its voice (they count in the monthly call minutes). Saving installs what they need on the dashboard's server, if it is missing.";
   }
+}
+
+interface WaGroup {
+  jid?: string;
+  name?: string;
+  incidents: "" | "critical" | "all";
+  answer: boolean;
+  invite?: string;
+}
+
+/** The team's WhatsApp group: incidents posted there, the AI answering mentions. */
+function GroupCard({ group, people, onChange }: { group: WaGroup; people: number; onChange: () => void }) {
+  const { toast } = useStore();
+  const [name, setName] = useState("Fleetwatch team");
+  const [busy, setBusy] = useState("");
+  const [notAdded, setNotAdded] = useState<string[]>([]);
+  const [leave, setLeave] = useState(false);
+  const run = async (what: string, fn: () => Promise<unknown>, done: string) => {
+    setBusy(what);
+    try {
+      await fn();
+      toast(done);
+      onChange();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy("");
+  };
+  const set = (p: Partial<WaGroup>) => run("options", () => api("PUT", "/api/integrations/whatsapp/group", { incidents: group.incidents, answer: group.answer, ...p }), "Saved");
+  return (
+    <Card>
+      <SectionTitle icon={<Users size={15} />} title="Team group" sub="A WhatsApp group with everyone who has a number above: incidents are posted there, and the AI answers anyone who mentions your linked number (or replies to its messages)." />
+      {!group.jid ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <Field label="Group name" hint={`${people} people with a WhatsApp number are added.`} className="flex-1">
+            <Input value={name} maxLength={25} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Button disabled={!!busy || !name.trim() || people === 0} onClick={() => run("create", async () => {
+            const r = await api<{ notAdded: string[] }>("POST", "/api/integrations/whatsapp/group", { name });
+            setNotAdded(r.notAdded ?? []);
+          }, "Group created")}>{busy === "create" ? <Spinner size={14} /> : <Users size={14} />} Create the group</Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm"><b>{group.name}</b>
+            {group.invite && <a href={group.invite} target="_blank" rel="noreferrer" className="text-xs text-muted underline">invite link</a>}
+          </div>
+          <Field label="Post incidents">
+            <Select value={group.incidents} disabled={!!busy} onChange={(e) => set({ incidents: e.target.value as WaGroup["incidents"] })}>
+              <option value="">No</option>
+              <option value="critical">Critical ones</option>
+              <option value="all">Warnings and critical</option>
+            </Select>
+          </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={group.answer} disabled={!!busy} onChange={(e) => set({ answer: e.target.checked })} />
+            The AI answers when mentioned (no PINs there: actions that need one are done in a direct message)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => run("sync", () => api("POST", "/api/integrations/whatsapp/group/sync"), "New teammates added")}>{busy === "sync" ? <Spinner size={13} /> : <Users size={13} />} Add new teammates</Button>
+            <Button size="sm" variant="ghost" className="text-crit" disabled={!!busy} onClick={() => setLeave(true)}><Trash2 size={13} /> Leave the group</Button>
+          </div>
+        </div>
+      )}
+      {notAdded.length > 0 && (
+        <p className="mt-3 flex items-start gap-2 rounded-xl bg-warn-soft p-3 text-xs text-warn"><AlertTriangle size={13} className="mt-px shrink-0" />
+          <span>WhatsApp did not let {notAdded.join(", ")} be added directly (their privacy settings): send them the invite link.</span></p>
+      )}
+      <ConfirmDialog open={leave} title="Leave the team group?" confirmLabel="Leave" danger
+        message="Your linked WhatsApp leaves the group; nothing is posted there anymore. The group itself stays for the others."
+        onCancel={() => setLeave(false)} onConfirm={() => { setLeave(false); run("leave", () => api("DELETE", "/api/integrations/whatsapp/group"), "Left the group"); }} />
+    </Card>
+  );
 }

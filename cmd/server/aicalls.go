@@ -963,6 +963,9 @@ func (g *voiceActions) do(ctx context.Context, pin string) (any, error) {
 		return nil, valid.Error("they have not answered yet: ask them to confirm and wait for their yes")
 	}
 	if g.d.wa != nil && g.d.wa.Options().RequirePIN {
+		if whatsapp.InGroup(ctx) {
+			return nil, valid.Error("actions need a PIN, and a PIN is never given in the team group: message me directly for this")
+		}
 		if !g.d.wa.HasPIN(g.person) {
 			return nil, valid.Error("actions need a PIN and " + g.name + " has not set one (Integrations → WhatsApp)")
 		}

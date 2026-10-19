@@ -31,7 +31,7 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 		return out
 	}
 	mux.HandleFunc("GET /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options(), "canSpeak": whatsapp.CanSpeak(), "voice": s.WhatsApp.VoiceSetup()})
+		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options(), "canSpeak": whatsapp.CanSpeak(), "voice": s.WhatsApp.VoiceSetup(), "group": s.WhatsApp.Group()})
 	}))
 	mux.HandleFunc("PUT /api/integrations/whatsapp/options", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in whatsapp.Options
@@ -155,6 +155,66 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /api/me/whatsapp/test", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		test(w, r, linkKey(sess))
+	}))
+
+	// The team group (owner only, under /api/integrations).
+	phones := func() []string {
+		var out []string
+		for _, p := range people() {
+			if p.Phone != "" {
+				out = append(out, p.Phone)
+			}
+		}
+		return out
+	}
+	mux.HandleFunc("POST /api/integrations/whatsapp/group", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Name string }
+		if !decode(w, r, &in) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		g, missing, err := s.WhatsApp.CreateGroup(ctx, in.Name, phones())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "whatsapp.group", "", "created "+g.Name)
+		writeJSON(w, http.StatusOK, map[string]any{"group": g, "notAdded": missing})
+	}))
+	mux.HandleFunc("PUT /api/integrations/whatsapp/group", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct {
+			Incidents string
+			Answer    bool
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		g, err := s.WhatsApp.SetGroupOptions(in.Incidents, in.Answer)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, g)
+	}))
+	mux.HandleFunc("POST /api/integrations/whatsapp/group/sync", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := s.WhatsApp.AddToGroup(ctx, phones()); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	mux.HandleFunc("DELETE /api/integrations/whatsapp/group", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := s.WhatsApp.ForgetGroup(ctx); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "whatsapp.group", "", "left the team group")
+		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	// Messages passed on between the team: the owner sees all, a member their own.

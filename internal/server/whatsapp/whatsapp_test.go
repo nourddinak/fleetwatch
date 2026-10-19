@@ -15,6 +15,9 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 
 	"fleetwatch/internal/server/db"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestPeopleAndQuietHours(t *testing.T) {
@@ -266,5 +269,36 @@ func TestFFmpegRequest(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if FFmpegRequested(dir) {
 		t.Fatal("no retry loop after a failure")
+	}
+}
+
+// In the team group, only mentions of the linked number (or replies to it) are for the AI.
+func TestForBot(t *testing.T) {
+	me := types.NewJID("212600000001", types.DefaultUserServer)
+	lid := types.NewJID("123456789", types.HiddenUserServer)
+	cl := &whatsmeow.Client{Store: &store.Device{ID: &me, LID: lid}}
+	msg := func(ci *waE2E.ContextInfo) *waE2E.Message {
+		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("@123456789 is the API down?"), ContextInfo: ci}}
+	}
+	if !forBot(cl, msg(&waE2E.ContextInfo{MentionedJID: []string{lid.String()}})) {
+		t.Fatal("a mention of its LID")
+	}
+	if !forBot(cl, msg(&waE2E.ContextInfo{Participant: proto.String(me.String()), QuotedMessage: &waE2E.Message{Conversation: proto.String("🚨 down")}})) {
+		t.Fatal("a reply to one of its messages")
+	}
+	if forBot(cl, msg(&waE2E.ContextInfo{MentionedJID: []string{"212600000002@s.whatsapp.net"}})) || forBot(cl, &waE2E.Message{Conversation: proto.String("hi all")}) {
+		t.Fatal("someone else, or nobody")
+	}
+	if got := strings.TrimSpace(mentionRe.ReplaceAllString("@123456789 is the API down?", "")); got != "is the API down?" {
+		t.Fatal(got)
+	}
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, t.TempDir(), nil)
+	if _, err := s.SetGroupOptions("all", true); err == nil {
+		t.Fatal("no group yet")
 	}
 }

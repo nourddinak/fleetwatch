@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/settings"
 )
@@ -116,4 +118,40 @@ func (d *callDeps) securityText(title, body string) {
 		body = body[:600] + "…"
 	}
 	d.text(oncall.Owner, "🛡️ "+title+"\n"+body)
+}
+
+// groupIncident posts an incident to the team group, as its options say.
+func (d *callDeps) groupIncident(ev incidents.Event) {
+	if d.wa == nil || !d.wa.Linked() {
+		return
+	}
+	g := d.wa.Group()
+	x := ev.Incident
+	if g.JID == "" || g.Incidents == "" || (g.Incidents == "critical" && x.Severity != "critical") || x.Severity == "info" {
+		return
+	}
+	var text string
+	switch ev.Kind {
+	case "opened":
+		icon := "⚠️"
+		if x.Severity == "critical" {
+			icon = "🚨"
+		}
+		text = fmt.Sprintf("%s *%s*\n%s · %s", icon, x.Title, x.Severity, d.serverName(x.ServerID))
+		if len(x.Samples) > 0 {
+			text += "\n" + x.Samples[0]
+		}
+		if g.Answer {
+			text += "\nMention me to ask about it, or say who takes it."
+		}
+	case "resolved":
+		text = fmt.Sprintf("✅ Resolved: %s (after %s)", x.Title, time.Since(time.UnixMilli(x.FirstAt)).Round(time.Minute))
+	default:
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.wa.PostToGroup(ctx, text); err != nil {
+		slog.Warn("whatsapp group post", "err", err)
+	}
 }

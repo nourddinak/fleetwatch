@@ -89,6 +89,9 @@ func TestVoiceActionGate(t *testing.T) {
 	if _, err := g.do(said, "1234"); err == nil {
 		t.Fatal("a wrong PIN ran it")
 	}
+	if _, err := g.do(whatsapp.WithGroup(said), "4821"); err == nil || !strings.Contains(err.Error(), "team group") {
+		t.Fatal("a PIN in the team group", err)
+	}
 	if out, err := g.do(said, "4 8 2 1"); err != nil || out != "ok" {
 		t.Fatal("the right PIN did not run it", out, err)
 	}
