@@ -62,6 +62,13 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 			}
 			return
 		}
+		if r.Header.Get("Authorization") == "Bearer cf-narrow" { // OAuth Clients only: lists nothing
+			if r.Method == "GET" {
+				json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []any{}})
+				return
+			}
+			r.Header.Set("Authorization", "Bearer cf-token")
+		}
 		if r.Header.Get("Authorization") != "Bearer cf-token" {
 			json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]string{{"message": "Invalid API Token"}}})
 			return
@@ -77,7 +84,7 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 			ok([]Zone{{ID: "z1", Name: "example.com"}})
 		case p == "/accounts":
 			ok([]map[string]string{{"id": "acc1", "name": "Me"}})
-		case p == "/accounts/acc1/oauth_clients" && r.Method == "POST":
+		case (p == "/accounts/acc1/oauth_clients" || p == "/accounts/0123456789abcdef0123456789abcdef/oauth_clients") && r.Method == "POST":
 			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes) ||
 				!strings.HasSuffix(body["redirect_uris"].([]any)[0].(string), CallbackPath) {
 				t.Errorf("client: %v", body)
@@ -162,10 +169,16 @@ func TestCloudflare(t *testing.T) {
 	if _, err := s.SignInURL("https://dash.test", "mem_1"); err == nil {
 		t.Fatal("sign-in without the OAuth client set up")
 	}
-	if _, err := s.AutoApp(ctx, "wrong", "https://dash.test"); err == nil {
+	if _, err := s.AutoApp(ctx, "wrong", "", "https://dash.test"); err == nil {
 		t.Fatal("a bad API token made a client")
 	}
-	if name, err := s.AutoApp(ctx, "cf-token", "https://dash.test"); err != nil || name != "Me" || s.AppClientID() != "cid" {
+	if _, err := s.AutoApp(ctx, "cf-narrow", "", "https://dash.test"); err == nil || !strings.Contains(err.Error(), "Account ID") {
+		t.Fatal("a token that lists nothing should ask for the Account ID", err)
+	}
+	if _, err := s.AutoApp(ctx, "cf-narrow", "0123456789ABCDEF0123456789ABCDEF", "https://dash.test"); err != nil || s.AppClientID() != "cid" {
+		t.Fatal("with the Account ID", err)
+	}
+	if name, err := s.AutoApp(ctx, "cf-token", "", "https://dash.test"); err != nil || name != "Me" || s.AppClientID() != "cid" {
 		t.Fatal(name, err)
 	}
 	start := func(owner string) string {

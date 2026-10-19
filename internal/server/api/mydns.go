@@ -75,11 +75,11 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 	}))
 	// Or made for the owner, with a one-time API token that is not kept.
 	mux.HandleFunc("POST /api/integrations/cloudflare/auto", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		var in struct{ Token string }
+		var in struct{ Token, AccountID string }
 		if !decode(w, r, &in) {
 			return
 		}
-		name, err := s.DNS.AutoApp(r.Context(), in.Token, s.publicURL(r))
+		name, err := s.DNS.AutoApp(r.Context(), in.Token, in.AccountID, s.publicURL(r))
 		if err != nil {
 			fail(w, err)
 			return

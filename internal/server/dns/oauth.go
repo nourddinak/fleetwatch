@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -31,6 +32,8 @@ const CallbackPath = "/api/integrations/cloudflare/callback"
 var Scopes = []string{"offline_access", "zone.read", "dns.write", "cache.purge", "zone-settings.write", "firewall-services.write"}
 
 const appAD = "dns.cloudflare-app"
+
+var accountRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type appKeys struct {
 	ClientID     string `json:"clientId"`
@@ -88,21 +91,39 @@ func (s *Service) SetApp(clientID, secret string) error {
 
 // AutoApp creates the OAuth client in the owner's Cloudflare account with a one-time API
 // token (OAuth Clients Write), with everything the sign-in needs, and keeps its ID and
-// secret. The token itself is not kept. It answers the account's name.
-func (s *Service) AutoApp(ctx context.Context, token, publicURL string) (string, error) {
-	token = strings.TrimSpace(token)
+// secret. The token itself is not kept. accountID may be "": the account is then found
+// through what the token can list. It answers the account's name.
+func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL string) (string, error) {
+	token, accountID = strings.TrimSpace(token), strings.ToLower(strings.TrimSpace(accountID))
 	if token == "" || len(token) > 300 {
 		return "", valid.Error("paste the API token")
 	}
+	if accountID != "" && !accountRe.MatchString(accountID) {
+		return "", valid.Error("an Account ID is 32 letters and digits (0-9, a-f)")
+	}
 	c := cloudflare{token: token}
-	var accounts []struct{ ID, Name string }
-	if _, err := c.call(ctx, http.MethodGet, "/accounts?per_page=50", nil, &accounts); err != nil {
-		return "", valid.Error("the token does not work: " + err.Error())
+	acc := struct{ ID, Name string }{ID: accountID, Name: "your Cloudflare account"}
+	if acc.ID == "" {
+		// A token with only OAuth Clients may list nothing; one that can also read the
+		// account or its domains tells which account it belongs to.
+		var accounts []struct{ ID, Name string }
+		if _, err := c.call(ctx, http.MethodGet, "/accounts?per_page=50", nil, &accounts); err != nil && strings.Contains(err.Error(), "Invalid") {
+			return "", valid.Error("the token does not work: " + err.Error())
+		}
+		if len(accounts) == 0 {
+			var zones []struct {
+				Account struct{ ID, Name string } `json:"account"`
+			}
+			c.call(ctx, http.MethodGet, "/zones?per_page=1", nil, &zones)
+			for _, z := range zones {
+				accounts = append(accounts, z.Account)
+			}
+		}
+		if len(accounts) == 0 || accounts[0].ID == "" {
+			return "", valid.Error("this token cannot tell which account is yours: paste your Account ID too (Cloudflare shows it on any domain's Overview page, bottom right)")
+		}
+		acc = accounts[0]
 	}
-	if len(accounts) == 0 {
-		return "", valid.Error("the token cannot see any Cloudflare account: give it your account")
-	}
-	acc := accounts[0]
 	body := map[string]any{"client_name": "Fleetwatch", "grant_types": []string{"authorization_code", "refresh_token"},
 		"response_types": []string{"code"}, "token_endpoint_auth_method": "client_secret_basic",
 		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": Scopes}

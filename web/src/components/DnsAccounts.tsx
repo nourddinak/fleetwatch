@@ -171,16 +171,19 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState(false);
   const [token, setToken] = useState("");
+  const [account, setAccount] = useState("");
+  const [askAccount, setAskAccount] = useState(false);
   const [byHand, setByHand] = useState(false);
   const auto = async () => {
     setBusy(true);
     try {
-      const r = await api<{ account: string }>("POST", "/api/integrations/cloudflare/auto", { token });
+      const r = await api<{ account: string }>("POST", "/api/integrations/cloudflare/auto", { token, accountId: account });
       setEditing(false);
       setToken("");
       onChange();
       toast(`Sign-in app made in ${r.account}: sign in with Cloudflare below, and delete the API token in Cloudflare`);
     } catch (e) {
+      if ((e as ApiError).message.includes("Account ID")) setAskAccount(true);
       toast((e as ApiError).message, "err");
     }
     setBusy(false);
@@ -219,9 +222,14 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
             <div className="flex items-center gap-2 text-sm font-medium"><Wand2 size={15} /> Set up automatically <Badge tone="ok">Recommended</Badge></div>
             <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
               <li>Open <a className="font-medium text-fg underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">Cloudflare → API tokens</a> → <b className="text-fg">Create token</b> → <b className="text-fg">Create Custom Token</b>.</li>
-              <li>Give it one permission: <b className="text-fg">Account → OAuth Clients → Edit</b> (or Write), for your account. Create it and copy it.</li>
+              <li>Give it one permission: <b className="text-fg">Account → OAuth Clients → Edit</b> (or Write), for your account. Adding <b className="text-fg">Account → Account Settings → Read</b> too saves you pasting your Account ID. Create it and copy it.</li>
               <li>Paste it here. Fleetwatch makes the sign-in app with every field and scope filled in. The token is used once and never kept: delete it in Cloudflare afterwards.</li>
             </ol>
+            {askAccount && (
+              <Field label="Account ID" hint="Cloudflare shows it on any domain's Overview page (bottom right, under API), and in the address bar: dash.cloudflare.com/<Account ID>/…">
+                <Input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="32 letters and digits" className="font-mono" autoComplete="off" />
+              </Field>
+            )}
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="API token" className="font-mono" autoComplete="off" />
               <Button disabled={busy || !token.trim()} onClick={auto} className="shrink-0">{busy ? <Spinner size={13} /> : <Wand2 size={14} />} Set up automatically</Button>
