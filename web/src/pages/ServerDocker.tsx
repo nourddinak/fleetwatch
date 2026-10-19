@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Container, Download, FileText, HardDrive, Layers, Package, Play, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
+import { ArrowUpCircle, Check, Container, Download, FileText, HardDrive, Layers, Package, Play, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -22,6 +22,8 @@ interface Container {
   memPct: number;
   memUsed: number;
   memLimit: number;
+  digests?: string[];
+  update?: "available" | "current"; // whether the image tag points to a newer image
 }
 interface Image {
   id: string;
@@ -70,6 +72,9 @@ export function ServerDocker() {
   const refresh = useCallback(() => {
     api("POST", `/api/servers/${id}/docker/refresh`).catch((e: ApiError) => toast(e.message, "err"));
   }, [id, toast]);
+  const checkUpdates = () => {
+    api("POST", `/api/servers/${id}/docker/updates`).then(() => toast("Asking the registries for newer images…")).catch((e: ApiError) => toast(e.message, "err"));
+  };
   useEffect(() => {
     refresh();
     const t = setInterval(() => document.visibilityState === "visible" && refresh(), 20_000);
@@ -110,6 +115,7 @@ export function ServerDocker() {
   if (!rep.available) return <EmptyState icon={<Container size={20} />} title="Docker is not installed" desc={`No docker command on ${getServer(id)?.name ?? "this server"}.`} />;
   const busy = (kind: string, target: string) => st.data!.running.find((a) => a.kind === kind && a.target === target);
   const running = rep.containers.filter((c) => c.state === "running").length;
+  const updates = rep.containers.filter((c) => c.update === "available").length;
   const dangling = rep.images.filter((i) => i.dangling);
   const actions = (kind: string, target: string, isRunning: boolean, extra?: React.ReactNode) => {
     const b = busy(kind, target);
@@ -136,9 +142,13 @@ export function ServerDocker() {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Badge tone="ok">{running} running</Badge>
           <Badge>{rep.containers.length - running} stopped</Badge>
+          {updates > 0 && <Badge tone="warn"><ArrowUpCircle size={11} /> {updates} update{updates === 1 ? "" : "s"} available</Badge>}
           <span className="text-xs text-muted">Docker {rep.version} · updated {relTime(rep.at)}</span>
         </div>
-        <Button size="sm" variant="secondary" onClick={refresh} disabled={st.data?.loading}>{st.data?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />} Refresh</Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={checkUpdates} title="Ask Docker Hub, GHCR and the other registries whether the images have newer versions"><ArrowUpCircle size={14} /> Check for updates</Button>
+          <Button size="sm" variant="secondary" onClick={refresh} disabled={st.data?.loading}>{st.data?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />} Refresh</Button>
+        </div>
       </div>
       {rep.error && <div className="rounded-2xl bg-crit-soft px-4 py-3 text-sm text-crit">{rep.error}</div>}
       <Segmented value={tab} onChange={setTab} options={[
@@ -157,7 +167,17 @@ export function ServerDocker() {
                     <div className="font-medium">{c.name}</div>
                     {c.project && <div className="text-[11px] text-muted">{c.project} · {c.service}</div>}
                   </Td>
-                  <Td className="max-w-[14rem] truncate font-mono text-xs" title={c.image}>{c.image}</Td>
+                  <Td className="max-w-[14rem]">
+                    <div className="truncate font-mono text-xs" title={c.image}>{c.image}</div>
+                    {c.update === "available" ? (
+                      <button className="mt-1" title="Pull the newest image and recreate"
+                        onClick={() => setConfirm({ kind: "container", target: c.name, action: "update", title: `Update ${c.name}?`, message: `${c.image} has a newer image. This pulls it and recreates the container${c.project ? " with docker compose" : ""} (a few seconds of downtime).` })}>
+                        <Badge tone="warn"><ArrowUpCircle size={11} /> Update available</Badge>
+                      </button>
+                    ) : c.update === "current" ? (
+                      <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted"><Check size={11} /> Up to date</div>
+                    ) : null}
+                  </Td>
                   <Td><Badge tone={STATE_TONE[c.state] ?? "neutral"} dot>{c.state}</Badge><div className="mt-0.5 text-[11px] text-muted">{c.status}</div></Td>
                   <Td>{c.state === "running" ? `${c.cpu.toFixed(1)}%` : "—"}</Td>
                   <Td>{c.state === "running" ? <span title={`${c.memPct.toFixed(1)}% of ${fmtBytes(c.memLimit)}`}>{fmtBytes(c.memUsed)}</span> : "—"}</Td>

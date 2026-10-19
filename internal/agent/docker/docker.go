@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,6 +154,30 @@ func Report(ctx context.Context) proto.DockerReport {
 			usedImages[r.Image+":latest"] = true
 		}
 		rep.Containers = append(rep.Containers, c)
+	}
+	// The registry digests of the image each container runs: the dashboard compares them
+	// with what the tag points to now.
+	if len(rep.Containers) > 0 {
+		ids := make([]string, 0, len(rep.Containers))
+		for _, c := range rep.Containers {
+			ids = append(ids, c.ID)
+		}
+		if s, err := run(ctx, 30*time.Second, append([]string{"inspect", "--format", "{{.Id}} {{.Image}}"}, ids...)...); err == nil {
+			imageOf, imgs := map[string]string{}, []string{}
+			for _, l := range strings.Split(s, "\n") {
+				if id, img, ok := strings.Cut(strings.TrimSpace(l), " "); ok {
+					imageOf[id] = img
+					imgs = append(imgs, img)
+				}
+			}
+			slices.Sort(imgs)
+			if d, err := run(ctx, 30*time.Second, append([]string{"image", "inspect", "--format", "{{.Id}} {{json .RepoDigests}}"}, slices.Compact(imgs)...)...); err == nil {
+				digests := repoDigests(d)
+				for i := range rep.Containers {
+					rep.Containers[i].Digests = digests[imageOf[rep.Containers[i].ID]]
+				}
+			}
+		}
 	}
 	if s, err := run(ctx, 30*time.Second, "images", "--no-trunc", "--format", "{{json .}}"); err == nil {
 		for _, r := range lines[imageRow](s) {
@@ -299,4 +324,23 @@ func logs(ctx context.Context, id string) (string, error) {
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
 	return buf.String(), err
+}
+
+// repoDigests reads `docker image inspect --format '{{.Id}} {{json .RepoDigests}}'`:
+// image ID → the digests it was pulled as.
+func repoDigests(out string) map[string][]string {
+	m := map[string][]string{}
+	for _, l := range strings.Split(out, "\n") {
+		id, js, ok := strings.Cut(strings.TrimSpace(l), " ")
+		var list []string
+		if !ok || json.Unmarshal([]byte(js), &list) != nil {
+			continue
+		}
+		for _, rd := range list {
+			if _, d, ok := strings.Cut(rd, "@"); ok {
+				m[id] = append(m[id], d)
+			}
+		}
+	}
+	return m
 }

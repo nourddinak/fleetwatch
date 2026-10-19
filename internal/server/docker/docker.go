@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -35,15 +36,19 @@ type Service struct {
 	AgentVersion func(serverID string) string
 	Bus          *live.Bus
 	Now          func() time.Time
+	Client       *http.Client // to the image registries
 
 	mu      sync.Mutex
+	latest  map[string]latest // image reference → what its tag points to
+	asking  map[string]bool
 	state   map[string]*State
 	waiting map[string]chan proto.DockerResult // by run ID
 	started map[string]time.Time               // run ID → when it was sent
 }
 
 func New(bus *live.Bus) *Service {
-	return &Service{Bus: bus, Now: time.Now, state: map[string]*State{}, waiting: map[string]chan proto.DockerResult{}, started: map[string]time.Time{}}
+	return &Service{Bus: bus, Now: time.Now, Client: &http.Client{Timeout: 15 * time.Second}, state: map[string]*State{},
+		waiting: map[string]chan proto.DockerResult{}, started: map[string]time.Time{}, latest: map[string]latest{}, asking: map[string]bool{}}
 }
 
 func (s *Service) get(id string) *State {
@@ -194,9 +199,15 @@ func (s *Service) OnReport(serverID string, data json.RawMessage) {
 	s.mu.Lock()
 	st := s.get(serverID)
 	st.Report, st.Loading = &rep, false
+	s.annotate(st)
 	cp := *st
 	s.mu.Unlock()
 	s.publish(serverID, cp)
+	go func() { // images not asked about yet
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		s.CheckUpdates(ctx, false)
+	}()
 }
 
 func (s *Service) OnResult(serverID string, data json.RawMessage) {

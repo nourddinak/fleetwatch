@@ -29,6 +29,15 @@ func (s *server) dockerRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "loading"})
 	}))
+	// Ask the registries again now whether the images have newer versions.
+	mux.HandleFunc("POST /api/servers/{id}/docker/updates", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			s.Docker.CheckUpdates(ctx, true)
+		}()
+		w.WriteHeader(http.StatusAccepted)
+	}))
 	// action: start, stop, restart and update for operators; delete removes containers,
 	// images and volumes, owner only (see access.go).
 	act := func(destructive bool) func(http.ResponseWriter, *http.Request, auth.Session) {

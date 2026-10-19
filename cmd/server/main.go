@@ -759,6 +759,9 @@ func serve() error {
 				return
 			case <-t.C:
 				syncBlocks()
+				c, cancel := context.WithTimeout(ctx, 5*time.Minute)
+				dockerSvc.CheckUpdates(c, false) // asks only about images not checked for 6 hours
+				cancel()
 			}
 		}
 	}()

@@ -581,6 +581,10 @@ type DockerContainer struct {
 	MemPct   float64 `json:"memPct"` // of the container's limit
 	MemUsed  int64   `json:"memUsed"`
 	MemLimit int64   `json:"memLimit"`
+	// Digests are the registry digests its image was pulled as (from v0.9.88 agents).
+	Digests []string `json:"digests,omitempty"`
+	// Update is set by the dashboard: available (the tag points to a newer image) or current.
+	Update string `json:"update,omitempty"`
 }
 
 type DockerImage struct {

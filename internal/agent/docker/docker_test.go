@@ -37,3 +37,10 @@ func TestActRefusesBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestRepoDigests(t *testing.T) {
+	got := repoDigests("sha256:aaa [\"nginx@sha256:111\",\"docker.io/library/nginx@sha256:111\"]\nsha256:bbb []\nsha256:ccc null\n")
+	if len(got["sha256:aaa"]) != 2 || got["sha256:aaa"][0] != "sha256:111" || len(got["sha256:bbb"]) != 0 {
+		t.Fatal(got)
+	}
+}
