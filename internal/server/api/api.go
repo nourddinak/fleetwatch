@@ -41,6 +41,7 @@ import (
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
+	"fleetwatch/internal/server/whatsapp"
 	"fleetwatch/internal/server/vulns"
 )
 
@@ -79,6 +80,7 @@ type Deps struct {
 	Sites      *sites.Service
 	EnvFiles   *envfile.Service
 	DNS        *dns.Service
+	WhatsApp   *whatsapp.Service
 	EnvHistory *envfile.History
 	// ServerFileHistory keeps servers' Caddyfile versions.
 	ServerFileHistory *envfile.History
@@ -164,6 +166,9 @@ func New(d Deps) http.Handler {
 	s.appEnvRoutes(mux) // needs EnvFiles only once the password checked out
 	if d.DNS != nil {
 		s.myDNSRoutes(mux)
+	}
+	if d.WhatsApp != nil {
+		s.whatsAppRoutes(mux)
 	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))

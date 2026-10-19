@@ -1,0 +1,109 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/whatsapp"
+)
+
+// whatsAppRoutes: the owner links their WhatsApp and sets how each person is reached
+// (Integrations → WhatsApp); everyone may change their own number, language and quiet
+// hours (Settings → Account). Who is paged, in which order and for what is On-call's.
+func (s *server) whatsAppRoutes(mux *http.ServeMux) {
+	type row struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		whatsapp.Person
+	}
+	people := func() []row {
+		saved := s.WhatsApp.People()
+		out := []row{}
+		if s.OnCall != nil && s.OnCall.People != nil {
+			for _, p := range s.OnCall.People() {
+				out = append(out, row{p.ID, p.Name, saved[p.ID]})
+			}
+		}
+		return out
+	}
+	mux.HandleFunc("GET /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages})
+	}))
+	mux.HandleFunc("POST /api/integrations/whatsapp/link", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Phone string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.WhatsApp.Link(in.Phone); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.WhatsApp.Status())
+	}))
+	mux.HandleFunc("DELETE /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		s.WhatsApp.Unlink(r.Context())
+		s.audit(r, "integration.whatsapp.disconnect", "", "")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("PUT /api/integrations/whatsapp/people/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in whatsapp.Person
+		if !decode(w, r, &in) {
+			return
+		}
+		id := r.PathValue("id")
+		known := false
+		for _, p := range people() {
+			known = known || p.ID == id
+		}
+		if !known {
+			writeError(w, http.StatusNotFound, "not_found", "No such person.")
+			return
+		}
+		p, err := s.WhatsApp.SetPerson(id, in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	}))
+	test := func(w http.ResponseWriter, r *http.Request, id string) {
+		p, ok := s.WhatsApp.PersonOf(id)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "no_phone", "Save a WhatsApp number first.")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if err := s.WhatsApp.Send(ctx, p.Phone, "✅ Fleetwatch: this is a test. On-call alerts will reach you here on WhatsApp."); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+	mux.HandleFunc("POST /api/integrations/whatsapp/people/{id}/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		test(w, r, r.PathValue("id"))
+	}))
+	// Everyone's own settings.
+	mux.HandleFunc("GET /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		p, _ := s.WhatsApp.PersonOf(linkKey(sess))
+		writeJSON(w, http.StatusOK, map[string]any{"available": s.WhatsApp.Linked(), "person": p, "languages": whatsapp.Languages})
+	}))
+	mux.HandleFunc("PUT /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		var in whatsapp.Person
+		if !decode(w, r, &in) {
+			return
+		}
+		p, err := s.WhatsApp.SetPerson(linkKey(sess), in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	}))
+	mux.HandleFunc("POST /api/me/whatsapp/test", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		test(w, r, linkKey(sess))
+	}))
+}
+

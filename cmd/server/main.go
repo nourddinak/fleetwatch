@@ -58,6 +58,7 @@ import (
 	"fleetwatch/internal/server/tokens"
 	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/vulns"
+	"fleetwatch/internal/server/whatsapp"
 	"fleetwatch/web"
 )
 
@@ -400,6 +401,11 @@ func serve() error {
 	status.Mail = statuspage.NewMailer(d, box)
 	// An on-call page: push to that person's phones (tapping opens the acknowledge
 	// button) and an email when they have an address and email is set up.
+	// The owner's WhatsApp, linked like WhatsApp Web, pages people there too.
+	waSvc := whatsapp.New(d, env("OPS_DATA_DIR", "data"), bus)
+	if err := waSvc.Start(context.Background()); err != nil {
+		slog.Warn("whatsapp", "err", err)
+	}
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {
@@ -424,6 +430,14 @@ func serve() error {
 			text := fmt.Sprintf("%s\n%s on %s.%s\n\nI'm on it (stops paging): %s\nDashboard: %s/#/incidents\n",
 				x.Title, x.Type, serverName(x.ServerID), why, ackURL, strings.TrimRight(os.Getenv("OPS_PUBLIC_URL"), "/"))
 			if err := status.Mail.Send(ctx, statuspage.Mail{To: []string{p.Email}, Subject: "[On call] " + x.Title, Text: text}); err == nil {
+				reached = true
+			} else {
+				errs = append(errs, err)
+			}
+		}
+		if wp, ok := waSvc.PersonOf(p.ID); ok && waSvc.Linked() && !wp.Quiet(time.Now()) {
+			text := fmt.Sprintf("🚨 On call: %s\n%s on %s.%s\n\nI'm on it (stops the paging): %s", x.Title, x.Type, serverName(x.ServerID), why, ackURL)
+			if err := waSvc.Send(ctx, wp.Phone, text); err == nil {
 				reached = true
 			} else {
 				errs = append(errs, err)
@@ -731,7 +745,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc,
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Push: pushSvc, Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
