@@ -73,6 +73,7 @@ const Domains = page(() => import("./pages/Domains"), "Domains");
 const Uptime = page(() => import("./pages/Uptime"), "Uptime");
 const Sites = page(() => import("./pages/Sites"), "Sites");
 const ServerSites = page(() => import("./pages/Sites"), "ServerSites");
+const SitePage = page(() => import("./pages/Sites"), "SitePage");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
 const StatusPages = page(() => import("./pages/StatusEditor"), "StatusPages");
 const Security = page(() => import("./pages/Security"), "Security");
@@ -149,6 +150,7 @@ export default function App() {
             <Route path="domains" element={<Domains />} />
             <Route path="uptime" element={<Uptime />} />
             <Route path="sites" element={<Sites />} />
+            <Route path="sites/:id" element={<SitePage />} />
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="status-page" element={<StatusPages />} />
             <Route path="status-page/:id" element={<StatusEditor />} />

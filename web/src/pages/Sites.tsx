@@ -1,11 +1,11 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, Hand, History, Info, KeyRound, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, SearchCheck, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Wand2, Workflow } from "lucide-react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, Hand, History, Info, KeyRound, LayoutDashboard, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, SearchCheck, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Wand2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { providerName } from "../components/DnsAccounts";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle, Segmented, CopyButton } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle, Segmented, CopyButton } from "../components/ui";
 import { cn } from "../utils/cn";
 
 interface Plan {
@@ -125,7 +125,7 @@ export function Sites({ serverId }: { serverId?: string } = {}) {
   ) : null;
   const { setData } = all;
   const [adding, setAdding] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const nav = useNavigate();
   useEffect(() => subscribeLive((m) => {
     if (m.type === "site") setData((l) => (l ? (l.some((x) => x.id === m.data.id) ? l.map((x) => (x.id === m.data.id ? m.data : x)) : [...l, m.data]) : l));
     if (m.type === "site.removed") setData((l) => l?.filter((x) => x.id !== m.data.id) ?? l);
@@ -165,12 +165,11 @@ export function Sites({ serverId }: { serverId?: string } = {}) {
               })}
               <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-muted"><Rocket size={13} /> {list.data.length} {list.data.length === 1 ? "site" : "sites"}</span>
             </div>
-            <div className="grid gap-4 xl:grid-cols-2">{list.data.map((s) => <SiteCard key={s.id} site={s} onOpen={() => setOpen(s.id)} />)}</div>
+            <div className="grid gap-4 xl:grid-cols-2">{list.data.map((s) => <SiteCard key={s.id} site={s} onOpen={() => nav(`/sites/${s.id}`)} />)}</div>
           </div>
         )}
       </Gate>
       {adding && <NewSite serverId={serverId} owner={owner} onMoreRepos={() => goGitHub("install", toast)} onClose={() => setAdding(false)} onCreated={(s) => { setAdding(false); all.setData((l) => [...(l ?? []).filter((x) => x.id !== s.id), s]); }} />}
-      {open && <SiteDrawer id={open} onClose={() => setOpen(null)} />}
     </>
   );
 }
@@ -529,7 +528,7 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose
 /** A block of the site drawer: icon, title, then its content. */
 function Panel({ icon, title, sub, danger, children }: { icon: ReactNode; title: string; sub?: ReactNode; danger?: boolean; children: ReactNode }) {
   return (
-    <section className={cn("rounded-2xl border p-4", danger ? "border-crit/30" : "border-line")}>
+    <section className={cn("rounded-3xl border bg-surface p-5", danger ? "border-crit/30" : "border-line")}>
       <div className="mb-3 flex items-start gap-3">
         <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", danger ? "bg-crit-soft text-crit" : "bg-surface2 text-fg")}>{icon}</span>
         <div className="min-w-0 pt-0.5">
@@ -728,7 +727,11 @@ function SiteDNS({ site, onChange }: { site: Site; onChange: (s: Site) => void }
   );
 }
 
-function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+/** One site on a page of its own: overview, domains and DNS, build and deploy, Caddy. */
+export function SitePage() {
+  const { id = "" } = useParams();
+  const nav = useNavigate();
+  const [tab, setTab] = useState("overview");
   const { me, getServer, toast } = useStore();
   const data = useApi<{ site: Site; history: Deploy[] }>(`/api/sites/${id}`);
   const owner = !!data.data?.site.mine; // who added it, or the dashboard owner
@@ -753,7 +756,8 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => {
     if (env.data && "env" in env.data) setEnvText(env.data.env || env.data.example || "");
   }, [env.data]);
-  if (!site || domains === null || !plan) return <Drawer open onClose={onClose} title="Site"><LoadingState /></Drawer>;
+  if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
+  if (!site || domains === null || !plan) return <LoadingState />;
   const ip = getServer(site.serverId)?.ip;
   const [tone, label] = STATUS[site.status];
   const urls = addresses(site);
@@ -779,86 +783,44 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
     try {
       await api("DELETE", `/api/sites/${id}`);
       toast("Site removed");
-      onClose();
+      nav("/sites");
     } catch (e) {
       toast((e as ApiError).message, "err");
     }
   };
   const dirty = domains !== site.domains.join("\n") || auto !== site.autoDeploy || manual !== !!site.dnsManual || JSON.stringify(plan) !== JSON.stringify(site.plan);
   const envFromExample = env.data && "env" in env.data && !env.data.env && env.data.exampleFile;
+  const tabs = [
+    { value: "overview", label: "Overview", icon: LayoutDashboard },
+    ...(owner ? [{ value: "domains", label: "Domains & DNS", icon: Globe }, { value: "deploy", label: site.plan.kind === "build" ? "Build & deploy" : "Deploy", icon: Hammer }] : []),
+    { value: "caddy", label: "Caddy", icon: FileCode2 },
+  ];
+  const current = tabs.some((t) => t.value === tab) ? tab : "overview";
   return (
-    <Drawer open onClose={onClose}
-      title={
-        <span className="flex items-center gap-3">
-          <SiteIcon site={site} size={36} />
-          <span className="min-w-0">
-            <span className="flex items-center gap-2"><span className="truncate">{site.name}</span><Badge tone={tone} dot pulse={site.status === "building" || site.status === "deploying"}>{label}</Badge></span>
-            <span className="block truncate text-xs font-normal text-muted">{site.plan.framework} · {site.plan.kind === "build" ? "built by GitHub Actions" : "published as is"}</span>
-          </span>
-        </span>
-      }>
-      <div className="space-y-4">
-        <div className="grid gap-2 rounded-2xl bg-surface2/60 p-4 text-xs">
-          <a href={`https://github.com/${site.repo}`} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 hover:underline"><Github size={13} /><span className="truncate">{site.repo}</span><ExternalLink size={11} className="text-muted" /></a>
-          <span className="flex items-center gap-2"><GitBranch size={13} /><span className="font-mono">{site.branch}</span></span>
-          {site.createdBy && <span className="flex items-center gap-2"><UserRound size={13} />Added by {site.createdBy}{!site.mine && " · only they and the owner can change it"}</span>}
-          <span className="flex min-w-0 items-center gap-2"><ServerIcon size={13} /><span className="truncate font-mono">{getServer(site.serverId)?.name ?? "removed server"}:/var/www/{site.name}</span></span>
-          {site.commit && <span className="flex min-w-0 items-center gap-2"><GitCommitHorizontal size={13} /><span className="font-mono">{site.commit.slice(0, 7)}</span><span className="truncate text-muted">{site.message}</span><span className="ml-auto shrink-0 text-muted">{relTime(site.deployedAt)}</span></span>}
-          <div className="mt-1 flex flex-wrap gap-2">
-            {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm"><ExternalLink size={13} /> Open site</Button></a>}
-            {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={13} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
-            {site.buildUrl && site.plan.kind === "build" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={13} /> Last build</Button></a>}
-          </div>
-        </div>
-
-        <SiteError site={site} onRetry={() => redeploySite(site, toast)} />
-
-        {owner && (
-          <Panel icon={<Globe size={15} />} title="Addresses" sub="Where the site answers.">
-            {urls.filter((u) => u.auto).map((u) => (
-              <div key={u.label} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
-                <Link2 size={13} className="shrink-0 text-muted" />
-                <a href={u.href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-[12px] hover:underline">{u.label}</a>
-                <Badge tone="ok">Automatic</Badge>
-              </div>
-            ))}
-            {site.atPath && <p className="flex gap-2 text-[11px] text-muted"><Info size={13} className="shrink-0" />Sandboxed under the dashboard's domain: storage lasts until the page reloads. Add your own domain for full browser features.</p>}
-            <Field label="Your own domains" hint="One per line. Caddy gets the HTTPS certificate for each.">
-              <div className="relative">
-                <Globe size={14} className="pointer-events-none absolute left-4 top-3.5 text-muted" />
-                <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" className="pl-10 font-mono text-[12px]" />
-              </div>
-            </Field>
-            {(site.domains.length > 0 || domains.trim()) && <DnsMode manual={manual} onChange={setManual} connected={(cloudflare.data?.accounts?.length ?? 0) > 0} />}
-            {manual !== !!site.dnsManual ? <p className="text-[11px] text-muted">Save to switch.</p>
-              : site.dnsManual ? <ManualDNS site={site} ip={ip} /> : <SiteDNS site={site} onChange={(st) => data.setData({ ...data.data!, site: st })} />}
-          </Panel>
-        )}
-
-        <SiteCaddy site={site} editing={caddyText} setEditing={setCaddyText}
-          onSaved={(st) => { data.setData({ ...data.data!, site: st }); setCaddyText(null); }} />
-
-        {owner && (
-          <Panel icon={<Hammer size={15} />} title="Deploying" sub={site.plan.kind === "build" ? "How GitHub Actions builds it." : "Which files are published."}>
-            <ToggleRow label="Deploy every push" desc={site.plan.kind === "build" ? "Each build GitHub Actions finishes goes live." : `Each push to ${site.branch} goes live.`} checked={auto} onChange={setAuto} />
-            <PlanFields plan={plan} onChange={setPlan} />
-            <div className="flex justify-end"><Button size="sm" disabled={!dirty} onClick={save}><Check size={13} /> Save changes</Button></div>
-          </Panel>
-        )}
-
-        {owner && site.plan.kind === "build" && envText !== null && (
-          <Panel icon={<KeyRound size={15} />} title=".env" sub={envFromExample ? `Filled from ${env.data && "exampleFile" in env.data ? env.data.exampleFile : ""}: put in your values and save.` : "Used when building, so it ends up in the site's JavaScript."}>
-            <Textarea rows={5} value={envText} onChange={(e) => setEnvText(e.target.value)} className="font-mono text-[12px]" placeholder="VITE_API_URL=https://api.example.com" />
-            <div className="flex flex-wrap justify-end gap-2">
-              {env.data && "env" in env.data && env.data.example && envText !== env.data.example && (
-                <Button size="sm" variant="ghost" onClick={() => setEnvText(env.data && "example" in env.data ? env.data.example ?? "" : "")}><FileCode2 size={13} /> Load {env.data.exampleFile}</Button>
-              )}
-              <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}><RefreshCw size={13} /> Save and rebuild</Button>
-            </div>
-          </Panel>
-        )}
-
-        <Panel icon={<History size={15} />} title="Deploys" sub="The last 20.">
+    <>
+      <PageHeader
+        back={{ to: "/sites", label: "All sites" }}
+        title={<span className="flex min-w-0 items-center gap-3"><SiteIcon site={site} size={40} /><span className="truncate">{site.name}</span></span>}
+        badge={<Badge tone={tone} dot pulse={site.status === "building" || site.status === "deploying"}>{label}</Badge>}
+        sub={`${site.plan.framework} · ${site.plan.kind === "build" ? "built by GitHub Actions" : "published as is"} · ${site.repo}`}
+        actions={
+          <>
+            {site.buildUrl && site.plan.kind === "build" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={14} /> Last build</Button></a>}
+            {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={14} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
+            {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary"><ExternalLink size={14} /> Open site</Button></a>}
+            {owner && <Button size="sm" disabled={!dirty} onClick={save}><Check size={14} /> Save</Button>}
+          </>
+        }
+      />
+      <div className="mb-5 empty:hidden"><SiteError site={site} onRetry={() => redeploySite(site, toast)} /></div>
+      <div className="mb-5 overflow-x-auto">
+        <Segmented value={current} onChange={setTab} options={tabs.map((t) => ({ value: t.value, label: <span className="inline-flex items-center gap-1.5"><t.icon size={13} />{t.label}</span> }))} />
+      </div>
+      <div className="pb-20">
+        {current === "overview" && (
+          <div className="grid gap-6 xl:grid-cols-3">
+            <div className="space-y-6 xl:col-span-2">
+              <Panel icon={<History size={15} />} title="Deploys" sub="The last 20.">
           {data.data!.history.length === 0 && <p className="text-sm text-muted">None yet.</p>}
           <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-line">
             {data.data!.history.map((d, i) => (
@@ -879,16 +841,86 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
             ))}
           </ol>
         </Panel>
-
-        {owner && (
+            </div>
+            <div className="space-y-6">
+              <Panel icon={<Info size={15} />} title="Details">
+                <dl className="space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><Github size={13} />Repository</dt><dd className="min-w-0 truncate"><a href={`https://github.com/${site.repo}`} target="_blank" rel="noreferrer" className="hover:underline">{site.repo}</a></dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><GitBranch size={13} />Branch</dt><dd className="font-mono">{site.branch}</dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><ServerIcon size={13} />Server</dt><dd className="min-w-0 truncate font-mono">{getServer(site.serverId)?.name ?? "removed server"}</dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><FileCode2 size={13} />Folder</dt><dd className="min-w-0 truncate font-mono">/var/www/{site.name}</dd></div>
+                  {site.commit && <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><GitCommitHorizontal size={13} />Live commit</dt><dd className="font-mono">{site.commit.slice(0, 7)} · {relTime(site.deployedAt)}</dd></div>}
+                  {site.createdBy && <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><UserRound size={13} />Added by</dt><dd>{site.createdBy}</dd></div>}
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted"><Hammer size={13} />Deploys</dt><dd>{site.autoDeploy ? "On every push" : "By hand"}</dd></div>
+                </dl>
+                {!site.mine && <p className="text-[11px] text-muted">Only the person who added it and the owner can change it.</p>}
+              </Panel>
+              <Panel icon={<Link2 size={15} />} title="Addresses">
+                {urls.map((u) => (
+                  <a key={u.label} href={u.href} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-line px-3 py-2 hover:bg-surface2">
+                    <Globe size={13} className="shrink-0 text-muted" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{u.label}</span>
+                    <ExternalLink size={12} className="text-muted" />
+                  </a>
+                ))}
+                {owner && <button className="text-xs font-medium text-muted hover:text-fg" onClick={() => setTab("domains")}>Manage domains and DNS →</button>}
+              </Panel>
+              {owner && (
           <Panel icon={<Trash2 size={15} />} title="Remove site" danger
             sub={`Deletes its files and Caddy site from the server${site.plan.kind === "build" ? ", and the build workflow, build branch and .env secret from the repository" : ""}.`}>
             <div className="flex justify-end"><Button variant="danger" size="sm" onClick={() => setDel(true)}><Trash2 size={13} /> Remove {site.name}</Button></div>
           </Panel>
         )}
+            </div>
+          </div>
+        )}
+        {current === "domains" && <div className="max-w-3xl">{owner && (
+          <Panel icon={<Globe size={15} />} title="Addresses" sub="Where the site answers.">
+            {urls.filter((u) => u.auto).map((u) => (
+              <div key={u.label} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
+                <Link2 size={13} className="shrink-0 text-muted" />
+                <a href={u.href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-[12px] hover:underline">{u.label}</a>
+                <Badge tone="ok">Automatic</Badge>
+              </div>
+            ))}
+            {site.atPath && <p className="flex gap-2 text-[11px] text-muted"><Info size={13} className="shrink-0" />Sandboxed under the dashboard's domain: storage lasts until the page reloads. Add your own domain for full browser features.</p>}
+            <Field label="Your own domains" hint="One per line. Caddy gets the HTTPS certificate for each.">
+              <div className="relative">
+                <Globe size={14} className="pointer-events-none absolute left-4 top-3.5 text-muted" />
+                <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" className="pl-10 font-mono text-[12px]" />
+              </div>
+            </Field>
+            {(site.domains.length > 0 || domains.trim()) && <DnsMode manual={manual} onChange={setManual} connected={(cloudflare.data?.accounts?.length ?? 0) > 0} />}
+            {manual !== !!site.dnsManual ? <p className="text-[11px] text-muted">Save to switch.</p>
+              : site.dnsManual ? <ManualDNS site={site} ip={ip} /> : <SiteDNS site={site} onChange={(st) => data.setData({ ...data.data!, site: st })} />}
+          </Panel>
+        )}</div>}
+        {current === "deploy" && (
+          <div className="grid items-start gap-6 xl:grid-cols-2">
+            {owner && (
+          <Panel icon={<Hammer size={15} />} title="Deploying" sub={site.plan.kind === "build" ? "How GitHub Actions builds it." : "Which files are published."}>
+            <ToggleRow label="Deploy every push" desc={site.plan.kind === "build" ? "Each build GitHub Actions finishes goes live." : `Each push to ${site.branch} goes live.`} checked={auto} onChange={setAuto} />
+            <PlanFields plan={plan} onChange={setPlan} />
+          </Panel>
+        )}
+            {owner && site.plan.kind === "build" && envText !== null && (
+          <Panel icon={<KeyRound size={15} />} title=".env" sub={envFromExample ? `Filled from ${env.data && "exampleFile" in env.data ? env.data.exampleFile : ""}: put in your values and save.` : "Used when building, so it ends up in the site's JavaScript."}>
+            <Textarea rows={5} value={envText} onChange={(e) => setEnvText(e.target.value)} className="font-mono text-[12px]" placeholder="VITE_API_URL=https://api.example.com" />
+            <div className="flex flex-wrap justify-end gap-2">
+              {env.data && "env" in env.data && env.data.example && envText !== env.data.example && (
+                <Button size="sm" variant="ghost" onClick={() => setEnvText(env.data && "example" in env.data ? env.data.example ?? "" : "")}><FileCode2 size={13} /> Load {env.data.exampleFile}</Button>
+              )}
+              <Button size="sm" variant="secondary" disabled={envText === (env.data && "env" in env.data ? env.data.env : "")} onClick={saveEnv}><RefreshCw size={13} /> Save and rebuild</Button>
+            </div>
+          </Panel>
+        )}
+          </div>
+        )}
+        {current === "caddy" && <div className="max-w-4xl"><SiteCaddy site={site} editing={caddyText} setEditing={setCaddyText}
+          onSaved={(st) => { data.setData({ ...data.data!, site: st }); setCaddyText(null); }} /></div>}
       </div>
       <ConfirmDialog open={del} title={`Remove ${site.name}?`} confirmLabel="Remove" danger onConfirm={remove} onCancel={() => setDel(false)}
         message={`Its files in /var/www and its Caddy site are deleted from the server${site.plan.kind === "build" ? "; its build workflow, the fleetwatch-build branch and the .env secret are removed from the repository (unless another site builds from it)" : ""}.`} />
-    </Drawer>
+    </>
   );
 }
