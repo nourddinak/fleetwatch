@@ -163,7 +163,7 @@ function ZoneRow({ a, z }: { a: DnsAccount; z: Zone }) {
 export const providerName = (p: string) => (p === "cloudflare" ? "Cloudflare" : p);
 
 /** The owner's one-time setup: the OAuth client made in their Cloudflare account. */
-export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { clientId: string; redirectUri: string; scopes: string[]; onChange: () => void }) {
+export function CloudflareSetup({ clientId, redirectUri, scopes, noAnalytics, onChange }: { clientId: string; redirectUri: string; scopes: string[]; noAnalytics?: boolean; onChange: () => void }) {
   const { toast } = useStore();
   const [editing, setEditing] = useState(!clientId);
   const [id, setId] = useState("");
@@ -202,12 +202,19 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, onChange }: { c
     }
     setBusy(false);
   };
-  const perms = ["Zone Read", "DNS Write", "Cache Purge", "Zone Settings Write", "Firewall Services Write"];
+  const perms = ["Zone Read", "DNS Write", "Cache Purge", "Zone Settings Write", "Firewall Services Write", "Analytics Read"];
   return (
     <Card>
       <SectionTitle icon={<Cloudflare size={17} />} title="Sign in with Cloudflare"
         sub="Once: create a sign-in app in your Cloudflare account, so you and your team can sign in with Cloudflare instead of pasting API keys."
         action={clientId ? <Badge tone="ok">Set up</Badge> : undefined} />
+      {clientId && !editing && noAnalytics && (
+        <div className="mb-4 space-y-2 rounded-2xl bg-warn-soft p-4 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warn"><AlertTriangle size={13} className="mt-px shrink-0" />Traffic stats are off: your sign-in app does not have the <b>Analytics Read</b> scope.</p>
+          <p className="text-muted">In Cloudflare: Manage account → <a className="underline" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noreferrer">OAuth clients</a> → your client → edit the scopes and add <b>Analytics Read</b>. Then press the button and sign in with Cloudflare again.</p>
+          <Button size="sm" variant="secondary" onClick={async () => { try { await api("PUT", "/api/integrations/cloudflare/analytics"); onChange(); toast("Now sign in with Cloudflare again below"); } catch (e) { toast((e as ApiError).message, "err"); } }}>I added it</Button>
+        </div>
+      )}
       {clientId && !editing ? (
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="text-muted">Client ID</span>

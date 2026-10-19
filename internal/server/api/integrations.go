@@ -33,7 +33,8 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 		out := map[string]any{"github": s.GitHub.Status(), "publicUrl": pub, "links": s.GitHub.Links(),
 			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")}
 		if s.DNS != nil {
-			out["cloudflare"] = map[string]any{"clientId": s.DNS.AppClientID(), "redirectUri": pub + dns.CallbackPath, "scopes": dns.Scopes}
+			out["cloudflare"] = map[string]any{"clientId": s.DNS.AppClientID(), "redirectUri": pub + dns.CallbackPath,
+				"scopes": append(dns.Scopes, dns.AnalyticsScope), "noAnalytics": s.DNS.AppNoAnalytics()}
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))

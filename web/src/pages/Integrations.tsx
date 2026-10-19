@@ -48,7 +48,7 @@ interface RepoItem {
 export function IntegrationsSettings() {
   const { subscribeLive, toast } = useStore();
   const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean; links: Record<string, { login: string; installations: number[]; linkedAt: number }>;
-    cloudflare?: { clientId: string; redirectUri: string; scopes: string[] } }>("/api/integrations");
+    cloudflare?: { clientId: string; redirectUri: string; scopes: string[]; noAnalytics?: boolean } }>("/api/integrations");
   const { setData } = data;
   const [params, setParams] = useSearchParams();
   useEffect(() => {
@@ -74,7 +74,7 @@ export function IntegrationsSettings() {
       <button className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg" onClick={() => setParams({})}><ArrowLeft size={14} /> All integrations</button>
       {tab === "cloudflare" && cf ? (
         <>
-          <CloudflareSetup clientId={cf.clientId} redirectUri={cf.redirectUri} scopes={cf.scopes} onChange={data.reload} />
+          <CloudflareSetup clientId={cf.clientId} redirectUri={cf.redirectUri} scopes={cf.scopes} noAnalytics={cf.noAnalytics} onChange={data.reload} />
           <DnsAccounts key={cf.clientId} />
         </>
       ) : (

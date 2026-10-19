@@ -45,6 +45,12 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		q := r.URL.Query()
+		if q.Get("error") == "invalid_scope" { // a client made without the traffic permission: go on without it
+			if u, err := s.DNS.RetryWithoutAnalytics(q.Get("state"), s.publicURL(r)); err == nil {
+				http.Redirect(w, r, u, http.StatusSeeOther)
+				return
+			}
+		}
 		a, err := s.DNS.FinishSignIn(ctx, q.Get("code"), q.Get("state"))
 		if err == nil && q.Get("error") != "" { // refused on Cloudflare's side: nothing was granted
 			err = errors.New("Cloudflare: " + q.Get("error_description"))
@@ -86,6 +92,13 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		}
 		s.audit(r, "integration.cloudflare.connect", "", "made automatically in "+name)
 		writeJSON(w, http.StatusOK, map[string]string{"account": name})
+	}))
+	mux.HandleFunc("PUT /api/integrations/cloudflare/analytics", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.DNS.AllowAnalytics(); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("DELETE /api/integrations/cloudflare", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.DNS.ClearApp(); err != nil {

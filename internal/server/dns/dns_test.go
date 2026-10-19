@@ -29,6 +29,7 @@ type fakeCF struct {
 	next    int
 	// sign-in
 	challenge, refresh, revoked string
+	hour                        string // the hour traffic is reported for
 }
 
 func (f *fakeCF) server(t *testing.T) *httptest.Server {
@@ -82,10 +83,22 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 		switch {
 		case p == "/zones":
 			ok([]Zone{{ID: "z1", Name: "example.com"}})
+		case p == "/graphql":
+			q, _ := body["query"].(string)
+			if hosts := body["variables"].(map[string]any)["hosts"].([]any); len(hosts) != 1 || hosts[0] != "shop.example.com" {
+				t.Errorf("graphql hosts: %v", hosts)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if strings.Contains(q, "firewallEventsAdaptiveGroups") {
+				w.Write([]byte(`{"data":{"viewer":{"zones":[{"threats":[{"count":7}]}]}}}`))
+				return
+			}
+			w.Write([]byte(`{"data":{"viewer":{"zones":[{"hours":[{"count":10,"sum":{"edgeResponseBytes":1000,"visits":4},"dimensions":{"datetimeHour":"` +
+				f.hour + `"}}],"countries":[{"count":9,"dimensions":{"clientCountryName":"MA"}},{"count":1,"dimensions":{"clientCountryName":"FR"}}]}]}}}`))
 		case p == "/accounts":
 			ok([]map[string]string{{"id": "acc1", "name": "Me"}})
 		case (p == "/accounts/acc1/oauth_clients" || p == "/accounts/0123456789abcdef0123456789abcdef/oauth_clients") && r.Method == "POST":
-			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes) ||
+			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes)+1 ||
 				!strings.HasSuffix(body["redirect_uris"].([]any)[0].(string), CallbackPath) {
 				t.Errorf("client: %v", body)
 			}
@@ -188,11 +201,21 @@ func TestCloudflare(t *testing.T) {
 		}
 		pu, _ := url.Parse(u)
 		q := pu.Query()
+		if !strings.Contains(q.Get("scope"), AnalyticsScope) != s.AppNoAnalytics() {
+			t.Fatal("traffic permission: ", q.Get("scope"))
+		}
 		if pu.Path != "/oauth2/auth" || q.Get("redirect_uri") != "https://dash.test"+CallbackPath || !strings.Contains(q.Get("scope"), "dns.write") || q.Get("code_challenge_method") != "S256" {
 			t.Fatal(u)
 		}
 		f.challenge = q.Get("code_challenge")
 		return q.Get("state")
+	}
+	// A client without the traffic permission: the sign-in starts over without it.
+	if u, err := s.RetryWithoutAnalytics(start("mem_1"), "https://dash.test"); err != nil || strings.Contains(u, "analytics") || !s.AppNoAnalytics() {
+		t.Fatal(u, err)
+	}
+	if s.AllowAnalytics(); s.AppNoAnalytics() {
+		t.Fatal("not allowed again")
 	}
 	state := start("mem_1")
 	if _, err := s.FinishSignIn(ctx, "bad", state); err == nil {
@@ -236,6 +259,15 @@ func TestCloudflare(t *testing.T) {
 		t.Fatalf("pointed twice: %+v %d", again, len(f.records))
 	}
 
+	f.hour = time.Now().UTC().Add(4 * time.Hour).Truncate(time.Hour).Format(time.RFC3339) // s.Now is 2 hours ahead here
+	tr, err := s.Traffic(ctx, "mem_1", []string{"shop.example.com", "other.org"})
+	if err != nil || tr.Requests != 10 || tr.Visits != 4 || tr.Bytes != 1000 || tr.Threats == nil || *tr.Threats != 7 ||
+		len(tr.Hours) != 24 || tr.Countries[0].Code != "MA" {
+		t.Fatalf("%+v %v", tr, err)
+	}
+	if _, err := s.Traffic(ctx, "mem_2", []string{"shop.example.com"}); err != ErrNoZone {
+		t.Fatal("another person's account was used for traffic", err)
+	}
 	s.Purge(ctx, "mem_1", []string{"shop.example.com"})
 	if len(f.purged) == 0 || f.purged[0] != "https://shop.example.com/" {
 		t.Fatal(f.purged)

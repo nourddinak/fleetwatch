@@ -591,7 +591,7 @@ func (s *Service) Delete(id string) (Site, error) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			s.DNS.Forget(ctx, dnsOwner(st), st.DNS)
+			s.DNS.Forget(ctx, DNSOwner(st), st.DNS)
 		}()
 	}
 	// What Fleetwatch added to the repository for building goes too, unless another
@@ -753,7 +753,7 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				s.DNS.Purge(ctx, owner, domains)
-			}(dnsOwner(st), slices.Clone(st.Domains))
+			}(DNSOwner(st), slices.Clone(st.Domains))
 		}
 		st.Status, st.Commit, st.Message, st.DeployedAt, st.Error = "live", commit, msg, s.Now().UnixMilli(), ""
 		st.CaddyConfig, st.CaddySource = res.CaddyConfig, res.Caddy
@@ -855,8 +855,8 @@ func (s *Service) OnPush(repo, branch, sha string) {
 	}
 }
 
-// dnsOwner is whose DNS accounts a site uses: the person who added it.
-func dnsOwner(st Site) string {
+// DNSOwner is whose DNS accounts a site uses: the person who added it.
+func DNSOwner(st Site) string {
 	if st.OwnerKey == "" {
 		return "owner"
 	}
@@ -882,14 +882,14 @@ func (s *Service) SyncDNS(id string, old []string, again bool) {
 			removed[d] = v
 		}
 	}
-	s.DNS.Forget(ctx, dnsOwner(st), removed)
+	s.DNS.Forget(ctx, DNSOwner(st), removed)
 	var todo []string
 	for _, d := range st.Domains {
 		if v, ok := st.DNS[d]; !st.DNSManual && (again || !ok || v.Status == "error") {
 			todo = append(todo, d)
 		}
 	}
-	got := s.DNS.Point(ctx, dnsOwner(st), s.PublicIP(st.ServerID), todo)
+	got := s.DNS.Point(ctx, DNSOwner(st), s.PublicIP(st.ServerID), todo)
 	s.mu.Lock() // the site may have changed meanwhile: merge into the latest
 	defer s.mu.Unlock()
 	if st, err = s.Get(id); err != nil {
@@ -919,7 +919,7 @@ func (s *Service) SetProxied(ctx context.Context, id, domain string, on bool) (S
 	if !ok || s.DNS == nil {
 		return st, valid.Error("no DNS account manages " + domain)
 	}
-	if v, err = s.DNS.SetProxied(ctx, dnsOwner(st), v, on); err != nil {
+	if v, err = s.DNS.SetProxied(ctx, DNSOwner(st), v, on); err != nil {
 		return st, err
 	}
 	s.mu.Lock()

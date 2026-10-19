@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/sites"
 )
 
@@ -148,6 +149,26 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		}
 		s.audit(r, "site.env", st.ServerID, st.Name)
 		writeJSON(w, http.StatusOK, mark(sess, st))
+	}))
+	// The site's last 24 hours on Cloudflare, through the account of whoever added it.
+	mux.HandleFunc("GET /api/sites/{id}/traffic", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		st, err := s.Sites.Get(r.PathValue("id"))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		if s.DNS == nil {
+			fail(w, dns.ErrNoZone)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		t, err := s.DNS.Traffic(ctx, sites.DNSOwner(st), st.Domains)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, t)
 	}))
 	// Where each of a site's domains points right now, as public DNS answers.
 	mux.HandleFunc("GET /api/sites/{id}/dns/check", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {

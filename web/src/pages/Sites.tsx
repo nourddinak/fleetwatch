@@ -1,8 +1,10 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, Hand, History, Info, KeyRound, LayoutDashboard, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, SearchCheck, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Wand2, Workflow } from "lucide-react";
+import { AlertTriangle, BarChart3, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, Hand, History, Info, KeyRound, LayoutDashboard, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, SearchCheck, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Wand2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
+import { MetricChart } from "../components/MetricChart";
+import { fmtBytes } from "../components/DiskRescue";
 import { providerName } from "../components/DnsAccounts";
 import { relTime } from "../mock/util";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle, Segmented, CopyButton } from "../components/ui";
@@ -727,6 +729,83 @@ function SiteDNS({ site, onChange }: { site: Site; onChange: (s: Site) => void }
   );
 }
 
+interface Traffic {
+  requests: number;
+  visits: number;
+  bytes: number;
+  threats?: number;
+  hours: { t: string; requests: number; bytes: number }[];
+  countries: { code: string; requests: number }[];
+}
+
+const regionName = (code: string) => {
+  try {
+    return new Intl.DisplayNames(undefined, { type: "region" }).of(code) ?? code;
+  } catch {
+    return code || "Unknown";
+  }
+};
+
+/** The site's last 24 hours on Cloudflare, through the account of whoever added it. */
+function SiteTraffic({ site }: { site: Site }) {
+  const data = useApi<Traffic>(`/api/sites/${site.id}/traffic`);
+  if (site.domains.length === 0) return null;
+  const t = data.data;
+  const top = t?.countries[0]?.requests || 1;
+  return (
+    <Panel icon={<BarChart3 size={15} />} title="Traffic" sub="The last 24 hours of its domains, from Cloudflare.">
+      {data.error ? (
+        <p className="flex items-start gap-2 text-xs text-muted">
+          <Info size={13} className="mt-px shrink-0" />
+          <span>{upper(data.error.replace(/.$/, ""))}. {data.error.includes("sign in") || data.error.includes("account") ? <Link to={site.mine ? "/integrations?tab=cloudflare" : "/settings/account"} className="underline">Cloudflare sign-in</Link> : null}</span>
+        </p>
+      ) : !t ? (
+        <LoadingState label="Asking Cloudflare…" />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Requests", t.requests.toLocaleString()],
+              ["Visits", t.visits.toLocaleString()],
+              ["Bandwidth", fmtBytes(t.bytes)],
+              ["Threats stopped", t.threats === undefined ? "–" : t.threats.toLocaleString()],
+            ].map(([k, v]) => (
+              <div key={k} className="rounded-2xl bg-surface2/60 px-3 py-2.5">
+                <div className="text-[11px] text-muted">{k}</div>
+                <div className="text-lg font-semibold tabular-nums">{v}</div>
+              </div>
+            ))}
+          </div>
+          {t.requests > 0 ? (
+            <>
+              <div>
+                <div className="mb-1 text-xs font-medium text-muted">Requests per hour</div>
+                <MetricChart kind="bar" height={120} unit=" requests" decimals={0} data={t.hours.map((h) => ({ t: Date.parse(h.t), v: h.requests }))} />
+              </div>
+              {t.countries.length > 0 && (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted">Top countries</div>
+                  <ul className="space-y-1.5">
+                    {t.countries.map((c) => (
+                      <li key={c.code} className="grid grid-cols-[8rem_1fr_auto] items-center gap-3 text-xs">
+                        <span className="truncate">{regionName(c.code)}</span>
+                        <span className="h-1.5 overflow-hidden rounded-full bg-surface2"><span className="block h-full rounded-full bg-[var(--chart1)]" style={{ width: `${(c.requests / top) * 100}%` }} /></span>
+                        <span className="tabular-nums text-muted">{c.requests.toLocaleString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted">No visits in the last 24 hours.</p>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 /** One site on a page of its own: overview, domains and DNS, build and deploy, Caddy. */
 export function SitePage() {
   const { id = "" } = useParams();
@@ -820,6 +899,7 @@ export function SitePage() {
         {current === "overview" && (
           <div className="grid gap-6 xl:grid-cols-3">
             <div className="space-y-6 xl:col-span-2">
+              <SiteTraffic site={site} />
               <Panel icon={<History size={15} />} title="Deploys" sub="The last 20.">
           {data.data!.history.length === 0 && <p className="text-sm text-muted">None yet.</p>}
           <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-line">

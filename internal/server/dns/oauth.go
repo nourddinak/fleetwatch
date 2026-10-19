@@ -38,12 +38,23 @@ var accountRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 type appKeys struct {
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
+	// NoAnalytics: the client does not list AnalyticsScope, so sign-ins leave it out.
+	NoAnalytics bool `json:"noAnalytics,omitempty"`
+}
+
+// scopes is what a sign-in asks for.
+func (k appKeys) scopes() []string {
+	if k.NoAnalytics {
+		return Scopes
+	}
+	return append(slices.Clone(Scopes), AnalyticsScope)
 }
 
 type tokens struct {
 	Access  string `json:"access"`
 	Refresh string `json:"refresh"`
-	Expires int64  `json:"expires"` // unix seconds
+	Expires int64  `json:"expires"`         // unix seconds
+	Scope   string `json:"scope,omitempty"` // what was granted, space separated
 }
 
 type signIn struct {
@@ -82,7 +93,11 @@ func (s *Service) SetApp(clientID, secret string) error {
 	if clientID == "" || secret == "" || len(clientID) > 200 || len(secret) > 500 {
 		return valid.Error("paste both the client ID and the client secret")
 	}
-	raw, _ := json.Marshal(appKeys{clientID, secret})
+	return s.saveApp(appKeys{ClientID: clientID, ClientSecret: secret})
+}
+
+func (s *Service) saveApp(k appKeys) error {
+	raw, _ := json.Marshal(k)
 	_, err := s.db.Exec(`INSERT INTO integrations (provider, public, secret_enc, created_at) VALUES ('cloudflare', '{}', ?, ?)
 		ON CONFLICT (provider) DO UPDATE SET secret_enc = excluded.secret_enc`, s.box.Seal(raw, appAD), s.Now().UnixMilli())
 	s.publish("")
@@ -126,7 +141,7 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 	}
 	body := map[string]any{"client_name": "Fleetwatch", "grant_types": []string{"authorization_code", "refresh_token"},
 		"response_types": []string{"code"}, "token_endpoint_auth_method": "client_secret_basic",
-		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": Scopes}
+		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": appKeys{}.scopes()}
 	if strings.HasPrefix(publicURL, "https://") {
 		body["client_uri"] = publicURL
 	}
@@ -139,7 +154,7 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 	path := "/accounts/" + acc.ID + "/oauth_clients"
 	_, err := c.call(ctx, http.MethodPost, path, body, &out)
 	if err != nil && strings.Contains(err.Error(), "offline") { // in case a client may not list offline access itself
-		body["scopes"] = slices.DeleteFunc(slices.Clone(Scopes), func(sc string) bool { return sc == "offline_access" })
+		body["scopes"] = slices.DeleteFunc(appKeys{}.scopes(), func(sc string) bool { return sc == "offline_access" })
 		_, err = c.call(ctx, http.MethodPost, path, body, &out)
 	}
 	if err != nil {
@@ -150,6 +165,40 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 		return "", valid.Error("Cloudflare made the sign-in app but did not send its ID and secret: set it up by hand with a new secret (Manage account → OAuth clients)")
 	}
 	return acc.Name, s.SetApp(id, secret)
+}
+
+// AppNoAnalytics reports whether sign-ins leave the traffic permission out.
+func (s *Service) AppNoAnalytics() bool {
+	k, _ := s.app()
+	return k.NoAnalytics
+}
+
+// AllowAnalytics: the owner added the traffic permission to the client; sign-ins ask for it again.
+func (s *Service) AllowAnalytics() error {
+	k, ok := s.app()
+	if !ok {
+		return valid.Error("Cloudflare is not set up")
+	}
+	k.NoAnalytics = false
+	return s.saveApp(k)
+}
+
+// RetryWithoutAnalytics handles Cloudflare refusing a sign-in because the client does not
+// list the traffic permission: from now on sign-ins leave it out, and this one starts over.
+func (s *Service) RetryWithoutAnalytics(state, publicURL string) (string, error) {
+	s.mu.Lock()
+	p, ok := s.pending[state]
+	delete(s.pending, state)
+	s.mu.Unlock()
+	k, set := s.app()
+	if !ok || !set || k.NoAnalytics {
+		return "", valid.Error("Cloudflare refused the permissions asked for")
+	}
+	k.NoAnalytics = true
+	if err := s.saveApp(k); err != nil {
+		return "", err
+	}
+	return s.SignInURL(publicURL, p.owner)
 }
 
 // ClearApp forgets the OAuth client; accounts already connected stop working.
@@ -182,7 +231,7 @@ func (s *Service) SignInURL(publicURL, owner string) (string, error) {
 	}
 	s.pending[state] = signIn{owner, verifier, redirect, s.Now().Add(15 * time.Minute)}
 	s.mu.Unlock()
-	q := url.Values{"response_type": {"code"}, "client_id": {k.ClientID}, "redirect_uri": {redirect}, "scope": {strings.Join(Scopes, " ")},
+	q := url.Values{"response_type": {"code"}, "client_id": {k.ClientID}, "redirect_uri": {redirect}, "scope": {strings.Join(k.scopes(), " ")},
 		"state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
 	return CloudflareWeb + "/oauth2/auth?" + q.Encode(), nil
 }
@@ -202,6 +251,7 @@ func (s *Service) tokenCall(ctx context.Context, k appKeys, form url.Values) (to
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scope        string `json:"scope"`
 		Error        string `json:"error"`
 		Description  string `json:"error_description"`
 	}
@@ -219,7 +269,7 @@ func (s *Service) tokenCall(ctx context.Context, k appKeys, form url.Values) (to
 	if out.ExpiresIn <= 0 {
 		out.ExpiresIn = 3600
 	}
-	return tokens{out.AccessToken, out.RefreshToken, s.Now().Unix() + out.ExpiresIn}, nil
+	return tokens{out.AccessToken, out.RefreshToken, s.Now().Unix() + out.ExpiresIn, out.Scope}, nil
 }
 
 // FinishSignIn trades the code Cloudflare sent back for tokens and keeps the account.
@@ -263,6 +313,7 @@ func (s *Service) FinishSignIn(ctx context.Context, code, state string) (Account
 			a.Label += fmt.Sprintf(" and %d more", len(zones)-1)
 		}
 	}
+	a.Scopes = strings.Fields(t.Scope)
 	raw, _ := json.Marshal(t)
 	data, _ := json.Marshal(a)
 	if _, err := s.db.Exec(`INSERT INTO dns_accounts (id, owner, data, secret_enc, created_at) VALUES (?, ?, ?, ?, ?)
@@ -307,6 +358,7 @@ func (s *Service) token(ctx context.Context, a *Account, enc []byte) (string, er
 	if nt.Refresh == "" {
 		nt.Refresh = t.Refresh
 	}
+	nt.Scope = cmp.Or(nt.Scope, t.Scope)
 	raw, _ := json.Marshal(nt)
 	s.db.Exec(`UPDATE dns_accounts SET secret_enc = ? WHERE id = ?`, s.box.Seal(raw, secretAD+a.ID), a.ID)
 	return nt.Access, nil

@@ -20,14 +20,15 @@ import (
 // Account is one person's DNS account. Owner is the dashboard user it belongs to
 // ("owner" or a member ID); the credentials are kept encrypted, never shown again.
 type Account struct {
-	ID         string `json:"id"`
-	Owner      string `json:"owner"`
-	Provider   string `json:"provider"`
-	Label      string `json:"label"`
-	Zones      []Zone `json:"zones"`
-	SyncBlocks bool   `json:"syncBlocks,omitempty"` // Cloudflare: block the dashboard's blocked IPs there too
-	CreatedAt  int64  `json:"createdAt"`
-	Error      string `json:"error,omitempty"` // the last problem talking to the provider
+	ID         string   `json:"id"`
+	Owner      string   `json:"owner"`
+	Provider   string   `json:"provider"`
+	Label      string   `json:"label"`
+	Zones      []Zone   `json:"zones"`
+	SyncBlocks bool     `json:"syncBlocks,omitempty"` // Cloudflare: block the dashboard's blocked IPs there too
+	Scopes     []string `json:"scopes,omitempty"`     // what the sign-in granted ("" for older sign-ins)
+	CreatedAt  int64    `json:"createdAt"`
+	Error      string   `json:"error,omitempty"` // the last problem talking to the provider
 }
 
 // State is how one site domain stands with DNS.
