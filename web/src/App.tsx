@@ -102,6 +102,7 @@ function ToIntegrations() {
   return <Navigate to={"/integrations" + useLocation().search} replace />;
 }
 const TwoFASettings = page(() => import("./pages/Settings"), "TwoFASettings");
+const UptimeReport = page(() => import("./pages/UptimeReport"), "UptimeReport");
 
 export default function App() {
   return (
@@ -111,6 +112,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/2fa" element={<TwoFA />} />
           <Route path="/setup" element={<Setup />} />
+          <Route path="/report/:id/:month" element={<UptimeReport />} />
           <Route element={<RequireAuth />}>
             <Route index element={<Overview />} />
             <Route path="servers" element={<Servers />} />

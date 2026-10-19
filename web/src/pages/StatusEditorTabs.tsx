@@ -438,6 +438,8 @@ export function ShareTab({ c, set, pageUrl, savedPublic }: { c: Config; set: Set
             {months.map((m) => <option key={m} value={m}>{m}{m === months[0] ? " (so far)" : ""}</option>)}
           </Select>
           <a href={`/api/status-pages/${c.id}/report?month=${month}&format=csv`} download><Button size="sm" variant="secondary">Download CSV</Button></a>
+          <a href={`#/report/${c.id}/${month}?theme=light`} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">PDF (light)</Button></a>
+          <a href={`#/report/${c.id}/${month}?theme=dark`} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">PDF (dark)</Button></a>
         </div>
         <div className="mt-3">
           {!report.data ? (
