@@ -11,6 +11,7 @@ import (
 
 	"fleetwatch/internal/server/audit"
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/dns"
 )
 
 // integrationRoutes: connecting GitHub (owner only, under /api/integrations), plus the
@@ -29,8 +30,12 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 			cancel()
 		}
 		pub := s.publicURL(r)
-		writeJSON(w, http.StatusOK, map[string]any{"github": s.GitHub.Status(), "publicUrl": pub, "links": s.GitHub.Links(),
-			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")})
+		out := map[string]any{"github": s.GitHub.Status(), "publicUrl": pub, "links": s.GitHub.Links(),
+			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")}
+		if s.DNS != nil {
+			out["cloudflare"] = map[string]any{"clientId": s.DNS.AppClientID(), "redirectUri": pub + dns.CallbackPath, "scopes": dns.Scopes}
+		}
+		writeJSON(w, http.StatusOK, out)
 	}))
 	mux.HandleFunc("POST /api/integrations/github/manifest", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ Org string }

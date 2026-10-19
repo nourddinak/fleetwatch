@@ -17,6 +17,7 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/disk"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/envfile"
@@ -77,6 +78,7 @@ type Deps struct {
 	GitHub     *github.Service
 	Sites      *sites.Service
 	EnvFiles   *envfile.Service
+	DNS        *dns.Service
 	EnvHistory *envfile.History
 	// ServerFileHistory keeps servers' Caddyfile versions.
 	ServerFileHistory *envfile.History
@@ -160,6 +162,9 @@ func New(d Deps) http.Handler {
 		s.siteRoutes(mux)
 	}
 	s.appEnvRoutes(mux) // needs EnvFiles only once the password checked out
+	if d.DNS != nil {
+		s.myDNSRoutes(mux)
+	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))

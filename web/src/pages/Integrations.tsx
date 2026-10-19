@@ -4,7 +4,8 @@ import { ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, Refresh
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, CopyButton, SearchInput } from "../components/ui";
+import { CloudflareSetup, DnsAccounts } from "../components/DnsAccounts";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, CopyButton, Segmented, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -46,7 +47,8 @@ interface RepoItem {
 /** Settings → Integrations: connect services. GitHub first. */
 export function IntegrationsSettings() {
   const { subscribeLive, toast } = useStore();
-  const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean; links: Record<string, { login: string; installations: number[]; linkedAt: number }> }>("/api/integrations");
+  const data = useApi<{ github: GitHubStatus; publicUrl: string; webhooks: boolean; links: Record<string, { login: string; installations: number[]; linkedAt: number }>;
+    cloudflare?: { clientId: string; redirectUri: string; scopes: string[] } }>("/api/integrations");
   const { setData } = data;
   const [params, setParams] = useSearchParams();
   useEffect(() => {
@@ -64,10 +66,25 @@ export function IntegrationsSettings() {
   }), [subscribeLive, setData]);
   if (data.error) return <ErrorState message={data.error} onRetry={data.reload} />;
   if (!data.data) return <LoadingState />;
+  const tab = params.get("tab") === "cloudflare" ? "cloudflare" : "github";
+  const cf = data.data.cloudflare;
   return (
     <div className="space-y-6">
-      <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
-      {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
+      <Segmented value={tab} onChange={(v) => setParams(v === "cloudflare" ? { tab: "cloudflare" } : {}, { replace: true })} options={[
+        { value: "github", label: <span className="inline-flex items-center gap-1.5"><Github size={14} />GitHub{data.data.github.connected && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> },
+        ...(cf ? [{ value: "cloudflare", label: <span className="inline-flex items-center gap-1.5"><Cloudflare size={16} />Cloudflare{cf.clientId && <Badge tone="ok" className="!px-1.5 !py-0">on</Badge>}</span> }] : []),
+      ]} />
+      {tab === "cloudflare" && cf ? (
+        <>
+          <CloudflareSetup clientId={cf.clientId} redirectUri={cf.redirectUri} scopes={cf.scopes} onChange={data.reload} />
+          <DnsAccounts key={cf.clientId} />
+        </>
+      ) : (
+        <>
+          <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+          {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
+        </>
+      )}
     </div>
   );
 }

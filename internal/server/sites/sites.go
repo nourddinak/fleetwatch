@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"fleetwatch/internal/proto"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/release"
@@ -63,6 +64,8 @@ type Site struct {
 	// where it came from: generated | repository | custom.
 	CaddyConfig string `json:"caddyConfig,omitempty"`
 	CaddySource string `json:"caddySource,omitempty"`
+	// DNS is how each of the site's own domains stands with its owner's DNS accounts.
+	DNS map[string]dns.State `json:"dns,omitempty"`
 	// OwnerKey is who manages the site: "" (the dashboard owner) or a member ID.
 	OwnerKey   string `json:"ownerKey,omitempty"`
 	Mine       bool   `json:"mine"`   // set per request: the viewer may change it
@@ -117,6 +120,8 @@ type Service struct {
 	AgentVersion func(serverID string) string
 	PublicIP     func(serverID string) string
 	Notify       func(title, body, severity string)
+	// DNS points the sites' domains at their server through their owner's DNS accounts.
+	DNS *dns.Service
 	// IsLocal reports whether a server is the dashboard's own machine: its sites are
 	// served at <dashboard>/sites/<name>/ instead of a preview address.
 	IsLocal func(serverID string) bool
@@ -400,6 +405,9 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	if in.Env != "" {
 		s.db.Exec(`UPDATE sites SET env_enc = ? WHERE id = ?`, s.box.Seal([]byte(in.Env), envAD+st.ID), st.ID)
 	}
+	if len(domains) > 0 {
+		go s.SyncDNS(st.ID, nil, false)
+	}
 	if plan.Kind == "build" {
 		if err := s.setupBuild(ctx, st, in.Env); err != nil {
 			st.Status, st.Error = "failed", err.Error()
@@ -482,6 +490,9 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 		st.Plan, rebuild = *c.Plan, c.Plan.Kind == "build"
 	}
 	redeploy := !slices.Equal(domains, st.Domains) || (c.Plan != nil && !rebuild)
+	if old := st.Domains; !slices.Equal(domains, old) {
+		defer func() { go s.SyncDNS(st.ID, old, false) }()
+	}
 	st.Domains, st.AutoDeploy = domains, c.AutoDeploy
 	if err := s.save(st); err != nil {
 		return st, err
@@ -566,6 +577,13 @@ func (s *Service) Delete(id string) (Site, error) {
 		return st, err
 	}
 	s.Bus.Publish("site.removed", map[string]string{"id": id, "serverId": st.ServerID})
+	if s.DNS != nil && len(st.DNS) > 0 { // the records Fleetwatch made for it go too
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			s.DNS.Forget(ctx, dnsOwner(st), st.DNS)
+		}()
+	}
 	// What Fleetwatch added to the repository for building goes too, unless another
 	// site still builds from it.
 	if st.Plan.Kind == "build" && !slices.ContainsFunc(s.List(), func(o Site) bool { return o.Repo == st.Repo && o.Plan.Kind == "build" }) {
@@ -720,6 +738,13 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	}
 	s.remember(st.ID, Deploy{TS: s.Now().UnixMilli(), Commit: commit, Message: msg, OK: res.OK, Error: res.Error, Log: res.Log, By: p.by})
 	if res.OK {
+		if s.DNS != nil && len(st.Domains) > 0 {
+			go func(owner string, domains []string) { // visitors get the new version, not Cloudflare's copy
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				s.DNS.Purge(ctx, owner, domains)
+			}(dnsOwner(st), slices.Clone(st.Domains))
+		}
 		st.Status, st.Commit, st.Message, st.DeployedAt, st.Error = "live", commit, msg, s.Now().UnixMilli(), ""
 		st.CaddyConfig, st.CaddySource = res.CaddyConfig, res.Caddy
 	} else {
@@ -818,4 +843,80 @@ func (s *Service) OnPush(repo, branch, sha string) {
 			return
 		}
 	}
+}
+
+// dnsOwner is whose DNS accounts a site uses: the person who added it.
+func dnsOwner(st Site) string {
+	if st.OwnerKey == "" {
+		return "owner"
+	}
+	return st.OwnerKey
+}
+
+// SyncDNS brings a site's DNS records in line with its domains: records made for
+// domains it no longer has are removed, new domains (or all, with again) are pointed at
+// the server. old is the domain list before a change.
+func (s *Service) SyncDNS(id string, old []string, again bool) {
+	if s.DNS == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	st, err := s.Get(id)
+	if err != nil {
+		return
+	}
+	removed := map[string]dns.State{}
+	for _, d := range old {
+		if v, ok := st.DNS[d]; ok && !slices.Contains(st.Domains, d) {
+			removed[d] = v
+		}
+	}
+	s.DNS.Forget(ctx, dnsOwner(st), removed)
+	var todo []string
+	for _, d := range st.Domains {
+		if v, ok := st.DNS[d]; again || !ok || v.Status == "error" {
+			todo = append(todo, d)
+		}
+	}
+	got := s.DNS.Point(ctx, dnsOwner(st), s.PublicIP(st.ServerID), todo)
+	s.mu.Lock() // the site may have changed meanwhile: merge into the latest
+	defer s.mu.Unlock()
+	if st, err = s.Get(id); err != nil {
+		return
+	}
+	if st.DNS == nil {
+		st.DNS = map[string]dns.State{}
+	}
+	for d := range st.DNS {
+		if !slices.Contains(st.Domains, d) {
+			delete(st.DNS, d)
+		}
+	}
+	for d, v := range got {
+		st.DNS[d] = v
+	}
+	s.save(st)
+}
+
+// SetProxied switches Cloudflare's proxy for one of a site's domains.
+func (s *Service) SetProxied(ctx context.Context, id, domain string, on bool) (Site, error) {
+	st, err := s.Get(id)
+	if err != nil {
+		return st, err
+	}
+	v, ok := st.DNS[domain]
+	if !ok || s.DNS == nil {
+		return st, valid.Error("no DNS account manages " + domain)
+	}
+	if v, err = s.DNS.SetProxied(ctx, dnsOwner(st), v, on); err != nil {
+		return st, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, err = s.Get(id); err == nil && st.DNS != nil {
+		st.DNS[domain] = v
+		err = s.save(st)
+	}
+	return st, err
 }

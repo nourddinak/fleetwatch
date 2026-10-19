@@ -31,7 +31,9 @@ var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +
 	`POST /api/incidents/[^/]+/[^/]+|PUT /api/maintenance|POST /api/servers/[^/]+/(disk/scan|disk/clean|security/scan)|` +
 	`POST /api/(domains/check|discoveries/scan)|POST /api/uptime/[^/]+/check|POST /api/servers/[^/]+/(docker/action|updates/scan)|POST /api/vulns/scan|POST /api/sites/[^/]+/redeploy|` +
-	`POST /api/sites(/detect)?|PUT /api/sites/[^/]+(/env)?|DELETE /api/sites/[^/]+|POST /api/me/github/(connect|install)|DELETE /api/me/github)$`)
+	`POST /api/sites(/detect)?|PUT /api/sites/[^/]+(/env)?|DELETE /api/sites/[^/]+|POST /api/me/github/(connect|install)|DELETE /api/me/github|` +
+	`POST /api/me/dns/(connect|[^/]+/refresh)|DELETE /api/me/dns/[^/]+|PUT /api/me/dns/[^/]+/(sync-blocks|zones/[^/]+/attack)|` +
+	`POST /api/sites/[^/]+/dns|PUT /api/sites/[^/]+/dns/proxy)$`)
 
 var (
 	serverPath   = regexp.MustCompile(`^/api/servers/([^/]+)`)
