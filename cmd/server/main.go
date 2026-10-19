@@ -631,7 +631,8 @@ func serve() error {
 		return ids
 	}
 	sec := security.New(d)
-	calls.security = sec // the AI on calls reads security too
+	calls.security = sec                                                                    // the AI on calls reads security too
+	calls.docker, calls.sites, calls.disk, calls.maint = dockerSvc, siteSvc, diskSvc, maint // and acts with these
 	waSvc.Alert = func(title, body, severity string) {
 		notifier.Notice("WhatsApp", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
 	}

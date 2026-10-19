@@ -114,6 +114,18 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/integrations/whatsapp/people/{id}/call", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		call(w, r, r.PathValue("id"))
 	}))
+	mux.HandleFunc("PUT /api/me/whatsapp/pin", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		var in struct{ Pin string }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.WhatsApp.SetPIN(linkKey(sess), in.Pin); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "whatsapp.pin", "", "")
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	mux.HandleFunc("POST /api/me/whatsapp/call", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		call(w, r, linkKey(sess))
 	}))
@@ -124,6 +136,7 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		p, _ := s.WhatsApp.PersonOf(linkKey(sess))
 		writeJSON(w, http.StatusOK, map[string]any{"available": s.WhatsApp.Linked(), "person": p, "languages": whatsapp.Languages,
+			"hasPin": s.WhatsApp.HasPIN(linkKey(sess)), "requirePin": s.WhatsApp.Options().RequirePIN,
 			"number": s.WhatsApp.Status().Number}) // whom to call to talk with the AI
 	}))
 	mux.HandleFunc("PUT /api/me/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {

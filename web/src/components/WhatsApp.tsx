@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Info, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users } from "lucide-react";
+import { AlertTriangle, Check, Info, KeyRound, MoonStar, PhoneCall, QrCode, Send, Smartphone, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Input, SectionTitle, Select, Spinner, WhatsApp } from "./ui";
@@ -117,6 +117,7 @@ export function WhatsAppSetup() {
       </Card>
       <PeopleCard people={data.data!.people} linked={st.linked} onChange={reload} />
       {st.linked && <OptionsCard saved={data.data!.options} onSaved={reload} />}
+      {st.linked && <Card><SectionTitle icon={<KeyRound size={15} />} title="Your action PIN" sub="What you say or write to confirm an action on WhatsApp, when PINs are asked for." /><PinField /></Card>}
       <ConfirmDialog open={unlink} title="Unlink WhatsApp?" confirmLabel="Unlink" danger
         message="The dashboard is signed out of your WhatsApp and stops sending from it. People's numbers are kept."
         onCancel={() => setUnlink(false)} onConfirm={async () => { setUnlink(false); await api("DELETE", "/api/integrations/whatsapp"); reload(); toast("WhatsApp unlinked"); }} />
@@ -225,6 +226,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
         <p className="mb-1 flex items-center gap-2 rounded-xl bg-surface2/60 p-3 text-xs text-muted"><PhoneCall size={13} className="shrink-0" />
           <span>Call or write to <b className="font-mono text-fg">+{data.data.number}</b> on WhatsApp (voice notes work too), from the number below, to ask the AI about your servers, incidents, logs, uptime or security, or to restart an app. Other numbers get no answer.</span></p>
       )}
+      <div className="mb-3"><PinField /></div>
       <PersonForm saved={data.data.person} url="/api/me/whatsapp" testUrl={data.data.person.phone ? "/api/me/whatsapp/test" : undefined} callUrl={data.data.person.phone ? "/api/me/whatsapp/call" : undefined} onSaved={data.reload} />
     </Card>
   );
@@ -233,6 +235,7 @@ export function MyWhatsApp({ explain }: { explain?: boolean }) {
 interface WaOptions {
   resolvedMessages: boolean;
   followUpMinutes: number;
+  requirePin: boolean;
 }
 
 /** What follows a page: the "resolved" message and the follow-up call. */
@@ -249,6 +252,10 @@ function OptionsCard({ saved, onSaved }: { saved: WaOptions; onSaved: () => void
           <span><b>Message when it is resolved</b><br /><span className="text-xs text-muted">Whoever was paged gets "✅ Resolved: … after 12 min".</span></span>
           <input type="checkbox" checked={f.resolvedMessages} onChange={(e) => setF({ ...f, resolvedMessages: e.target.checked })} />
         </label>
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span><b>Ask for a PIN before actions</b><br /><span className="text-xs text-muted">Restarts, redeploys, blocks… asked for on a call or in a chat need the person's own PIN (each sets theirs).</span></span>
+          <input type="checkbox" checked={!!f.requirePin} onChange={(e) => setF({ ...f, requirePin: e.target.checked })} />
+        </label>
         <Field label="Call back if still open after (minutes)" hint="The AI calls whoever acknowledged it: still down, want a restart, someone else, or more time? 0 = never.">
           <Input type="number" min={0} max={1440} value={f.followUpMinutes} onChange={(e) => setF({ ...f, followUpMinutes: Number(e.target.value) })} className="sm:w-40" />
         </Field>
@@ -259,5 +266,37 @@ function OptionsCard({ saved, onSaved }: { saved: WaOptions; onSaved: () => void
         </div>
       </div>
     </Card>
+  );
+}
+
+/** One's own action PIN: set, replace or remove. Never shown again once saved. */
+function PinField() {
+  const { toast } = useStore();
+  const me = useApi<{ hasPin?: boolean; requirePin?: boolean }>("/api/me/whatsapp");
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (value: string) => {
+    setBusy(true);
+    try {
+      await api("PUT", "/api/me/whatsapp/pin", { pin: value });
+      setPin("");
+      me.reload();
+      toast(value ? "PIN saved" : "PIN removed");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <Field label={me.data?.hasPin ? "Action PIN (set: type a new one to replace it)" : "Action PIN"} hint="4 to 8 digits." className="flex-1">
+          <Input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="••••" autoComplete="off" />
+        </Field>
+        <Button size="sm" disabled={busy || pin.length < 4} onClick={() => save(pin)}><Check size={13} /> Save PIN</Button>
+        {me.data?.hasPin && <Button size="sm" variant="ghost" disabled={busy} onClick={() => save("")}>Remove</Button>}
+      </div>
+      {me.data?.requirePin && !me.data.hasPin && <p className="flex items-center gap-1.5 text-xs text-warn"><AlertTriangle size={12} />Actions need a PIN on this dashboard: set yours to restart things by voice or chat.</p>}
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,17 +12,22 @@ import (
 	"sync"
 	"time"
 
+	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/ai"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/audit"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/disk"
+	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/logs"
+	"fleetwatch/internal/server/maintenance"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/security"
+	"fleetwatch/internal/server/sites"
 	"fleetwatch/internal/server/uptime"
 	"fleetwatch/internal/server/valid"
 	"fleetwatch/internal/server/whatsapp"
@@ -45,6 +51,10 @@ type callDeps struct {
 	uptime    *uptime.Service
 	security  *security.Service
 	admin     *hostadmin.Service
+	docker    *docker.Service
+	sites     *sites.Service
+	disk      *disk.Service
+	maint     *maintenance.Service
 	people    func() []oncall.Person
 }
 
@@ -89,7 +99,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 - Before you call a tool, say two or three words first (like "one moment" or "let me check") so they are not left in silence. Never leave them in silence while you wait.
 - If they talk while you speak, stop and listen to them.
 - Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
-- You can start, stop, restart or reload an app. First call propose_action and tell them exactly what will happen; only after they clearly say yes, call do_action. It only starts it: say it is under way ("restarting now, give me a few seconds"), then call action_status and tell them how it went. If a tool refuses, tell them why.
+- You can act: start, stop, restart or reload apps, restart containers, redeploy sites, clean disk space, mute an incident, put a server in maintenance, block an IP. First call propose_action and tell them exactly what will happen; only after they clearly say yes (and give their PIN if the tool asks for it), call do_action. App actions only start: say it is under way ("restarting now, give me a few seconds"), then call action_status and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it, then confirm in a few words.
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang
@@ -545,44 +555,78 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				}
 				return d.pastIncidents(x, 10), nil
 			}},
-		{Name: "propose_action", Description: "Get an app action ready: start, stop, restart or reload. It runs only after the person confirms and you call do_action.",
+		{Name: "propose_action", Description: "Get an action ready; it runs only after the person confirms and you call do_action. Kinds: app (start, stop, restart, reload an app), container (start, stop, restart a Docker container; server needed), site (redeploy), disk (clean: target is a cleanup from disk_cleanups; server needed), incident (mute an incident for an hour: target is its id), maintenance (on or off for a server: target is the server; amount = minutes, default 60), ip (block an IP address on every server: target is the IP; amount = hours, default 24).",
 			Params: map[string]any{
-				"app":    map[string]any{"type": "STRING", "description": "The app's name, as list_apps gives it"},
-				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload"}},
-			}, Required: []string{"app", "action"},
+				"kind":   map[string]any{"type": "STRING", "enum": actionKinds},
+				"target": map[string]any{"type": "STRING", "description": "What to act on: an app, container, site, cleanup, incident id, server or IP"},
+				"action": map[string]any{"type": "STRING", "enum": []string{"start", "stop", "restart", "reload", "redeploy", "clean", "mute", "on", "off", "block"}},
+				"server": map[string]any{"type": "STRING", "description": "The server's name, where it matters (containers, disk); without it, the incident's server"},
+				"amount": map[string]any{"type": "INTEGER", "description": "Minutes for maintenance, hours for an IP block"},
+			}, Required: []string{"kind", "target", "action"},
 			Run: func(_ context.Context, args map[string]any) (any, error) {
-				return gate.propose(str(args, "app"), str(args, "action"))
+				amount := 0
+				if f, ok := args["amount"].(float64); ok {
+					amount = int(f)
+				}
+				return gate.propose(str(args, "kind"), str(args, "target"), str(args, "action"), str(args, "server"), amount)
 			}},
-		{Name: "do_action", Description: "Start the action propose_action got ready, once the person has clearly said yes to it. It returns at once; then call action_status.",
-			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.do(ctx) }},
+		{Name: "do_action", Description: "Run the action propose_action got ready, once the person has clearly said yes (with their PIN when actions need one). App actions only start: then call action_status.",
+			Params: map[string]any{"pin": map[string]any{"type": "STRING", "description": "Their PIN, when actions need one"}},
+			Run:    func(ctx context.Context, args map[string]any) (any, error) { return gate.do(ctx, str(args, "pin")) }},
+		{Name: "disk_cleanups", Description: "What can be cleaned on a server's disk to free space, with sizes (from its last disk scan).",
+			Params: map[string]any{"server": optServer},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				id, err := gate.serverID(str(args, "server"))
+				if err != nil || !sees(id) {
+					return nil, valid.Error("which server?")
+				}
+				st := d.disk.State(id)
+				if st.Report == nil {
+					return "no disk scan yet for this server", nil
+				}
+				out := []map[string]string{}
+				for _, it := range st.Report.Items {
+					out = append(out, map[string]string{"cleanup": it.ID, "what": it.Label, "size": humanBytes(it.Bytes)})
+				}
+				return out, nil
+			}},
 		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
 	}
 }
 
-// voiceActions runs app actions asked for on a call, in two steps: propose, then do once
-// the person has answered. It allows what their role allows: the owner everything, an
-// operator their servers, a viewer nothing.
+// voiceActions runs actions asked for on a call or in a chat, in two steps: propose,
+// then do once the person has answered (and given their PIN when the owner asks for
+// one). It allows what their role allows: the owner everything, an operator their
+// servers (blocking an IP is the owner's alone, as in the dashboard), a viewer nothing.
 type voiceActions struct {
 	d              callDeps
 	person, name   string
 	incidentServer string
 
-	mu      sync.Mutex
-	pending *voiceAction
-	running *voiceRun // the action started last
+	mu       sync.Mutex
+	pending  *voiceAction
+	running  *voiceRun // the app action started last
+	wrongPIN int
+}
+
+type voiceAction struct {
+	what string // "restart api on web-1", as told to them
+	at   time.Time
+	run  func(ctx context.Context) (any, error)
 }
 
 type voiceRun struct{ id, what string }
 
-type voiceAction struct {
-	appID, appName, server, action string
-	at                             time.Time
-}
+const (
+	confirmWithin = 90 * time.Second
+	pinTries      = 3
+)
 
-const confirmWithin = 90 * time.Second
+// Kinds of actions, for the tool's description.
+var actionKinds = []string{"app", "container", "site", "disk", "incident", "maintenance", "ip"}
 
-func (g *voiceActions) allowed(serverID string) error {
+func (g *voiceActions) allowed(serverID string, ownerOnly bool) error {
 	if g.person == oncall.Owner {
 		return nil
 	}
@@ -590,10 +634,13 @@ func (g *voiceActions) allowed(serverID string) error {
 	if err != nil || m.Disabled {
 		return valid.Error("this person is no longer on the team")
 	}
+	if ownerOnly {
+		return valid.Error("only the dashboard owner can do that")
+	}
 	if m.Role != auth.RoleOperator {
 		return valid.Error(g.name + " is a viewer: viewers cannot run actions")
 	}
-	if m.Servers != nil && !slices.Contains(m.Servers, serverID) {
+	if serverID != "" && m.Servers != nil && !slices.Contains(m.Servers, serverID) {
 		return valid.Error(g.name + " may not run actions on that server")
 	}
 	return nil
@@ -631,37 +678,211 @@ func (g *voiceActions) findApp(name string) (apps.View, error) {
 	return apps.View{}, valid.Error("several servers have an app called " + name + ": ask which server")
 }
 
-func (g *voiceActions) propose(appName, action string) (any, error) {
-	if !slices.Contains([]string{"start", "stop", "restart", "reload"}, action) {
-		return nil, valid.Error("the action must be start, stop, restart or reload")
-	}
-	app, err := g.findApp(appName)
+// serverID finds a server by name, or the incident's.
+func (g *voiceActions) serverID(name string) (string, error) {
+	views, err := g.d.hub.Views()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if err := g.allowed(app.ServerID); err != nil {
-		return nil, err
+	for _, v := range views {
+		if (name == "" && v.ID == g.incidentServer) || (name != "" && strings.EqualFold(v.Name, name)) {
+			return v.ID, nil
+		}
 	}
-	cmds, err := g.d.commands.List(app.ID)
-	if err != nil {
-		return nil, err
+	if name == "" {
+		return "", valid.Error("which server?")
 	}
-	if !slices.ContainsFunc(cmds, func(c commands.View) bool { return c.ID == "builtin:"+action }) {
-		return nil, valid.Error(app.Name + " is not run by PM2 or systemd, so it cannot be " + action + "ed from here")
-	}
-	server := app.ServerID
-	if rec, err := g.d.hub.Reg.Get(app.ServerID); err == nil {
-		server = rec.Name
-	}
-	g.mu.Lock()
-	g.pending = &voiceAction{appID: app.ID, appName: app.Name, server: server, action: action, at: time.Now()}
-	g.mu.Unlock()
-	return fmt.Sprintf("Ready to %s %s on %s. Ask them to confirm; only after they clearly say yes, call do_action.", action, app.Name, server), nil
+	return "", valid.Error("no server is called " + name)
 }
 
-func (g *voiceActions) do(ctx context.Context) (any, error) {
+// propose gets an action ready: what kind, on what (target), which action; server and
+// hours/minutes where they matter.
+func (g *voiceActions) propose(kind, target, action, server string, amount int) (any, error) {
+	var a voiceAction
+	switch kind {
+	case "app", "":
+		if !slices.Contains([]string{"start", "stop", "restart", "reload"}, action) {
+			return nil, valid.Error("an app can be started, stopped, restarted or reloaded")
+		}
+		app, err := g.findApp(target)
+		if err != nil {
+			return nil, err
+		}
+		if err := g.allowed(app.ServerID, false); err != nil {
+			return nil, err
+		}
+		cmds, err := g.d.commands.List(app.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.ContainsFunc(cmds, func(c commands.View) bool { return c.ID == "builtin:"+action }) {
+			return nil, valid.Error(app.Name + " is not run by PM2 or systemd, so it cannot be " + action + "ed from here")
+		}
+		a.what = action + " " + app.Name + " on " + g.d.serverName(app.ServerID)
+		a.run = func(context.Context) (any, error) {
+			run, err := g.d.commands.Start(app.ID, "builtin:"+action, g.name+" by voice or chat, on WhatsApp")
+			if err != nil {
+				return nil, err
+			}
+			if action != "start" {
+				g.d.detector.Intended(app.ID, time.Now()) // stopping it on purpose is not an incident
+			}
+			g.mu.Lock()
+			g.running = &voiceRun{id: run.ID, what: action + " " + app.Name}
+			g.mu.Unlock()
+			return "started " + action + " of " + app.Name + ". Tell them it is under way and to give you a few seconds, then call action_status.", nil
+		}
+	case "container":
+		if !slices.Contains([]string{"start", "stop", "restart"}, action) {
+			return nil, valid.Error("a container can be started, stopped or restarted")
+		}
+		id, err := g.serverID(server)
+		if err != nil {
+			return nil, err
+		}
+		st := g.d.docker.State(id)
+		if st.Report == nil || !slices.ContainsFunc(st.Report.Containers, func(c proto.DockerContainer) bool { return c.Name == target }) {
+			return nil, valid.Error("no container called " + target + " on " + g.d.serverName(id))
+		}
+		if err := g.allowed(id, false); err != nil {
+			return nil, err
+		}
+		a.what = action + " the container " + target + " on " + g.d.serverName(id)
+		a.run = func(context.Context) (any, error) {
+			if _, err := g.d.docker.Act(id, proto.DockerAction{Kind: "container", Target: target, Action: action}); err != nil {
+				return nil, err
+			}
+			return "the container is being " + action + "ed; it takes a few seconds", nil
+		}
+	case "site":
+		if action != "redeploy" {
+			return nil, valid.Error("a site can be redeployed")
+		}
+		var site *sites.Site
+		for _, st := range g.d.sites.List() {
+			if strings.EqualFold(st.Name, target) {
+				site = &st
+			}
+		}
+		if site == nil {
+			return nil, valid.Error("no site is called " + target)
+		}
+		if err := g.allowed(site.ServerID, false); err != nil {
+			return nil, err
+		}
+		a.what = "redeploy the site " + site.Name
+		id := site.ID
+		a.run = func(ctx context.Context) (any, error) {
+			if err := g.d.sites.Redeploy(ctx, id, g.name+" (WhatsApp)"); err != nil {
+				return nil, err
+			}
+			return "the site is being redeployed; it takes a minute or two", nil
+		}
+	case "disk":
+		if action != "clean" {
+			return nil, valid.Error("disk space is cleaned with action clean")
+		}
+		id, err := g.serverID(server)
+		if err != nil {
+			return nil, err
+		}
+		if err := g.allowed(id, false); err != nil {
+			return nil, err
+		}
+		st := g.d.disk.State(id)
+		var item *proto.DiskItem
+		if st.Report != nil {
+			for _, it := range st.Report.Items {
+				if strings.EqualFold(it.ID, target) || strings.EqualFold(it.Label, target) {
+					item = &it
+				}
+			}
+		}
+		if item == nil {
+			return nil, valid.Error("no such cleanup on " + g.d.serverName(id) + ": disk_cleanups lists them")
+		}
+		a.what = fmt.Sprintf("clean %s on %s (about %s)", item.Label, g.d.serverName(id), humanBytes(item.Bytes))
+		itemID := item.ID
+		a.run = func(context.Context) (any, error) {
+			if err := g.d.disk.Clean(id, itemID); err != nil {
+				return nil, err
+			}
+			return "cleaning started; it takes a little while", nil
+		}
+	case "incident":
+		if action != "mute" {
+			return nil, valid.Error("an incident can be muted for an hour")
+		}
+		x, err := g.d.incidents.Get(target)
+		if err != nil {
+			return nil, valid.Error("no such incident: list_incidents names them")
+		}
+		if err := g.allowed(x.ServerID, false); err != nil {
+			return nil, err
+		}
+		a.what = "mute the incident \"" + x.Title + "\" for an hour (no paging)"
+		a.run = func(context.Context) (any, error) {
+			if _, err := g.d.incidents.Act(x.ID, "mute1h", "", g.name); err != nil {
+				return nil, err
+			}
+			return "muted for an hour", nil
+		}
+	case "maintenance":
+		if action != "on" && action != "off" {
+			return nil, valid.Error("maintenance is turned on or off")
+		}
+		id, err := g.serverID(cmp.Or(target, server))
+		if err != nil {
+			return nil, err
+		}
+		if err := g.allowed(id, false); err != nil {
+			return nil, err
+		}
+		minutes := cmp.Or(amount, 60)
+		if action == "off" {
+			minutes = 0
+			a.what = "end maintenance on " + g.d.serverName(id)
+		} else {
+			a.what = fmt.Sprintf("put %s in maintenance for %d minutes (no alerts)", g.d.serverName(id), minutes)
+		}
+		a.run = func(context.Context) (any, error) {
+			if _, err := g.d.maint.Set("server", id, minutes); err != nil {
+				return nil, err
+			}
+			return "done", nil
+		}
+	case "ip":
+		if action != "block" {
+			return nil, valid.Error("an IP address can be blocked")
+		}
+		if err := g.allowed("", true); err != nil {
+			return nil, err
+		}
+		hours := cmp.Or(amount, 24)
+		a.what = fmt.Sprintf("block %s on every server for %d hours", target, hours)
+		a.run = func(context.Context) (any, error) {
+			if _, err := g.d.admin.Block(target, "blocked by "+g.name+" on WhatsApp", g.name, "", hours); err != nil {
+				return nil, err
+			}
+			return "blocked", nil
+		}
+	default:
+		return nil, valid.Error("unknown kind of action")
+	}
+	a.at = time.Now()
 	g.mu.Lock()
-	p := g.pending
+	g.pending = &a
+	g.mu.Unlock()
+	ask := "Ask them to confirm: " + a.what + "? Only after they clearly say yes, call do_action."
+	if g.d.wa != nil && g.d.wa.Options().RequirePIN {
+		ask += " Actions need their PIN: ask for it and pass it to do_action."
+	}
+	return ask, nil
+}
+
+func (g *voiceActions) do(ctx context.Context, pin string) (any, error) {
+	g.mu.Lock()
+	p, tries := g.pending, g.wrongPIN
 	g.mu.Unlock()
 	if p == nil || time.Since(p.at) > confirmWithin {
 		return nil, valid.Error("there is nothing to confirm (or it was too long ago): call propose_action again")
@@ -669,27 +890,34 @@ func (g *voiceActions) do(ctx context.Context) (any, error) {
 	if strings.TrimSpace(ai.HeardSince(ctx, p.at)) == "" {
 		return nil, valid.Error("they have not answered yet: ask them to confirm and wait for their yes")
 	}
-	run, err := g.d.commands.Start(p.appID, "builtin:"+p.action, g.name+" by voice, on a WhatsApp call")
-	if err != nil {
-		return nil, err
+	if g.d.wa != nil && g.d.wa.Options().RequirePIN {
+		switch {
+		case tries >= pinTries:
+			return nil, valid.Error("too many wrong PINs: no more actions on this call or chat")
+		case !g.d.wa.HasPIN(g.person):
+			return nil, valid.Error("actions need a PIN and " + g.name + " has not set one (Integrations → WhatsApp)")
+		case !g.d.wa.CheckPIN(g.person, pin):
+			g.mu.Lock()
+			g.wrongPIN++
+			g.mu.Unlock()
+			return nil, valid.Error("that PIN is wrong")
+		}
 	}
 	g.mu.Lock()
-	g.pending, g.running = nil, &voiceRun{id: run.ID, what: p.action + " " + p.appName}
+	g.pending = nil
 	g.mu.Unlock()
-	if p.action != "start" {
-		g.d.detector.Intended(p.appID, time.Now()) // stopping it on purpose is not an incident
-	}
-	audit.Record(g.d.db, audit.Event{Action: "command.run", OK: true, Actor: g.name, Detail: p.appName + ": " + p.action + " (by voice, on a WhatsApp call)"})
-	return "started " + p.action + " of " + p.appName + ". Tell them it is under way and to give you a few seconds, then call action_status.", nil
+	out, err := p.run(ctx)
+	audit.Record(g.d.db, audit.Event{Action: "whatsapp.action", OK: err == nil, Actor: g.name, Detail: p.what + " (on WhatsApp)"})
+	return out, err
 }
 
-// status waits for the action started last to finish, and says how it went.
+// status waits for the app action started last to finish, and says how it went.
 func (g *voiceActions) status(ctx context.Context) (any, error) {
 	g.mu.Lock()
 	r := g.running
 	g.mu.Unlock()
 	if r == nil {
-		return nil, valid.Error("no action was started on this call")
+		return "nothing to wait for: the last action's answer is what do_action said", nil
 	}
 	for range 25 {
 		run, err := g.d.commands.GetRun(r.id)
@@ -707,6 +935,16 @@ func (g *voiceActions) status(ctx context.Context) (any, error) {
 		}
 	}
 	return r.what + " is still running: say so, and offer to check again", nil
+}
+
+func humanBytes(b int64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%d MB", b>>20)
+	}
+	return fmt.Sprintf("%d KB", b>>10)
 }
 
 // chats are the team's WhatsApp conversations with the AI, by person.
@@ -740,7 +978,7 @@ func (d *callDeps) message(ctx context.Context, person, text string, audio []byt
 			" about their servers, apps, sites, incidents, logs, uptime and security. They may also send voice notes: answer what they say.\n" +
 			`- This is a chat: short, plain answers; a few short lines or a small list is fine, no markdown headings or tables.
 - Use the tools for every fact. Never invent numbers or events; if a tool has nothing, say so.
-- You can start, stop, restart or reload an app: call propose_action, then ask them to reply "yes"; only after their yes, call do_action, then action_status, and tell them how it went. If a tool refuses, tell them why.
+- You can act (apps, containers, site redeploys, disk cleanups, muting incidents, maintenance, blocking IPs): call propose_action, then ask them to reply "yes" (and their PIN if the tool says actions need one); only after that, call do_action (then action_status for apps) and tell them how it went. If a tool refuses, tell them why.
 - When they say they will handle an incident, are on it, or will check it, call acknowledge for it.
 ` + lang}
 		chats[person] = c

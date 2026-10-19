@@ -4,8 +4,12 @@ package whatsapp
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -458,6 +462,7 @@ func (s *Service) Watch() {
 type Options struct {
 	ResolvedMessages bool `json:"resolvedMessages"` // "resolved" messages to whoever was paged
 	FollowUpMinutes  int  `json:"followUpMinutes"`  // call back the acknowledger if still open; 0 = never
+	RequirePIN       bool `json:"requirePin"`       // actions by voice or chat need the person's PIN
 }
 
 // Options reads them (resolved messages on, follow-up after 20 minutes by default).
@@ -473,4 +478,48 @@ func (s *Service) SetOptions(o Options) (Options, error) {
 		return o, valid.Error("the follow-up must be between 0 (never) and 1440 minutes")
 	}
 	return o, settings.Save(s.db, "whatsapp.options", o)
+}
+
+var pinRe = regexp.MustCompile(`^[0-9]{4,8}$`)
+
+type pinHash struct {
+	Salt string `json:"salt"`
+	Hash string `json:"hash"`
+}
+
+func hashPIN(salt, pin string) string {
+	sum := sha256.Sum256([]byte(salt + "\x00" + pin))
+	return hex.EncodeToString(sum[:])
+}
+
+// SetPIN sets someone's action PIN (4 to 8 digits); "" removes it.
+func (s *Service) SetPIN(person, pin string) error {
+	pin = strings.TrimSpace(pin)
+	if pin == "" {
+		_, err := s.db.Exec(`DELETE FROM settings WHERE key = ?`, "whatsapp.pin."+person)
+		return err
+	}
+	if !pinRe.MatchString(pin) {
+		return valid.Error("a PIN is 4 to 8 digits")
+	}
+	b := make([]byte, 16)
+	rand.Read(b)
+	salt := hex.EncodeToString(b)
+	return settings.Save(s.db, "whatsapp.pin."+person, pinHash{salt, hashPIN(salt, pin)})
+}
+
+// HasPIN reports whether someone set a PIN.
+func (s *Service) HasPIN(person string) bool {
+	var h pinHash
+	return settings.Load(s.db, "whatsapp.pin."+person, &h) == nil && h.Hash != ""
+}
+
+// CheckPIN reports whether a PIN is someone's (spoken digits may come with spaces).
+func (s *Service) CheckPIN(person, pin string) bool {
+	var h pinHash
+	if settings.Load(s.db, "whatsapp.pin."+person, &h) != nil || h.Hash == "" {
+		return false
+	}
+	pin = nonDigits.ReplaceAllString(pin, "")
+	return subtle.ConstantTimeCompare([]byte(hashPIN(h.Salt, pin)), []byte(h.Hash)) == 1
 }
