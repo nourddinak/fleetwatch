@@ -29,6 +29,7 @@ func TestKeyAndConversation(t *testing.T) {
 			}
 			w.Write([]byte(`{"models":[{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]},` +
 				`{"name":"models/gemini-3.1-flash-live-preview","supportedGenerationMethods":["bidiGenerateContent"]},` +
+				`{"name":"models/gemini-3.5-live-translate","supportedGenerationMethods":["bidiGenerateContent"]},` +
 				`{"name":"models/gemini-3.8-live","supportedGenerationMethods":["bidiGenerateContent"]}]}`))
 			return
 		}
@@ -101,6 +102,10 @@ func TestKeyAndConversation(t *testing.T) {
 		t.Fatal(st, err)
 	}
 
+	models, _ := s.Models(ctx)
+	if len(models) != 2 || models[0].ID != "gemini-3.8-live" || !models[0].Recommended || models[1].ID != "gemini-3.1-flash-live-preview" {
+		t.Fatalf("models: %+v", models)
+	}
 	in := make(chan []float32, 4)
 	in <- make([]float32, 960)
 	var mu sync.Mutex

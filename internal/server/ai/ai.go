@@ -150,13 +150,60 @@ func liveModels(ctx context.Context, key string) ([]string, error) {
 	return live, nil
 }
 
-// Models lists the live models of the saved key.
-func (s *Service) Models(ctx context.Context) ([]string, error) {
+// ModelInfo is a live model as the dashboard offers it for calls.
+type ModelInfo struct {
+	ID          string `json:"id"`
+	Note        string `json:"note"`
+	Recommended bool   `json:"recommended,omitempty"`
+}
+
+// describe says what a live model is like for on-call calls, going by its name and the
+// free-tier limits Google lists in AI Studio; false: it cannot hold a conversation.
+func describe(id string) (ModelInfo, bool) {
+	m := ModelInfo{ID: id}
+	switch {
+	case strings.Contains(id, "translate") || strings.Contains(id, "transcribe"):
+		return m, false // translation and transcription only
+	case strings.Contains(id, "extended-thinking"):
+		m.Note = "Thinks before it answers: slower to reply on a call."
+	case strings.Contains(id, "3.8-live"):
+		m.Note, m.Recommended = "Best voice and tool use. Free tier: 65K tokens a minute, plenty for one call at a time (a 5-minute call uses about 20K).", true
+	case strings.Contains(id, "native-audio"):
+		m.Note = "Free tier: 1M tokens a minute, the most room when several calls happen at once."
+	default:
+		m.Note = "Free tier: about 65K tokens a minute, enough for one call at a time."
+	}
+	return m, true
+}
+
+// usable keeps the models that can hold a call, recommended first.
+func usable(ids []string) []ModelInfo {
+	var out []ModelInfo
+	for _, id := range ids {
+		if m, ok := describe(id); ok {
+			out = append(out, m)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b ModelInfo) int {
+		switch {
+		case a.Recommended == b.Recommended:
+			return 0
+		case a.Recommended:
+			return -1
+		}
+		return 1
+	})
+	return out
+}
+
+// Models lists the live models of the saved key that can hold a call.
+func (s *Service) Models(ctx context.Context) ([]ModelInfo, error) {
 	_, key, ok := s.load()
 	if !ok {
 		return nil, valid.Error("add a Gemini API key first")
 	}
-	return liveModels(ctx, key)
+	ids, err := liveModels(ctx, key)
+	return usable(ids), err
 }
 
 // SetKey checks a key by listing its live models, then keeps it (encrypted), picking
@@ -166,17 +213,18 @@ func (s *Service) SetKey(ctx context.Context, key string) (Status, error) {
 	if key == "" || len(key) > 200 {
 		return Status{}, valid.Error("paste the Gemini API key")
 	}
-	models, err := liveModels(ctx, key)
+	ids, err := liveModels(ctx, key)
 	if err != nil {
 		return Status{}, valid.Error("this key does not work: " + err.Error())
 	}
+	models := usable(ids)
 	if len(models) == 0 {
 		return Status{}, valid.Error("this key can use no live voice model")
 	}
 	c, _, _ := s.load()
-	if c.Model == "" || !slices.Contains(models, c.Model) {
-		c.Model = models[0]
-		if slices.Contains(models, PreferredModel) {
+	if !slices.ContainsFunc(models, func(m ModelInfo) bool { return m.ID == c.Model }) {
+		c.Model = models[0].ID // the recommended one when the key has it
+		if slices.ContainsFunc(models, func(m ModelInfo) bool { return m.ID == PreferredModel }) {
 			c.Model = PreferredModel
 		}
 	}
@@ -204,8 +252,8 @@ func (s *Service) SetConfig(ctx context.Context, c Config) (Status, error) {
 	if c.MonthlyMinutes < 0 || c.MonthlyMinutes > 100000 {
 		return Status{}, valid.Error("the monthly minutes must be between 0 and 100000")
 	}
-	if models, err := liveModels(ctx, key); err == nil && !slices.Contains(models, c.Model) {
-		return Status{}, valid.Error("this key cannot use " + c.Model)
+	if ids, err := liveModels(ctx, key); err == nil && !slices.ContainsFunc(usable(ids), func(m ModelInfo) bool { return m.ID == c.Model }) {
+		return Status{}, valid.Error("this key cannot hold calls with " + c.Model)
 	}
 	if err := s.save(c, key); err != nil {
 		return Status{}, err

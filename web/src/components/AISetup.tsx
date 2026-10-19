@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, ExternalLink, Gauge, KeyRound, Mic, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, Gauge, Info, KeyRound, Mic, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Gemini, Input, SectionTitle, Select, Spinner } from "./ui";
@@ -19,7 +19,7 @@ interface AIStatus {
 /** Integrations → AI: the Gemini key, live model, voice and monthly cap of on-call calls. */
 export function AISetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: AIStatus; models: string[]; error?: string }>("/api/integrations/ai");
+  const data = useApi<{ status: AIStatus; models: { id: string; note: string; recommended?: boolean }[]; error?: string }>("/api/integrations/ai");
   const [key, setKey] = useState("");
   const [f, setF] = useState<AIConfig | null>(null);
   const [busy, setBusy] = useState("");
@@ -64,9 +64,9 @@ export function AISetup() {
           <div className="space-y-4">
             {data.data?.error && <p className="flex items-center gap-2 text-xs text-crit"><AlertTriangle size={13} />{data.data.error}</p>}
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Live model" hint="Models your key can hold live voice calls with.">
+              <Field label="Live model" hint={data.data!.models.find((m) => m.id === f.model)?.note ?? "Models your key can hold live voice calls with."}>
                 <Select value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })}>
-                  {(data.data!.models.length ? data.data!.models : [f.model]).map((m) => <option key={m} value={m}>{m}</option>)}
+                  {(data.data!.models.length ? data.data!.models : [{ id: f.model, note: "", recommended: false }]).map((m) => <option key={m.id} value={m.id}>{m.id}{m.recommended ? " (recommended)" : ""}</option>)}
                 </Select>
               </Field>
               <Field label="Voice">
@@ -82,6 +82,8 @@ export function AISetup() {
               <div className="mb-1 flex items-center justify-between text-xs text-muted"><span className="inline-flex items-center gap-1"><Gauge size={12} /> This month</span><span>{used} of {f.monthlyMinutes} minutes</span></div>
               <div className="h-1.5 overflow-hidden rounded-full bg-surface2"><div className="h-full rounded-full bg-[var(--chart1)]" style={{ width: `${Math.min(100, f.monthlyMinutes ? (used / f.monthlyMinutes) * 100 : 0)}%` }} /></div>
             </div>
+            <p className="flex gap-2 rounded-xl bg-surface2/60 p-3 text-[11px] text-muted"><Info size={12} className="mt-px shrink-0" />
+              <span><b className="text-fg">On the free tier</b>, every live model is free with no daily limit; what differs is tokens per minute. A 5-minute call uses about 20K, so the recommended model handles one call at a time. If several people may be called at once, pick a <b className="text-fg">native-audio</b> model (1M tokens a minute). Your key's exact limits are in <a className="underline" href="https://aistudio.google.com/" target="_blank" rel="noreferrer">Google AI Studio</a>, under usage and rate limits.</span></p>
             <p className="flex gap-2 text-[11px] text-muted"><Mic size={12} className="mt-px shrink-0" />Try it with Call me now in Integrations → WhatsApp: answered, the AI says it is a test and chats briefly. Each person's language is set with their WhatsApp number; the AI switches if they speak another one.</p>
             <div className="flex flex-wrap justify-between gap-2">
               <Button size="sm" variant="ghost" className="text-crit" onClick={() => setDel(true)}><Trash2 size={13} /> Remove the key</Button>
