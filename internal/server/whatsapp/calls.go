@@ -248,6 +248,9 @@ func (s *Service) callerOf(ctx context.Context, cl *whatsmeow.Client, peer types
 }
 
 // incoming answers a call to the linked number from someone of the team, with the AI.
+// answerAfter is how long a team member's call rings before the AI picks up.
+var answerAfter = 10 * time.Second
+
 func (s *Service) incoming(cl *whatsmeow.Client, call *meowcaller.Call) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -267,6 +270,12 @@ func (s *Service) incoming(cl *whatsmeow.Client, call *meowcaller.Call) {
 	ready, ended := make(chan struct{}), make(chan struct{})
 	call.OnReady(func() { readyOnce.Do(func() { close(ready) }) })
 	call.OnEnd(func(string) { endOnce.Do(func() { close(ended) }) })
+	select { // let it ring first: a call made by mistake can still be hung up
+	case <-ended:
+		slog.Info("whatsapp: the caller hung up before the AI answered", "person", person)
+		return
+	case <-time.After(answerAfter):
+	}
 	if err := call.Answer(); err != nil {
 		slog.Warn("whatsapp: answer", "err", err)
 		return
