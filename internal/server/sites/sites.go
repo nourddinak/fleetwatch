@@ -66,6 +66,8 @@ type Site struct {
 	CaddySource string `json:"caddySource,omitempty"`
 	// DNS is how each of the site's own domains stands with its owner's DNS accounts.
 	DNS map[string]dns.State `json:"dns,omitempty"`
+	// DNSManual: the person adds the domains' records themselves; Fleetwatch only shows them.
+	DNSManual bool `json:"dnsManual,omitempty"`
 	// OwnerKey is who manages the site: "" (the dashboard owner) or a member ID.
 	OwnerKey   string `json:"ownerKey,omitempty"`
 	Mine       bool   `json:"mine"`   // set per request: the viewer may change it
@@ -230,7 +232,9 @@ type Input struct {
 	Plan     *Plan    `json:"plan"`   // nil = detected
 	Domains  []string `json:"domains"`
 	Env      string   `json:"env"` // .env lines (build sites)
-	Owner    string   `json:"-"`   // member ID of who creates it ("" = the owner); never from the request
+	// DNSManual: no records are made through the person's Cloudflare for its domains.
+	DNSManual bool   `json:"dnsManual"`
+	Owner     string `json:"-"` // member ID of who creates it ("" = the owner); never from the request
 }
 
 func slug(s string) string {
@@ -398,14 +402,14 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	rand.Read(b)
 	st := Site{ID: "site_" + hex.EncodeToString(b), Name: name, Repo: in.Repo, Branch: branch, ServerID: in.ServerID, Plan: plan,
 		Domains: domains, Preview: s.preview(name, in.ServerID), AutoDeploy: true, EnvKeys: keys,
-		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by, OwnerKey: in.Owner}
+		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by, OwnerKey: in.Owner, DNSManual: in.DNSManual}
 	if err := s.save(st); err != nil {
 		return Site{}, err
 	}
 	if in.Env != "" {
 		s.db.Exec(`UPDATE sites SET env_enc = ? WHERE id = ?`, s.box.Seal([]byte(in.Env), envAD+st.ID), st.ID)
 	}
-	if len(domains) > 0 {
+	if len(domains) > 0 && !st.DNSManual {
 		go s.SyncDNS(st.ID, nil, false)
 	}
 	if plan.Kind == "build" {
@@ -468,6 +472,7 @@ type Change struct {
 	Domains    []string `json:"domains"`
 	AutoDeploy bool     `json:"autoDeploy"`
 	Plan       *Plan    `json:"plan"`
+	DNSManual  *bool    `json:"dnsManual"` // nil = unchanged
 }
 
 func (s *Service) Update(ctx context.Context, id string, c Change, by string) (Site, error) {
@@ -490,7 +495,12 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 		st.Plan, rebuild = *c.Plan, c.Plan.Kind == "build"
 	}
 	redeploy := !slices.Equal(domains, st.Domains) || (c.Plan != nil && !rebuild)
-	if old := st.Domains; !slices.Equal(domains, old) {
+	old, sync := st.Domains, !slices.Equal(domains, st.Domains)
+	if c.DNSManual != nil && *c.DNSManual != st.DNSManual {
+		st.DNSManual = *c.DNSManual
+		sync = sync || !st.DNSManual // back to automatic: point what is missing
+	}
+	if sync {
 		defer func() { go s.SyncDNS(st.ID, old, false) }()
 	}
 	st.Domains, st.AutoDeploy = domains, c.AutoDeploy
@@ -855,7 +865,7 @@ func dnsOwner(st Site) string {
 
 // SyncDNS brings a site's DNS records in line with its domains: records made for
 // domains it no longer has are removed, new domains (or all, with again) are pointed at
-// the server. old is the domain list before a change.
+// the server, unless the site's DNS is manual. old is the domain list before a change.
 func (s *Service) SyncDNS(id string, old []string, again bool) {
 	if s.DNS == nil {
 		return
@@ -875,7 +885,7 @@ func (s *Service) SyncDNS(id string, old []string, again bool) {
 	s.DNS.Forget(ctx, dnsOwner(st), removed)
 	var todo []string
 	for _, d := range st.Domains {
-		if v, ok := st.DNS[d]; again || !ok || v.Status == "error" {
+		if v, ok := st.DNS[d]; !st.DNSManual && (again || !ok || v.Status == "error") {
 			todo = append(todo, d)
 		}
 	}

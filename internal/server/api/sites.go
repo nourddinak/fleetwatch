@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
+	"time"
 
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/sites"
@@ -145,6 +148,29 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		}
 		s.audit(r, "site.env", st.ServerID, st.Name)
 		writeJSON(w, http.StatusOK, st)
+	}))
+	// Where each of a site's domains points right now, as public DNS answers.
+	mux.HandleFunc("GET /api/sites/{id}/dns/check", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+		st, err := s.Sites.Get(r.PathValue("id"))
+		if err != nil {
+			failSite(w, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		out := map[string][]string{}
+		for _, d := range st.Domains {
+			ips := []string{}
+			if addrs, err := net.DefaultResolver.LookupIPAddr(ctx, d); err == nil {
+				for _, a := range addrs {
+					if a.IP.To4() != nil {
+						ips = append(ips, a.IP.String())
+					}
+				}
+			}
+			out[d] = ips
+		}
+		writeJSON(w, http.StatusOK, out)
 	}))
 	mux.HandleFunc("POST /api/sites/{id}/dns", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 		if _, ok := own(w, r, sess); !ok {

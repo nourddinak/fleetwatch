@@ -1,11 +1,11 @@
 import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, History, Info, KeyRound, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Workflow } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Clock, ExternalLink, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Globe, Hammer, Hand, History, Info, KeyRound, Link2, Lock, PauseCircle, Pencil, Plus, RefreshCw, Rocket, Save, SearchCheck, Server as ServerIcon, Settings2, Terminal, Trash2, Undo2, UserRound, Wand2, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { providerName } from "../components/DnsAccounts";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorState, Field, Gate, Github, Input, LoadingState, Modal, PageHeader, SearchInput, SectionTitle, Spinner, Textarea, ToggleRow, toneDot, type Tone, Toggle, Segmented, CopyButton } from "../components/ui";
 import { cn } from "../utils/cn";
 
 interface Plan {
@@ -27,6 +27,7 @@ interface Site {
   serverId: string;
   plan: Plan;
   domains: string[];
+  dnsManual?: boolean; // the person adds the records; Fleetwatch only shows them
   preview: string;
   autoDeploy: boolean;
   envKeys: string[];
@@ -339,7 +340,8 @@ function IconInput({ icon, prefix, className, ...p }: InputHTMLAttributes<HTMLIn
 function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose: () => void; onCreated: (s: Site) => void; serverId?: string; owner?: boolean; onMoreRepos?: () => void }) {
   const { servers, toast } = useStore();
   const repos = useApi<{ repo: { fullName: string; defaultBranch: string; private: boolean } }[]>("/api/me/github/repos");
-  const [f, setF] = useState({ repo: "", serverId: serverId ?? "", branch: "", name: "", domains: "", env: "" });
+  const [f, setF] = useState({ repo: "", serverId: serverId ?? "", branch: "", name: "", domains: "", env: "", dnsManual: false });
+  const cloudflare = useApi<{ accounts: unknown[] }>("/api/me/dns");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [exampleFile, setExampleFile] = useState("");
   const [busy, setBusy] = useState("");
@@ -367,7 +369,7 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose
     setBusy("create");
     try {
       const s = await api<Site>("POST", "/api/sites", { repo: f.repo, serverId: f.serverId, branch: f.branch, name: f.name, plan,
-        domains: f.domains.split(/[\s,]+/).filter(Boolean), env: plan?.kind === "build" ? f.env : "" });
+        domains: f.domains.split(/[\s,]+/).filter(Boolean), env: plan?.kind === "build" ? f.env : "", dnsManual: f.dnsManual });
       toast(s.plan.kind === "build" ? "Site added: GitHub Actions is building it" : "Site added: deploying");
       onCreated(s);
     } catch (e) {
@@ -513,9 +515,10 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos }: { onClose
               <Badge tone="ok">Automatic</Badge>
             </div>
           )}
-          <Field label="Your own domains (optional)" hint="Point each at the server with a DNS A record; Caddy gets the HTTPS certificate.">
+          <Field label="Your own domains (optional)" hint="Caddy gets the HTTPS certificate for each.">
             <IconInput icon={<Globe size={14} />} value={f.domains} onChange={(e) => setF({ ...f, domains: e.target.value })} placeholder="example.com, www.example.com" />
           </Field>
+          {f.domains.trim() && <DnsMode manual={f.dnsManual} onChange={(m) => setF({ ...f, dnsManual: m })} connected={(cloudflare.data?.accounts?.length ?? 0) > 0} />}
           <p className="flex items-center gap-2 text-[11px] text-muted"><FileCode2 size={12} className="shrink-0" />A Caddyfile at the top of the repository is used for the site instead of the generated one.</p>
         </Step>
       </div>
@@ -595,6 +598,74 @@ function SiteCaddy({ site, editing, setEditing, onSaved }: { site: Site; editing
   );
 }
 
+/** Automatic DNS (records made through the person's Cloudflare) or manual (they add them). */
+function DnsMode({ manual, onChange, connected }: { manual: boolean; onChange: (manual: boolean) => void; connected: boolean }) {
+  return (
+    <div className="space-y-2">
+      <Segmented value={manual ? "manual" : "auto"} onChange={(v) => onChange(v === "manual")} options={[
+        { value: "auto", label: <span className="inline-flex items-center gap-1.5"><Wand2 size={13} />Automatic DNS</span> },
+        { value: "manual", label: <span className="inline-flex items-center gap-1.5"><Hand size={13} />Manual DNS</span> },
+      ]} />
+      <p className="flex gap-2 text-[11px] text-muted">
+        <Info size={13} className="shrink-0" />
+        {manual
+          ? "You add the DNS records yourself; the site shows exactly which, and checks them."
+          : connected
+            ? "Fleetwatch creates the A records in your Cloudflare for the domains it holds, and removes them with the site."
+            : <span>Connect Cloudflare first (<Link to="/integrations?tab=cloudflare" className="underline">Integrations</Link>, or Settings → Account for team members) so Fleetwatch can create the records. Until then, add them yourself.</span>}
+      </p>
+    </div>
+  );
+}
+
+/** The records to add by hand, and where each domain points right now. */
+function ManualDNS({ site, ip }: { site: Site; ip?: string }) {
+  const [check, setCheck] = useState<Record<string, string[]> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { toast } = useStore();
+  if (site.domains.length === 0) return null;
+  const run = async () => {
+    setBusy(true);
+    try {
+      setCheck(await api<Record<string, string[]>>("GET", `/api/sites/${site.id}/dns/check`));
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted">
+        <span>Add these records at your DNS provider</span>
+        <button className="inline-flex items-center gap-1 hover:text-fg" disabled={busy} onClick={run}>{busy ? <Spinner size={11} /> : <SearchCheck size={12} />} Check DNS</button>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-line text-xs">
+        <div className="grid grid-cols-[3rem_1fr_1fr] gap-2 bg-surface2/60 px-3 py-1.5 font-medium text-muted"><span>Type</span><span>Name</span><span>Value</span></div>
+        {site.domains.map((d) => {
+          const got = check?.[d];
+          return (
+            <div key={d} className="border-t border-line px-3 py-2">
+              <div className="grid grid-cols-[3rem_1fr_1fr] items-center gap-2">
+                <span className="font-mono font-medium">A</span>
+                <span className="flex min-w-0 items-center gap-1"><span className="truncate font-mono">{d}</span><CopyButton text={d} /></span>
+                <span className="flex min-w-0 items-center gap-1"><span className="truncate font-mono">{ip || "the server's IP"}</span>{ip && <CopyButton text={ip} />}</span>
+              </div>
+              {got && (
+                <div className="mt-1.5 text-[11px]">
+                  {got.length === 0 ? <span className="flex items-center gap-1 text-warn"><AlertTriangle size={11} />No record found yet (new records can take a few minutes)</span>
+                    : ip && got.includes(ip) ? <span className="flex items-center gap-1 text-ok"><Check size={11} />Points at this server</span>
+                    : <span className="flex items-center gap-1 text-warn" title="Behind Cloudflare's proxy, a domain shows Cloudflare's addresses instead"><AlertTriangle size={11} />Points at {got.join(", ")}{" "}(fine if it goes through Cloudflare's proxy)</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-muted">Using Cloudflare? Set the record to <b>DNS only</b> (grey cloud) until the site loads over HTTPS, then you can turn the proxy on.</p>
+    </div>
+  );
+}
+
 /** How each of a site's domains stands with its owner's DNS accounts. */
 function SiteDNS({ site, onChange }: { site: Site; onChange: (s: Site) => void }) {
   const { toast } = useStore();
@@ -634,7 +705,7 @@ function SiteDNS({ site, onChange }: { site: Site; onChange: (s: Site) => void }
               <Globe size={12} className="shrink-0 text-muted" />
               <span className="min-w-0 flex-1 truncate font-mono">{d}</span>
               {!st ? (
-                <span className="text-muted">Not managed: add the A record yourself, or connect your DNS account in Settings</span>
+                <span className="text-muted">No Cloudflare account of yours holds it: connect Cloudflare, or switch to Manual DNS</span>
               ) : st.status === "error" ? (
                 <span className="flex items-center gap-1 text-crit" title={st.error}><AlertTriangle size={12} />{providerName(st.provider)}: {st.error}</span>
               ) : (
@@ -664,7 +735,9 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const env = useApi<{ env: string; exampleFile?: string; example?: string }>(owner ? `/api/sites/${id}/env` : `/api/sites/${id}`);
   const [domains, setDomains] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
+  const [manual, setManual] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const cloudflare = useApi<{ accounts: unknown[] }>("/api/me/dns");
   const [envText, setEnvText] = useState<string | null>(null);
   const [del, setDel] = useState(false);
   const [log, setLog] = useState<number | null>(null);
@@ -674,6 +747,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
     if (!site) return;
     setDomains(site.domains.join("\n"));
     setAuto(site.autoDeploy);
+    setManual(!!site.dnsManual);
     setPlan(site.plan);
   }, [site]);
   useEffect(() => {
@@ -685,7 +759,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const urls = addresses(site);
   const save = async () => {
     try {
-      data.setData({ ...data.data!, site: await api<Site>("PUT", `/api/sites/${id}`, { domains: domains.split(/[\s,]+/).filter(Boolean), autoDeploy: auto, plan }) });
+      data.setData({ ...data.data!, site: await api<Site>("PUT", `/api/sites/${id}`, { domains: domains.split(/[\s,]+/).filter(Boolean), autoDeploy: auto, plan, dnsManual: manual }) });
       toast("Saved");
     } catch (e) {
       toast((e as ApiError).message, "err");
@@ -710,7 +784,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
       toast((e as ApiError).message, "err");
     }
   };
-  const dirty = domains !== site.domains.join("\n") || auto !== site.autoDeploy || JSON.stringify(plan) !== JSON.stringify(site.plan);
+  const dirty = domains !== site.domains.join("\n") || auto !== site.autoDeploy || manual !== !!site.dnsManual || JSON.stringify(plan) !== JSON.stringify(site.plan);
   const envFromExample = env.data && "env" in env.data && !env.data.env && env.data.exampleFile;
   return (
     <Drawer open onClose={onClose}
@@ -749,13 +823,15 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
             ))}
             {site.atPath && <p className="flex gap-2 text-[11px] text-muted"><Info size={13} className="shrink-0" />Sandboxed under the dashboard's domain: storage lasts until the page reloads. Add your own domain for full browser features.</p>}
-            <Field label="Your own domains" hint={<>One per line. In your DNS, add an A record for each pointing to <span className="font-mono">{ip || "the server's IP"}</span>.</>}>
+            <Field label="Your own domains" hint="One per line. Caddy gets the HTTPS certificate for each.">
               <div className="relative">
                 <Globe size={14} className="pointer-events-none absolute left-4 top-3.5 text-muted" />
                 <Textarea rows={3} value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="www.example.com" className="pl-10 font-mono text-[12px]" />
               </div>
             </Field>
-            <SiteDNS site={site} onChange={(st) => data.setData({ ...data.data!, site: st })} />
+            {(site.domains.length > 0 || domains.trim()) && <DnsMode manual={manual} onChange={setManual} connected={(cloudflare.data?.accounts?.length ?? 0) > 0} />}
+            {manual !== !!site.dnsManual ? <p className="text-[11px] text-muted">Save to switch.</p>
+              : site.dnsManual ? <ManualDNS site={site} ip={ip} /> : <SiteDNS site={site} onChange={(st) => data.setData({ ...data.data!, site: st })} />}
           </Panel>
         )}
 
