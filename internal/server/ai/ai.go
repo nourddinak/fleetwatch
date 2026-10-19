@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"fleetwatch/internal/server/secret"
@@ -53,6 +54,9 @@ type Service struct {
 	db  *sql.DB
 	box *secret.Box
 	Now func() time.Time
+
+	mu   sync.Mutex
+	last *CallReport
 }
 
 func New(d *sql.DB, box *secret.Box) *Service {

@@ -124,6 +124,9 @@ func TestKeyAndConversation(t *testing.T) {
 	if heard != 1600 { // 100 ms at 16 kHz
 		t.Fatal("audio", heard)
 	}
+	if r := s.LastCall(); r == nil || r.Frames != 1 || r.Heard != "I'm on it" || r.Said == "" || r.Ended == "" {
+		t.Fatalf("last call report: %+v", r)
+	}
 	s.AddUsage(90 * time.Second)
 	if s.Remaining() != time.Hour-90*time.Second {
 		t.Fatal(s.Remaining())
@@ -135,7 +138,7 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-func TestNoiseGate(t *testing.T) {
+func TestBooster(t *testing.T) {
 	frame := func(amp float32) []float32 {
 		f := make([]float32, 960)
 		for i := range f {
@@ -146,31 +149,30 @@ func TestNoiseGate(t *testing.T) {
 		}
 		return f
 	}
-	var g noiseGate
-	for range 50 { // line hiss: silence
-		if f := g.apply(frame(0.0025)); f[0] != 0 {
-			t.Fatal("noise passed")
+	var b booster
+	for range 30 { // a quiet line before they speak: the hiss is not blown up
+		b.apply(frame(0.0003))
+	}
+	if f := b.apply(frame(0.0003)); f[0] > 0.001 {
+		t.Fatal("silence was boosted to", f[0])
+	}
+	var out []float32
+	for range 40 { // quiet speech (about -48 dBFS) comes out at a normal level
+		out = b.apply(frame(0.004))
+	}
+	if out[0] < 0.05 || b.speech < 30 {
+		t.Fatal("quiet speech not boosted", out[0], b.speech)
+	}
+	var loud booster // a normal voice is left alone
+	for range 40 {
+		out = loud.apply(frame(0.2))
+	}
+	if out[0] != 0.2 || loud.gain != 1 {
+		t.Fatal("a loud voice was changed", out[0], loud.gain)
+	}
+	for range 200 { // a long sentence is never muted
+		if f := b.apply(frame(0.004)); f[0] == 0 {
+			t.Fatal("speech muted")
 		}
-	}
-	for i := range 200 { // a long sentence is never muted, however long
-		if f := g.apply(frame(0.03)); f[0] == 0 {
-			t.Fatal("speech muted after", i, "frames")
-		}
-	}
-	for i := range gateHold - 1 { // the hold keeps the end of the word
-		if f := g.apply(frame(0.0025)); f[0] == 0 {
-			t.Fatal("cut right after speech", i)
-		}
-	}
-	g.apply(frame(0.0025))
-	if f := g.apply(frame(0.0025)); f[0] != 0 {
-		t.Fatal("the gate stayed open")
-	}
-	var quiet noiseGate // a loud line: the noise level is capped, so soft speech still passes
-	for range 300 {
-		quiet.apply(frame(0.008))
-	}
-	if f := quiet.apply(frame(0.012)); f[0] == 0 {
-		t.Fatal("soft speech on a noisy line was muted")
 	}
 }

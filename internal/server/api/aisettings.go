@@ -11,7 +11,7 @@ import (
 // call minutes (Integrations → AI).
 func (s *server) aiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/integrations/ai", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		out := map[string]any{"status": s.AI.Status(), "models": []string{}}
+		out := map[string]any{"status": s.AI.Status(), "models": []string{}, "lastCall": s.AI.LastCall()}
 		if st := s.AI.Status(); st.Configured {
 			if models, err := s.AI.Models(r.Context()); err == nil {
 				out["models"] = models

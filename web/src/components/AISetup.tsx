@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, ExternalLink, Gauge, Info, KeyRound, Mic, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, Gauge, Info, KeyRound, Mic, PhoneCall, RefreshCw, Trash2 } from "lucide-react";
+import { relTime } from "../mock/util";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, Field, Gemini, Input, SectionTitle, Select, Spinner } from "./ui";
@@ -19,7 +20,7 @@ interface AIStatus {
 /** Integrations → AI: the Gemini key, live model, voice and monthly cap of on-call calls. */
 export function AISetup() {
   const { toast } = useStore();
-  const data = useApi<{ status: AIStatus; models: { id: string; note: string; recommended?: boolean }[]; error?: string }>("/api/integrations/ai");
+  const data = useApi<{ status: AIStatus; models: { id: string; note: string; recommended?: boolean }[]; error?: string; lastCall?: LastCall | null }>("/api/integrations/ai");
   const [key, setKey] = useState("");
   const [f, setF] = useState<AIConfig | null>(null);
   const [busy, setBusy] = useState("");
@@ -94,10 +95,43 @@ export function AISetup() {
           </div>
         )}
       </Card>
+      {st.configured && data.data?.lastCall && <LastCallCard c={data.data.lastCall} onReload={data.reload} />}
       {st.configured && <Card><SectionTitle icon={<KeyRound size={15} />} title="Replace the key" />{keyForm}</Card>}
       <ConfirmDialog open={del} title="Remove the Gemini key?" confirmLabel="Remove" danger
         message="Answered on-call calls go back to playing the alert sound."
         onCancel={() => setDel(false)} onConfirm={() => { setDel(false); run("del", async () => { await api("DELETE", "/api/integrations/ai"); data.reload(); }); }} />
     </>
+  );
+}
+
+interface LastCall {
+  at: number;
+  seconds: number;
+  frames: number;
+  speech: number;
+  loudestDb: number;
+  gain: number;
+  heard: string;
+  said: string;
+  ended: string;
+  error?: string;
+}
+
+/** How the last call went: whether their voice arrived, what Gemini heard, why it ended. */
+function LastCallCard({ c, onReload }: { c: LastCall; onReload: () => void }) {
+  const voice = c.frames === 0 ? { tone: "crit" as const, text: "No audio of theirs reached the dashboard." }
+    : c.speech === 0 ? { tone: "warn" as const, text: `Their audio arrived (${c.frames} chunks) but sounded like silence (loudest ${c.loudestDb} dB).` }
+    : { tone: "ok" as const, text: `Their voice arrived: loudest ${c.loudestDb} dB, boosted ×${c.gain.toFixed(1)}.` };
+  return (
+    <Card>
+      <SectionTitle icon={<PhoneCall size={15} />} title="Last call" sub={`${relTime(c.at)} · ${c.seconds} s · ended: ${c.ended}`}
+        action={<Button size="sm" variant="ghost" onClick={onReload}><RefreshCw size={13} /></Button>} />
+      <dl className="space-y-2 text-sm">
+        <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Their voice</dt><dd><Badge tone={voice.tone} dot>{voice.tone === "ok" ? "OK" : "Problem"}</Badge> <span className="text-xs">{voice.text}</span></dd></div>
+        <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">AI heard</dt><dd className="text-xs">{c.heard || <span className="text-muted">nothing</span>}</dd></div>
+        <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">AI said</dt><dd className="text-xs">{c.said || <span className="text-muted">nothing</span>}</dd></div>
+        {c.error && <div className="flex gap-2"><dt className="w-24 shrink-0 text-muted">Error</dt><dd className="text-xs text-crit">{c.error}</dd></div>}
+      </dl>
+    </Card>
   );
 }

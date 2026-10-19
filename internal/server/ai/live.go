@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,19 +125,24 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		return nil, 0, err
 	}
 
-	// The person's voice, as it comes.
+	// The person's voice, as it comes: quiet phone audio is brought up to a normal
+	// speaking level, so Gemini hears it clearly and notices when it stops.
+	var boost booster
+	var boostMu sync.Mutex
+	hungUp := false
 	go func() {
-		var g noiseGate
-		defer func() {
-			slog.Info("ai call audio", "frames", g.frames, "passed", g.passed, "peakRMS", fmt.Sprintf("%.4f", g.peak), "noiseFloor", fmt.Sprintf("%.4f", g.floor))
-		}()
 		for frame := range t.In {
-			frame = g.apply(frame)
+			boostMu.Lock()
+			frame = boost.apply(frame)
+			boostMu.Unlock()
 			if send(map[string]any{"realtimeInput": map[string]any{"audio": map[string]string{
 				"mimeType": "audio/pcm;rate=16000", "data": base64.StdEncoding.EncodeToString(pcm16(frame))}}}) != nil {
 				return
 			}
 		}
+		boostMu.Lock()
+		hungUp = true
+		boostMu.Unlock()
 		cancel() // they hung up
 	}()
 	// Time nearly up: ask for a goodbye.
@@ -177,10 +183,17 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		}
 		return b.String()
 	}
+	why := "the AI ended the call"
 	for {
 		_, raw, err := ws.Read(ctx)
 		if err != nil {
-			if ctx.Err() == nil {
+			switch {
+			case errors.Is(context.Cause(ctx), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
+				why = "the time limit"
+			case ctx.Err() != nil:
+				why = "the call ended"
+			default:
+				why = "Gemini closed the conversation: " + err.Error()
 				slog.Warn("ai call: Gemini Live closed", "err", err)
 			}
 			break
@@ -272,6 +285,7 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			send(map[string]any{"toolResponse": map[string]any{"functionResponses": answers}})
 		}
 		if m.GoAway != nil {
+			why = "Gemini asked to end the session"
 			break
 		}
 		if ending && m.ServerContent != nil && m.ServerContent.TurnComplete {
@@ -279,10 +293,67 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		}
 	}
 	ws.Close(websocket.StatusNormalClosure, "")
-	if len(lines) == 0 && s.Now().Sub(start) < 5*time.Second {
-		return nil, s.Now().Sub(start), errors.New("Gemini Live ended the conversation right away")
+	took := s.Now().Sub(start)
+	boostMu.Lock()
+	if hungUp {
+		why = "they hung up"
 	}
-	return lines, s.Now().Sub(start), nil
+	rep := CallReport{At: start.UnixMilli(), Seconds: int(took.Seconds()), Frames: boost.frames, Speech: boost.speech,
+		LoudestDB: dbfs(boost.peak), Gain: boost.gain, Ended: why}
+	boostMu.Unlock()
+	for _, l := range lines {
+		if l.Who == "person" {
+			rep.Heard += l.Text
+		} else {
+			rep.Said += l.Text
+		}
+	}
+	rep.Heard, rep.Said = clip(strings.TrimSpace(rep.Heard), 300), clip(strings.TrimSpace(rep.Said), 300)
+	slog.Info("ai call", "seconds", rep.Seconds, "frames", rep.Frames, "speechFrames", rep.Speech, "loudestDB", rep.LoudestDB, "gain", rep.Gain, "ended", why, "heard", rep.Heard)
+	var failed error
+	if len(lines) == 0 && took < 5*time.Second {
+		failed = errors.New("Gemini Live ended the conversation right away")
+		rep.Error = failed.Error()
+	}
+	s.mu.Lock()
+	s.last = &rep
+	s.mu.Unlock()
+	return lines, took, failed
+}
+
+// CallReport is how the last call went, to see why when one goes wrong.
+type CallReport struct {
+	At        int64   `json:"at"`
+	Seconds   int     `json:"seconds"`
+	Frames    int     `json:"frames"`    // 60 ms frames of their audio that arrived
+	Speech    int     `json:"speech"`    // of which sounded like speech
+	LoudestDB float64 `json:"loudestDb"` // their loudest moment, in dBFS (0 = full scale)
+	Gain      float64 `json:"gain"`      // how much their voice was boosted at the end
+	Heard     string  `json:"heard"`     // what Gemini understood them to say
+	Said      string  `json:"said"`      // what the AI said
+	Ended     string  `json:"ended"`
+	Error     string  `json:"error,omitempty"`
+}
+
+// LastCall is the report of the last conversation (nil before any).
+func (s *Service) LastCall() *CallReport {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last
+}
+
+func dbfs(rms float64) float64 {
+	if rms <= 0 {
+		return -100
+	}
+	return math.Round(20*math.Log10(rms)*10) / 10
+}
+
+func clip(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // pcm16 turns float samples into 16-bit little-endian PCM.
@@ -316,49 +387,56 @@ func resample24to16(b []byte) []float32 {
 	return out
 }
 
-// noiseGate turns line noise into true silence, so Gemini can tell when the person has
-// stopped talking. It learns the noise level from quiet frames only (never from their
-// voice), and never mutes a frame louder than a whisper (gateAlways); after sound it
-// keeps passing a moment, so the ends of words are kept.
-type noiseGate struct {
-	floor          float64 // the line's noise level
-	hold           int     // frames left to keep passing
-	frames, passed int     // for the call's log line
-	peak           float64
+// booster brings quiet phone audio up to a normal speaking level. Its boost follows the
+// speech level only: frames well above the line's background (its quietest moment of
+// the last few seconds) count as speech; silence and hiss never raise the boost on their
+// own, and nothing is muted.
+type booster struct {
+	recent []float64 // the last frames' levels, for the background
+	level  float64   // their speaking level
+	gain   float64
+	frames int
+	speech int
+	peak   float64
 }
 
 const (
-	gateHold   = 5     // 300 ms of 60 ms frames
-	gateFloor  = 0.002 // a quiet line, before anything is learnt
-	gateMax    = 0.004 // the most the noise level is taken to be
-	gateAlways = 0.01  // about -40 dBFS: speech is well above it
+	boostTarget = 0.08 // about -22 dBFS: a clear voice
+	boostMax    = 25
+	boostWindow = 50 // frames: 3 seconds
 )
 
-func (g *noiseGate) apply(f []float32) []float32 {
+func (b *booster) apply(f []float32) []float32 {
 	var sum float64
 	for _, v := range f {
 		sum += float64(v) * float64(v)
 	}
 	rms := math.Sqrt(sum / float64(max(1, len(f))))
-	g.frames++
-	g.peak = max(g.peak, rms)
-	if g.floor == 0 {
-		g.floor = gateFloor
+	b.frames++
+	b.peak = max(b.peak, rms)
+	b.recent = append(b.recent, rms)
+	if len(b.recent) > boostWindow {
+		b.recent = b.recent[1:]
 	}
-	if rms > gateAlways || rms > max(0.003, 2.5*g.floor) {
-		g.hold = gateHold
-	} else {
-		if g.hold > 0 {
-			g.hold--
+	background := slices.Min(b.recent)
+	if rms > 3*background && rms > 0.0005 { // speech: follow its level, quickly up, more slowly down
+		b.speech++
+		switch {
+		case b.level == 0:
+			b.level = rms // their first words set it
+		case rms > b.level:
+			b.level = 0.6*b.level + 0.4*rms
+		default:
+			b.level = 0.95*b.level + 0.05*rms
 		}
-		g.floor = min(gateMax, rms, g.floor*1.01) // quiet: learn the noise, slowly upwards
-		if rms < g.floor {
-			g.floor = rms
-		}
 	}
-	if g.hold > 0 {
-		g.passed++
-		return f
+	b.gain = 1 // unchanged until they speak
+	if b.level > 0 {
+		b.gain = min(boostMax, max(1, boostTarget/b.level))
 	}
-	return make([]float32, len(f))
+	out := make([]float32, len(f))
+	for i, v := range f {
+		out[i] = float32(max(-1, min(1, float64(v)*b.gain)))
+	}
+	return out
 }
