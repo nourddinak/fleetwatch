@@ -45,6 +45,7 @@ var Labels = map[string]string{
 	"log_alert":         "Log Alert",
 	"cron_missed":       "Missed Job",
 	"cron_failed":       "Job Failed",
+	"backup_failed":     "Backup Failed",
 }
 
 type entry struct {

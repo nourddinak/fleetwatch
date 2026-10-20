@@ -387,6 +387,88 @@ type CronJob struct {
 	Paused    bool   `json:"paused,omitempty"`  // paused from the dashboard (commented out; timers: disabled)
 }
 
+// Backups (restic): the server finds databases, runs a plan's backup, lists the copies
+// and restores one.
+const (
+	TypeBackupScan     = "backup.scan"     // server → agent: find databases
+	TypeBackupFound    = "backup.found"    // agent → server: BackupFound
+	TypeBackupRun      = "backup.run"      // server → agent: BackupRun
+	TypeBackupResult   = "backup.result"   // agent → server: BackupResult
+	TypeBackupRestore  = "backup.restore"  // server → agent: BackupRestore
+	TypeBackupRestored = "backup.restored" // agent → server: BackupRestored
+)
+
+// BackupItem is one thing to back up: a database or a folder.
+type BackupItem struct {
+	Kind string `json:"kind"` // postgres | mysql | sqlite | folder
+	Name string `json:"name"` // database name, or file/folder path
+	Size int64  `json:"size,omitempty"`
+}
+
+type BackupFound struct {
+	Items  []BackupItem `json:"items"`
+	Restic string       `json:"restic,omitempty"` // installed restic version
+}
+
+// BackupRepo is where a server's copies go: a restic repository and what it needs.
+type BackupRepo struct {
+	Repository string            `json:"repository"` // s3:…, sftp:…, rclone:fw:…
+	Password   string            `json:"password"`
+	Env        map[string]string `json:"env,omitempty"`     // keys for the storage
+	SSHKey     string            `json:"sshKey,omitempty"`  // sftp: private key
+	SSHPort    int               `json:"sshPort,omitempty"` // sftp
+	Rclone     bool              `json:"rclone,omitempty"`  // needs rclone (Google Drive)
+}
+
+type BackupRun struct {
+	RunID       string       `json:"runId"`
+	Repo        BackupRepo   `json:"repo"`
+	Items       []BackupItem `json:"items"`
+	KeepDaily   int          `json:"keepDaily"`
+	KeepWeekly  int          `json:"keepWeekly"`
+	KeepMonthly int          `json:"keepMonthly"`
+	ListOnly    bool         `json:"listOnly,omitempty"` // only list the copies
+}
+
+// BackupSnapshot is one copy in the repository.
+type BackupSnapshot struct {
+	ID    string   `json:"id"`
+	Time  int64    `json:"time"` // unix ms
+	Paths []string `json:"paths"`
+	Tags  []string `json:"tags"`
+	Size  int64    `json:"size,omitempty"` // bytes it holds
+}
+
+type BackupItemResult struct {
+	BackupItem
+	Error    string `json:"error,omitempty"`
+	Snapshot string `json:"snapshot,omitempty"`
+	Added    int64  `json:"added"` // new bytes stored
+}
+
+type BackupResult struct {
+	RunID     string             `json:"runId"`
+	Started   int64              `json:"started"`
+	Finished  int64              `json:"finished"`
+	Error     string             `json:"error,omitempty"` // the whole run failed (repository, restic)
+	Items     []BackupItemResult `json:"items"`
+	Snapshots []BackupSnapshot   `json:"snapshots"`
+	ListOnly  bool               `json:"listOnly,omitempty"`
+}
+
+type BackupRestore struct {
+	RunID    string     `json:"runId"`
+	Repo     BackupRepo `json:"repo"`
+	Snapshot string     `json:"snapshot"`
+}
+
+type BackupRestored struct {
+	RunID  string   `json:"runId"`
+	Folder string   `json:"folder,omitempty"` // where the files are now
+	Files  []string `json:"files,omitempty"`
+	Error  string   `json:"error,omitempty"`
+}
+
 // CronChange changes a server's cron jobs. Op: add | update | delete | pause | resume | run.
 // add needs User, Schedule and Command; the others name the job by JobID (update also
 // takes the new Schedule and Command).

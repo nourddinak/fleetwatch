@@ -1,7 +1,7 @@
 import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlarmClock, AlertOctagon, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
+import { Activity, AlarmClock, AlertOctagon, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -151,6 +151,7 @@ function Shell() {
     ] },
     { title: "Protect & share", items: [
       { to: "/security", label: "Security", icon: ShieldCheck },
+      ...(owner ? [{ to: "/backups", label: "Backups", icon: DatabaseBackup }] : []),
       ...(owner ? [{ to: "/status-page", label: "Status pages", icon: Radio }] : []),
       { to: "/team", label: "Team", icon: Users },
       { to: "/notifications", label: "Notifications", icon: Bell, badge: unread },

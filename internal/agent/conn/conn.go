@@ -20,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"fleetwatch/internal/agent/backup"
 	"fleetwatch/internal/agent/caddy"
 	"fleetwatch/internal/agent/config"
 	"fleetwatch/internal/agent/docker"
@@ -233,6 +234,18 @@ func (r *Runner) session(ctx context.Context) error {
 							r.sendCurrent(proto.TypeDockerReport, docker.Report(rootCtx))
 						}
 					}()
+				}
+			case proto.TypeBackupScan:
+				go func() { r.sendCurrent(proto.TypeBackupFound, backup.Find(rootCtx)) }()
+			case proto.TypeBackupRun:
+				var req proto.BackupRun
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeBackupResult, backup.Run(rootCtx, req)) }()
+				}
+			case proto.TypeBackupRestore:
+				var req proto.BackupRestore
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeBackupRestored, backup.Restore(rootCtx, req)) }()
 				}
 			case proto.TypeCronChange:
 				var req proto.CronChange

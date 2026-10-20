@@ -388,7 +388,7 @@ func (s *server) regenRecovery(w http.ResponseWriter, r *http.Request, sess auth
 // dangerous are the requests that need a 2FA code when the owner asks for it
 // (Security → Confirm dangerous actions).
 var dangerous = regexp.MustCompile(`^(DELETE /api/(servers|apps|sites|members|status-pages|uptime|tokens)/[^/]+|DELETE /api/integrations/[a-z]+|` +
-	`POST /api/blocks|POST /api/servers/[^/]+/(firewall/change|updates/install|disk/clean|cron)|POST /api/system/cleanup|PUT /api/settings/security)$`)
+	`DELETE /api/backups/(dests|plans)/[^/]+|GET /api/backups/dests/[^/]+/password|POST /api/blocks|POST /api/servers/[^/]+/(firewall/change|updates/install|disk/clean|cron)|POST /api/system/cleanup|PUT /api/settings/security)$`)
 
 // confirmed asks for the code (428, the page prompts and sends it in X-Confirm) and checks it.
 func (s *server) confirmed(w http.ResponseWriter, r *http.Request, sess auth.Session) bool {

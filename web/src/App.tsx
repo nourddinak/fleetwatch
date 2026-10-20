@@ -72,6 +72,7 @@ const TeamPage = page(() => import("./pages/TeamPage"), "TeamPage");
 const Domains = page(() => import("./pages/Domains"), "Domains");
 const Uptime = page(() => import("./pages/Uptime"), "Uptime");
 const CronJobs = page(() => import("./pages/CronJobs"), "CronJobs");
+const Backups = page(() => import("./pages/Backups"), "Backups");
 const Sites = page(() => import("./pages/Sites"), "Sites");
 const ServerSites = page(() => import("./pages/Sites"), "ServerSites");
 const SitePage = page(() => import("./pages/Sites"), "SitePage");
@@ -152,6 +153,7 @@ export default function App() {
             <Route path="domains" element={<Domains />} />
             <Route path="uptime" element={<Uptime />} />
             <Route path="cron" element={<CronJobs />} />
+            <Route path="backups" element={<Backups />} />
             <Route path="sites" element={<Sites />} />
             <Route path="sites/:id" element={<SitePage />} />
             <Route path="integrations" element={<IntegrationsPage />} />

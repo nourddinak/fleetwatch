@@ -17,6 +17,7 @@ import (
 	"fleetwatch/internal/server/anomaly"
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/backups"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/cron"
 	"fleetwatch/internal/server/disk"
@@ -77,6 +78,7 @@ type Deps struct {
 	Mobile     *mobile.Service
 	Uptime     *uptime.Service
 	Cron       *cron.Service
+	Backups    *backups.Service
 	Docker     *docker.Service
 	Admin      *hostadmin.Service
 	Vulns      *vulns.Service
@@ -185,6 +187,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.Cron != nil {
 		s.cronRoutes(mux)
+	}
+	if d.Backups != nil {
+		s.backupRoutes(mux)
 	}
 	if d.Docker != nil {
 		s.dockerRoutes(mux)
