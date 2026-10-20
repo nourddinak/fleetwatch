@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -310,5 +311,51 @@ func TestSpoken(t *testing.T) {
 	want := "Hi Nour! Here is your week. Incidents: 3 this week, 3 resolved. Lowest uptime: shop 99.50 percent. Reply here to ask me anything."
 	if got != want {
 		t.Fatalf("%q", got)
+	}
+}
+
+// "Looks like you're busy, I'll call you back": a call back that only rings if the
+// incident still waits for someone, and not endlessly.
+func TestCallBack(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	d.Exec(`INSERT INTO servers (id, name, created_at) VALUES ('s1', 'web-1', 0)`)
+	inc := incidents.NewStore(d, live.NewBus())
+	inc.Ensure(incidents.Signal{Type: "server_offline", Key: "k1", Severity: "critical", ServerID: "s1", Title: "web-1 is offline"})
+	list, _ := inc.List(incidents.Filter{Status: "open"})
+	if len(list) != 1 {
+		t.Fatal(list)
+	}
+	x := list[0]
+	wa := whatsapp.New(d, t.TempDir(), nil)
+	deps := callDeps{db: d, wa: wa, incidents: inc, people: func() []oncall.Person { return []oncall.Person{{ID: oncall.Owner, Name: "Nour"}} }}
+	var callBack ai.Tool
+	for _, tool := range deps.watchTools(oncall.Owner, &voiceActions{d: deps, person: oncall.Owner}, func(string) bool { return true }, x.ID) {
+		if tool.Name == "call_back" {
+			callBack = tool
+		}
+	}
+	if _, err := callBack.Run(context.Background(), map[string]any{"minutes": float64(5), "reason": "web-1 is offline"}); err != nil {
+		t.Fatal(err)
+	}
+	w := wa.Watches(oncall.Owner)[0]
+	var c cond
+	json.Unmarshal([]byte(w.Cond), &c)
+	if w.How != "call" || time.Until(time.UnixMilli(w.Due)).Round(time.Minute) != 5*time.Minute || c.ID != x.ID || c.State != "active" {
+		t.Fatalf("%+v %+v", w, c)
+	}
+	if ok, _ := deps.holds(c); !ok {
+		t.Fatal("rings while nobody took it")
+	}
+	inc.Act(x.ID, "acknowledge", "", "Omar")
+	if ok, _ := deps.holds(c); ok {
+		t.Fatal("not once someone took it")
+	}
+	callBack.Run(context.Background(), map[string]any{})
+	if _, err := callBack.Run(context.Background(), map[string]any{}); err == nil {
+		t.Fatal("three call backs in an hour")
 	}
 }

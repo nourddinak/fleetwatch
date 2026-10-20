@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -164,6 +165,9 @@ func (d callDeps) holds(c cond) (bool, string) {
 		if err != nil {
 			return false, "the incident is not there anymore"
 		}
+		if c.State == "active" { // nobody took it yet
+			return x.Status == "active", "the incident " + c.Name + " is " + x.Status
+		}
 		return x.Status == "resolved", "the incident " + c.Name + " is " + x.Status
 	case "site":
 		s, err := d.sites.Get(c.ID)
@@ -245,6 +249,38 @@ func (d callDeps) watchTools(person string, gate *voiceActions, sees func(string
 				}
 				_, now := d.holds(c)
 				return fmt.Sprintf("watching for %.0f hours; now %s", hours, now), nil
+			}},
+		{Name: "call_back", Description: "Call them back in a few minutes: they are busy, stay silent, or ask you to. On an incident call, the call back only rings if nobody has taken the incident by then. Tell them when you will call.",
+			Params: map[string]any{
+				"minutes": map[string]any{"type": "INTEGER", "description": "In how many minutes (default 5)"},
+				"reason":  map[string]any{"type": "STRING", "description": "Why, in a few words"},
+			},
+			Run: func(_ context.Context, args map[string]any) (any, error) {
+				min := 5.0
+				if m, ok := args["minutes"].(float64); ok && m >= 1 {
+					min = math.Min(m, 120)
+				}
+				recent := 0
+				for _, w := range d.wa.Watches(person) {
+					if strings.HasPrefix(w.What, "Call back") && time.Since(time.UnixMilli(w.At)) < time.Hour {
+						recent++
+					}
+				}
+				if recent >= 2 {
+					return nil, valid.Error("two call backs were already set this hour: no more (on-call keeps paging the next person)")
+				}
+				due := time.Now().Add(time.Duration(min * float64(time.Minute)))
+				w := whatsapp.Watch{Person: person, What: "Call back: " + cmp.Or(str(args, "reason"), "about our call"), Due: due.UnixMilli(), How: "call", Expires: due.Add(30 * time.Minute).UnixMilli()}
+				if incidentID != "" {
+					if x, err := d.incidents.Get(incidentID); err == nil {
+						b, _ := json.Marshal(cond{Kind: "incident", ID: x.ID, Name: x.Title, State: "active"})
+						w.Cond = string(b)
+					}
+				}
+				if _, err := d.wa.AddWatch(w); err != nil {
+					return nil, err
+				}
+				return fmt.Sprintf("will call back at %s", d.localClock(person, due)), nil
 			}},
 		{Name: "my_reminders", Description: "Their reminders and watches still active, with ids.",
 			Run: func(context.Context, map[string]any) (any, error) {
@@ -363,6 +399,10 @@ func (d callDeps) notifyWatch(ctx context.Context, w whatsapp.Watch, state strin
 	}
 	opening += " Tell them in a sentence, then ask if they need anything."
 	talker := d.sessionOpening(w.Person, "", false, opening)
+	var c cond
+	if json.Unmarshal([]byte(w.Cond), &c) == nil && c.Kind == "incident" { // a call back about an incident
+		talker = d.sessionWith(w.Person, c.ID, "The call just connected. You are calling back: on the last call they did not answer or stayed silent. Say so in a few words, then explain the incident and what the latest logs show, and ask if they can handle it.")
+	}
 	go func() {
 		c, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		defer cancel()

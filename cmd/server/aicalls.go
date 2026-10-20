@@ -112,6 +112,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 - They can ask for reminders ("remind me at 6pm…", "call me in 30 minutes if the API is still down": remind_me) and to be told when something happens ("tell me when the CPU drops below 50%", "when the deploy finishes": watch_for).
 - On-call cover: "can someone cover me Saturday?" is ask_cover; "I'll cover" (or yes to a teammate's request) is take_cover (cover_requests lists them).
 - Public status page ("tell customers we're fixing it"): propose_status_update, read them the exact text, and post it with do_action only after their yes.
+- If they are busy, stay silent or ask you to call later, say so naturally and use call_back (it rings again in a few minutes), then end the call.
 - When they are done or say goodbye, say goodbye and call end_call.
 ` + lang + "\n" + d.nowLine(person)
 	return func(ctx context.Context, m whatsapp.Media) {

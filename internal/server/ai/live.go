@@ -72,6 +72,10 @@ type Talk struct {
 	News <-chan string
 }
 
+// How long someone may stay silent on a call: before the AI checks they are there,
+// before it lets them go, and before the call is ended anyway. Tests shorten them.
+var silenceAsk, silenceBye, silenceHangUp = 12 * time.Second, 10 * time.Second, 20 * time.Second
+
 // Converse runs a conversation until the AI ends it, the person hangs up (In closes)
 // or MaxLength passes. It answers the transcript and how long it lasted.
 func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, error) {
@@ -193,6 +197,55 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 		}()
 	}
 
+	// Silence: someone who picked up but says nothing (busy, phone in a pocket, not
+	// hearing). The AI is told, and says what fits in its own words: first it checks
+	// they are there, then it lets them go (and may call back); then the call ends.
+	var busyUntil, nudgedAt time.Time // the AI speaking or working; the last nudge
+	silentEnd := false
+	go func() {
+		nudges := 0
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+			boostMu.Lock()
+			last := start
+			for _, t := range []time.Time{lastSpeech, busyUntil, nudgedAt} {
+				if t.After(last) {
+					last = t
+				}
+			}
+			if lastSpeech.After(nudgedAt) {
+				nudges = 0 // they spoke: all is well
+			}
+			quiet := s.Now().Sub(last)
+			act := ""
+			switch {
+			case nudges == 0 && quiet >= silenceAsk:
+				act = "(Silence: they have said nothing for a while. They may be busy, away from the phone or not hearing you. Check briefly and naturally, in your own words and their language, whether they are there.)"
+			case nudges == 1 && quiet >= silenceBye:
+				act = "(Still silence after you asked. Say briefly, in your own words, that they seem busy and you will let them go; if this call is about something that still needs them and you can call back (call_back), say when you will call back and use it. Then end the call.)"
+			case nudges == 2 && quiet >= silenceHangUp:
+				silentEnd = true
+				boostMu.Unlock()
+				cancel() // the AI did not end it: hang up anyway
+				return
+			}
+			if act != "" {
+				nudges++
+				nudgedAt = s.Now()
+			}
+			boostMu.Unlock()
+			if act != "" {
+				send(text("user", act))
+			}
+		}
+	}()
+
 	var lines []Line
 	add := func(who, s string) {
 		if s == "" {
@@ -236,6 +289,11 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 				why = "the time limit"
 			case ctx.Err() != nil:
 				why = "the call ended"
+				boostMu.Lock()
+				if silentEnd {
+					why = "they stayed silent"
+				}
+				boostMu.Unlock()
 			default:
 				why = "Gemini closed the conversation: " + err.Error()
 				slog.Warn("ai call: Gemini Live closed", "err", err)
@@ -288,7 +346,14 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 							boostMu.Unlock()
 						}
 						out := resample24to16(b)
-						spoken += time.Duration(len(out)) * time.Second / 16000
+						d := time.Duration(len(out)) * time.Second / 16000
+						spoken += d
+						boostMu.Lock()
+						if now := s.Now(); busyUntil.Before(now) {
+							busyUntil = now
+						}
+						busyUntil = busyUntil.Add(d) // when what it says has played out
+						boostMu.Unlock()
 						t.Say(out)
 					}
 				}
@@ -304,6 +369,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 			}
 			if sc.Interrupted {
 				t.Hush()
+				boostMu.Lock()
+				busyUntil = s.Now()
+				boostMu.Unlock()
 				spoken = 0
 				newTurn, turnEnded = true, s.Now()
 			}
@@ -334,6 +402,9 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 				if fc.Name == "end_call" {
 					ending = true
 				} else if tool, ok := tools[fc.Name]; ok {
+					boostMu.Lock()
+					busyUntil = s.Now().Add(time.Minute)
+					boostMu.Unlock()
 					tctx, tcancel := context.WithTimeout(WithHeard(ctx, heardSince), 40*time.Second)
 					v, err := tool.Run(tctx, fc.Args)
 					tcancel()
@@ -345,6 +416,11 @@ func (s *Service) Converse(ctx context.Context, t Talk) ([]Line, time.Duration, 
 				} else {
 					result = map[string]string{"error": "no such tool"}
 				}
+				boostMu.Lock()
+				if busyUntil.After(s.Now()) {
+					busyUntil = s.Now() // the tool is done: waiting for the AI's answer again
+				}
+				boostMu.Unlock()
 				answers = append(answers, map[string]any{"id": fc.ID, "name": fc.Name, "response": result})
 			}
 			send(map[string]any{"toolResponse": map[string]any{"functionResponses": answers}})
