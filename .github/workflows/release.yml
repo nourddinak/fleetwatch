@@ -14,6 +14,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
+      # Go's module and build cache, as CI on main last saved it (a tag's own cache
+      # could not be reused by the next tag).
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ github.sha }}
+          restore-keys: go-${{ runner.os }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22

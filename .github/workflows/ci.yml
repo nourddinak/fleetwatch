@@ -15,6 +15,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
+      # Go's module and build cache, saved after every push to main (setup-go's own cache
+      # is only refreshed when go.sum changes, so it goes stale); releases reuse it.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ github.sha }}
+          restore-keys: go-${{ runner.os }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,4 +36,13 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal web deploy)"
       - run: go vet ./...
       - run: go test ./...
+      # Compiles what a release compiles (both Linux CPUs, -trimpath), so the cache has it.
+      - name: Warm the release build cache
+        if: github.ref == 'refs/heads/main'
+        run: |
+          for arch in amd64 arm64; do
+            for pkg in agent server; do
+              CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/$pkg
+            done
+          done
       - run: bash -n scripts/install-server.sh internal/server/agentbin/uninstall.sh
