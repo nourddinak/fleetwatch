@@ -56,68 +56,72 @@ func (s *server) backupRoutes(mux *http.ServeMux) {
 		s.audit(r, "backups.password_shown", r.PathValue("id"), "")
 		writeJSON(w, http.StatusOK, map[string]string{"password": pw})
 	}))
-	mux.HandleFunc("PUT /api/backups/plans/{server}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	savePlan := func(w http.ResponseWriter, r *http.Request, id string) {
 		var in backups.Plan
 		if !decode(w, r, &in) {
 			return
 		}
-		in.ServerID = r.PathValue("server")
-		if _, err := s.Fleet.Reg.Get(in.ServerID); err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "Server not found.")
-			return
+		in.ID = id
+		if id == "" {
+			if _, err := s.Fleet.Reg.Get(in.ServerID); err != nil {
+				writeError(w, http.StatusNotFound, "not_found", "Server not found.")
+				return
+			}
 		}
 		p, err := s.Backups.SavePlan(in)
 		if err != nil {
 			failB(w, err)
 			return
 		}
-		s.audit(r, "backups.plan_save", in.ServerID, "")
+		s.audit(r, "backups.plan_save", p.ServerID, p.Name)
 		writeJSON(w, http.StatusOK, p)
-	}))
-	mux.HandleFunc("DELETE /api/backups/plans/{server}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		if err := s.Backups.DeletePlan(r.PathValue("server")); err != nil {
+	}
+	mux.HandleFunc("POST /api/backups/plans", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { savePlan(w, r, "") }))
+	mux.HandleFunc("PUT /api/backups/plans/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { savePlan(w, r, r.PathValue("id")) }))
+	mux.HandleFunc("DELETE /api/backups/plans/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Backups.DeletePlan(r.PathValue("id")); err != nil {
 			failB(w, err)
 			return
 		}
-		s.audit(r, "backups.plan_delete", r.PathValue("server"), "")
+		s.audit(r, "backups.plan_delete", r.PathValue("id"), "")
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	mux.HandleFunc("POST /api/backups/plans/{server}/scan", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	mux.HandleFunc("POST /api/backups/servers/{server}/scan", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.Backups.Scan(r.PathValue("server")); err != nil {
 			failB(w, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "scanning"})
 	}))
-	mux.HandleFunc("POST /api/backups/plans/{server}/run", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		id, err := s.Backups.RunNow(r.PathValue("server"), true)
+	mux.HandleFunc("POST /api/backups/plans/{id}/run", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		id, err := s.Backups.RunNow(r.PathValue("id"), true)
 		if err != nil {
 			failB(w, err)
 			return
 		}
-		s.audit(r, "backups.run", r.PathValue("server"), "")
+		s.audit(r, "backups.run", r.PathValue("id"), "")
 		writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
 	}))
-	mux.HandleFunc("POST /api/backups/plans/{server}/refresh", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		if err := s.Backups.Refresh(r.PathValue("server")); err != nil {
+	mux.HandleFunc("POST /api/backups/plans/{id}/refresh", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Backups.Refresh(r.PathValue("id")); err != nil {
 			failB(w, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "listing"})
 	}))
-	mux.HandleFunc("POST /api/backups/plans/{server}/restore", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	mux.HandleFunc("POST /api/backups/plans/{id}/restore", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct {
 			Snapshot string `json:"snapshot"`
 		}
 		if !decode(w, r, &in) {
 			return
 		}
-		id, err := s.Backups.Restore(r.PathValue("server"), in.Snapshot)
+		id, err := s.Backups.Restore(r.PathValue("id"), in.Snapshot)
 		if err != nil {
 			failB(w, err)
 			return
 		}
-		s.audit(r, "backups.restore", r.PathValue("server"), in.Snapshot)
+		s.audit(r, "backups.restore", r.PathValue("id"), in.Snapshot)
 		writeJSON(w, http.StatusAccepted, map[string]string{"runId": id})
 	}))
 }

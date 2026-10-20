@@ -71,8 +71,13 @@ type storedDest struct {
 	SealedKey      []byte `json:"sealedKey,omitempty"`    // sftp private key
 }
 
-// Plan is what a server backs up, when and where.
+// Plan is one named backup of a server: what, when, where. Its copies go in a folder
+// of its own at the place (Folder, made from the name when it is created; renaming
+// the backup later keeps the folder, so the copies stay found).
 type Plan struct {
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Folder      string             `json:"folder"`
 	ServerID    string             `json:"serverId"`
 	Enabled     bool               `json:"enabled"`
 	Dest        string             `json:"dest"`
@@ -88,6 +93,7 @@ type Plan struct {
 // Run is one backup run as the UI shows it.
 type Run struct {
 	ID       string                   `json:"id"`
+	PlanID   string                   `json:"planId"`
 	ServerID string                   `json:"serverId"`
 	Started  int64                    `json:"started"`
 	Finished int64                    `json:"finished"`
@@ -108,12 +114,13 @@ type Service struct {
 	Send         func(serverID, typ string, v any) error
 	AgentVersion func(serverID string) string
 
-	mu    sync.Mutex
-	found map[string]proto.BackupFound // databases each server has, last scan
+	mu      sync.Mutex
+	found   map[string]proto.BackupFound // databases each server has, last scan
+	listing map[string]string            // list-only run ID → plan ID
 }
 
 func New(d *sql.DB, box *secret.Box, inc *incidents.Store, bus *live.Bus) *Service {
-	return &Service{db: d, box: box, Incidents: inc, Bus: bus, Now: time.Now, Name: func(id string) string { return id }, found: map[string]proto.BackupFound{}}
+	return &Service{db: d, box: box, Incidents: inc, Bus: bus, Now: time.Now, Name: func(id string) string { return id }, found: map[string]proto.BackupFound{}, listing: map[string]string{}}
 }
 
 const (
@@ -297,8 +304,8 @@ func (s *Service) Password(id string) (string, error) {
 	return "", ErrNotFound
 }
 
-// repo is what an agent needs to reach a server's repository at a place.
-func (s *Service) repo(destID, serverID string) (proto.BackupRepo, error) {
+// repo is what an agent needs to reach a backup's repository (its folder) at a place.
+func (s *Service) repo(destID, folder string) (proto.BackupRepo, error) {
 	i := slices.IndexFunc(s.stored(), func(d storedDest) bool { return d.ID == destID })
 	if i < 0 {
 		return proto.BackupRepo{}, valid.Error("the plan's backup place is gone: pick another")
@@ -317,30 +324,46 @@ func (s *Service) repo(destID, serverID string) (proto.BackupRepo, error) {
 	}
 	switch d.Kind {
 	case "s3":
-		r.Repository = "s3:" + d.Endpoint + "/" + path.Join(d.Bucket, d.Prefix, serverID)
+		r.Repository = "s3:" + d.Endpoint + "/" + path.Join(d.Bucket, d.Prefix, folder)
 		r.Env["AWS_ACCESS_KEY_ID"], r.Env["AWS_SECRET_ACCESS_KEY"] = d.KeyID, string(sec)
 		r.Env["AWS_DEFAULT_REGION"] = d.Region
 		if d.Region == "" {
 			r.Env["AWS_DEFAULT_REGION"] = "us-east-1"
 		}
 	case "gdrive":
-		r.Repository, r.Rclone = "rclone:fw:"+path.Join(d.Folder, serverID), true
+		r.Repository, r.Rclone = "rclone:fw:"+path.Join(d.Folder, folder), true
 		r.Env["RCLONE_CONFIG_FW_TYPE"], r.Env["RCLONE_CONFIG_FW_SCOPE"], r.Env["RCLONE_CONFIG_FW_TOKEN"] = "drive", "drive", string(sec)
 	case "sftp":
 		key, err := s.box.Open(d.SealedKey, "backup.sshkey")
 		if err != nil {
 			return proto.BackupRepo{}, err
 		}
-		r.Repository, r.SSHKey, r.SSHPort = "sftp:"+d.User+"@"+d.Host+":"+path.Join(d.Path, serverID), string(key), d.Port
+		r.Repository, r.SSHKey, r.SSHPort = "sftp:"+d.User+"@"+d.Host+":"+path.Join(d.Path, folder), string(key), d.Port
 	}
 	return r, nil
 }
 
 // ---------- plans ----------
 
+// plans are the backups by ID. 0.9.151 kept one plan per server, by server ID: those
+// become named backups that keep their folder (the server ID).
 func (s *Service) plans() map[string]Plan {
 	m := map[string]Plan{}
 	settings.Load(s.db, plansKey, &m)
+	changed := false
+	for k, p := range m {
+		if !strings.HasPrefix(k, "bp_") {
+			delete(m, k)
+			p.ID, p.Name, p.Folder, p.ServerID = randID("bp_", 6), "Daily backup", k, k
+			m[p.ID] = p
+			changed = true
+			s.db.Exec(`UPDATE backup_runs SET plan_id = ? WHERE server_id = ? AND plan_id = ''`, p.ID, k)
+			s.Incidents.Clear("backup|"+k, "the backup is now named; its next failure opens a new incident")
+		}
+	}
+	if changed {
+		settings.Save(s.db, plansKey, m)
+	}
 	return m
 }
 
@@ -349,22 +372,51 @@ func (s *Service) Plans() []Plan {
 	for _, p := range s.plans() {
 		out = append(out, p)
 	}
-	slices.SortFunc(out, func(a, b Plan) int { return strings.Compare(a.ServerID, b.ServerID) })
+	slices.SortFunc(out, func(a, b Plan) int { return strings.Compare(a.ServerID+a.Name, b.ServerID+b.Name) })
 	return out
+}
+
+func (s *Service) plan(id string) (Plan, error) {
+	p, ok := s.plans()[id]
+	if !ok {
+		return Plan{}, ErrNotFound
+	}
+	return p, nil
 }
 
 var (
 	atRe       = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 	dbNameRe   = regexp.MustCompile(`^[A-Za-z0-9_$-]{1,64}$`)
 	snapshotRe = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
+	slugRe     = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
-// SavePlan sets a server's plan.
+// folderFor makes a backup's folder name from its name ("Shop database" → shop-database),
+// unique at its place.
+func folderFor(name string, taken func(string) bool) string {
+	base := strings.Trim(slugRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
+	if len(base) > 40 {
+		base = strings.Trim(base[:40], "-")
+	}
+	if base == "" {
+		base = "backup"
+	}
+	f := base
+	for i := 2; taken(f); i++ {
+		f = fmt.Sprintf("%s-%d", base, i)
+	}
+	return f
+}
+
+// SavePlan adds a backup (no ID) or changes one.
 func (s *Service) SavePlan(p Plan) (Plan, error) {
+	p.Name = strings.TrimSpace(p.Name)
 	if _, err := time.LoadLocation(p.TimeZone); err != nil || p.TimeZone == "" {
 		p.TimeZone = "UTC"
 	}
 	switch {
+	case p.Name == "" || len(p.Name) > 60:
+		return Plan{}, valid.Error("give the backup a name (up to 60 characters)")
 	case !atRe.MatchString(p.At):
 		return Plan{}, valid.Error("the time is HH:MM, like 03:00")
 	case p.KeepDaily < 0 || p.KeepWeekly < 0 || p.KeepMonthly < 0 || p.KeepDaily > 365 || p.KeepWeekly > 520 || p.KeepMonthly > 240:
@@ -372,7 +424,7 @@ func (s *Service) SavePlan(p Plan) (Plan, error) {
 	case p.KeepDaily+p.KeepWeekly+p.KeepMonthly == 0:
 		return Plan{}, valid.Error("keep at least one copy")
 	case len(p.Items) > 50:
-		return Plan{}, valid.Error("at most 50 things per server")
+		return Plan{}, valid.Error("at most 50 things per backup")
 	case p.Enabled && len(p.Items) == 0:
 		return Plan{}, valid.Error("pick what to back up")
 	}
@@ -394,19 +446,47 @@ func (s *Service) SavePlan(p Plan) (Plan, error) {
 		return Plan{}, valid.Error("pick where the backups go")
 	}
 	m := s.plans()
-	p.LastDay = m[p.ServerID].LastDay
-	if loc, err := time.LoadLocation(p.TimeZone); err == nil && p.LastDay == "" && s.Now().In(loc).Format("15:04") >= p.At {
-		p.LastDay = s.Now().In(loc).Format("2006-01-02") // a new plan starts tomorrow, not right away
+	if p.ID == "" {
+		if len(m) >= 200 {
+			return Plan{}, valid.Error("at most 200 backups")
+		}
+		p.ID = randID("bp_", 6)
+		p.Folder = folderFor(p.Name, func(f string) bool {
+			for _, q := range m {
+				if q.Dest == p.Dest && q.Folder == f {
+					return true
+				}
+			}
+			return false
+		})
+	} else {
+		old, ok := m[p.ID]
+		if !ok {
+			return Plan{}, ErrNotFound
+		}
+		if old.Dest != p.Dest {
+			return Plan{}, valid.Error("a backup keeps its place (its copies are there): make a new backup for another place")
+		}
+		p.ServerID, p.Folder, p.LastDay = old.ServerID, old.Folder, old.LastDay
 	}
-	m[p.ServerID] = p
+	if loc, err := time.LoadLocation(p.TimeZone); err == nil && p.LastDay == "" && s.Now().In(loc).Format("15:04") >= p.At {
+		p.LastDay = s.Now().In(loc).Format("2006-01-02") // a new backup starts tomorrow, not right away
+	}
+	m[p.ID] = p
 	return p, settings.Save(s.db, plansKey, m)
 }
 
-func (s *Service) DeletePlan(serverID string) error {
+// DeletePlan forgets a backup; its copies stay at the place.
+func (s *Service) DeletePlan(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.plans()
-	delete(m, serverID)
+	if _, ok := m[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m, id)
+	s.db.Exec(`DELETE FROM backup_copies WHERE plan_id = ?`, id)
+	s.Incidents.Clear("backup|"+id, "the backup was removed")
 	return settings.Save(s.db, plansKey, m)
 }
 
@@ -454,48 +534,66 @@ func (s *Service) Found() map[string]proto.BackupFound {
 	return out
 }
 
-// RunNow starts a server's backup (manual: from the page).
-func (s *Service) RunNow(serverID string, manual bool) (string, error) {
-	if err := s.ready(serverID); err != nil {
-		return "", err
-	}
-	p, ok := s.plans()[serverID]
-	if !ok || len(p.Items) == 0 {
-		return "", valid.Error("set up what this server backs up first")
-	}
-	var running int
-	s.db.QueryRow(`SELECT COUNT(*) FROM backup_runs WHERE server_id = ? AND status = 'running' AND started > ?`, serverID, s.Now().Add(-7*time.Hour).UnixMilli()).Scan(&running)
-	if running > 0 {
-		return "", valid.Error("a backup of this server is still running")
-	}
-	repo, err := s.repo(p.Dest, serverID)
+// busy says whether a server is running a backup now (agents run one at a time).
+func (s *Service) busy(serverID string) bool {
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM backup_runs WHERE server_id = ? AND status = 'running' AND started > ?`, serverID, s.Now().Add(-7*time.Hour).UnixMilli()).Scan(&n)
+	return n > 0
+}
+
+// RunNow starts a backup (manual: from the page).
+func (s *Service) RunNow(id string, manual bool) (string, error) {
+	p, err := s.plan(id)
 	if err != nil {
 		return "", err
 	}
-	id := randID("br_", 8)
-	if err := s.Send(serverID, proto.TypeBackupRun, proto.BackupRun{RunID: id, Repo: repo, Items: p.Items, KeepDaily: p.KeepDaily, KeepWeekly: p.KeepWeekly, KeepMonthly: p.KeepMonthly}); err != nil {
+	if err := s.ready(p.ServerID); err != nil {
+		return "", err
+	}
+	if len(p.Items) == 0 {
+		return "", valid.Error("pick what this backup holds first")
+	}
+	if s.busy(p.ServerID) {
+		return "", valid.Error("a backup of this server is still running: one at a time")
+	}
+	repo, err := s.repo(p.Dest, p.Folder)
+	if err != nil {
+		return "", err
+	}
+	run := randID("br_", 8)
+	if err := s.Send(p.ServerID, proto.TypeBackupRun, proto.BackupRun{RunID: run, Repo: repo, Items: p.Items, KeepDaily: p.KeepDaily, KeepWeekly: p.KeepWeekly, KeepMonthly: p.KeepMonthly}); err != nil {
 		return "", valid.Error("the server is not connected")
 	}
 	raw, _ := json.Marshal(Run{Manual: manual, Items: []proto.BackupItemResult{}})
-	s.db.Exec(`INSERT INTO backup_runs (id, server_id, started, status, data) VALUES (?, ?, ?, 'running', ?)`, id, serverID, s.Now().UnixMilli(), string(raw))
-	s.Bus.Publish("backup.run", map[string]string{"serverId": serverID, "id": id, "status": "running"})
-	return id, nil
+	s.db.Exec(`INSERT INTO backup_runs (id, server_id, plan_id, started, status, data) VALUES (?, ?, ?, ?, 'running', ?)`, run, p.ServerID, p.ID, s.Now().UnixMilli(), string(raw))
+	s.Bus.Publish("backup.run", map[string]string{"serverId": p.ServerID, "planId": p.ID, "id": run, "status": "running"})
+	return run, nil
 }
 
-// Refresh asks for the list of copies.
-func (s *Service) Refresh(serverID string) error {
-	if err := s.ready(serverID); err != nil {
-		return err
-	}
-	p, ok := s.plans()[serverID]
-	if !ok {
-		return valid.Error("this server has no backup plan")
-	}
-	repo, err := s.repo(p.Dest, serverID)
+// Refresh asks for the list of a backup's copies.
+func (s *Service) Refresh(id string) error {
+	p, err := s.plan(id)
 	if err != nil {
 		return err
 	}
-	return s.Send(serverID, proto.TypeBackupRun, proto.BackupRun{RunID: randID("bl_", 8), Repo: repo, ListOnly: true})
+	if err := s.ready(p.ServerID); err != nil {
+		return err
+	}
+	repo, err := s.repo(p.Dest, p.Folder)
+	if err != nil {
+		return err
+	}
+	run := randID("bl_", 8)
+	s.mu.Lock()
+	s.listing[run] = p.ID
+	s.mu.Unlock()
+	return s.Send(p.ServerID, proto.TypeBackupRun, proto.BackupRun{RunID: run, Repo: repo, ListOnly: true})
+}
+
+func (s *Service) saveCopies(planID, serverID string, list []proto.BackupSnapshot) {
+	raw, _ := json.Marshal(list)
+	s.db.Exec(`INSERT INTO backup_copies (plan_id, server_id, data, at) VALUES (?, ?, ?, ?) ON CONFLICT (plan_id) DO UPDATE SET data = excluded.data, at = excluded.at`,
+		planID, serverID, string(raw), s.Now().UnixMilli())
 }
 
 // OnResult records a run, keeps its list of copies, and opens or clears the incident.
@@ -504,16 +602,27 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	if json.Unmarshal(data, &r) != nil {
 		return
 	}
-	if r.Error == "" || len(r.Snapshots) > 0 {
-		raw, _ := json.Marshal(r.Snapshots)
-		s.db.Exec(`INSERT INTO backup_snapshots (server_id, data, at) VALUES (?, ?, ?) ON CONFLICT (server_id) DO UPDATE SET data = excluded.data, at = excluded.at`,
-			serverID, string(raw), s.Now().UnixMilli())
-	}
 	if r.ListOnly {
-		s.Bus.Publish("backup.run", map[string]string{"serverId": serverID, "status": "listed", "error": r.Error})
+		s.mu.Lock()
+		planID := s.listing[r.RunID]
+		delete(s.listing, r.RunID)
+		s.mu.Unlock()
+		if planID != "" && r.Error == "" {
+			s.saveCopies(planID, serverID, r.Snapshots)
+		}
+		s.Bus.Publish("backup.run", map[string]string{"serverId": serverID, "planId": planID, "status": "listed", "error": r.Error})
 		return
 	}
-	run := Run{ID: r.RunID, ServerID: serverID, Started: r.Started, Finished: r.Finished, Error: r.Error, Items: r.Items, Status: "ok"}
+	var planID, old string
+	if s.db.QueryRow(`SELECT plan_id, data FROM backup_runs WHERE id = ? AND server_id = ?`, r.RunID, serverID).Scan(&planID, &old) != nil {
+		return // not a run this dashboard started
+	}
+	var prev Run
+	json.Unmarshal([]byte(old), &prev)
+	if r.Error == "" || len(r.Snapshots) > 0 {
+		s.saveCopies(planID, serverID, r.Snapshots)
+	}
+	run := Run{ID: r.RunID, PlanID: planID, ServerID: serverID, Started: r.Started, Finished: r.Finished, Error: r.Error, Items: r.Items, Status: "ok", Manual: prev.Manual}
 	failed := 0
 	var why []string
 	for _, it := range r.Items {
@@ -528,18 +637,14 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	case failed > 0 || r.Error != "":
 		run.Status = "partial"
 	}
-	var old string
-	if s.db.QueryRow(`SELECT data FROM backup_runs WHERE id = ?`, r.RunID).Scan(&old) == nil {
-		var prev Run
-		json.Unmarshal([]byte(old), &prev)
-		run.Manual = prev.Manual
-	}
 	raw, _ := json.Marshal(run)
-	s.db.Exec(`INSERT INTO backup_runs (id, server_id, started, finished, status, data) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET finished = excluded.finished, status = excluded.status, data = excluded.data`,
-		r.RunID, serverID, r.Started, r.Finished, run.Status, string(raw))
-	s.db.Exec(`DELETE FROM backup_runs WHERE server_id = ? AND id NOT IN (SELECT id FROM backup_runs WHERE server_id = ? ORDER BY started DESC LIMIT 100)`, serverID, serverID)
-	key := "backup|" + serverID
+	s.db.Exec(`UPDATE backup_runs SET started = ?, finished = ?, status = ?, data = ? WHERE id = ?`, r.Started, r.Finished, run.Status, string(raw), r.RunID)
+	s.db.Exec(`DELETE FROM backup_runs WHERE server_id = ? AND id NOT IN (SELECT id FROM backup_runs WHERE server_id = ? ORDER BY started DESC LIMIT 200)`, serverID, serverID)
+	name := planID
+	if p, err := s.plan(planID); err == nil {
+		name = p.Name
+	}
+	key := "backup|" + planID
 	if run.Status == "ok" {
 		s.Incidents.Clear(key, "the backup worked again")
 	} else {
@@ -547,9 +652,9 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 			why = append([]string{r.Error}, why...)
 		}
 		s.Incidents.Ensure(incidents.Signal{Type: "backup_failed", Key: key, Severity: "critical", ServerID: serverID,
-			Title: "Backup failed on " + s.Name(serverID), Sample: strings.Join(why, "\n")})
+			Title: fmt.Sprintf("Backup “%s” failed on %s", name, s.Name(serverID)), Sample: strings.Join(why, "\n")})
 	}
-	s.Bus.Publish("backup.run", map[string]string{"serverId": serverID, "id": r.RunID, "status": run.Status})
+	s.Bus.Publish("backup.run", map[string]string{"serverId": serverID, "planId": planID, "id": r.RunID, "status": run.Status})
 }
 
 // Interrupted fails the runs a server had going when its agent (re)connects: the agent
@@ -563,7 +668,7 @@ func (s *Service) Interrupted(serverID string) {
 func (s *Service) Runs(allowed func(string) bool) []Run {
 	out := []Run{}
 	now := s.Now()
-	rows, err := s.db.Query(`SELECT id, server_id, started, finished, status, data FROM backup_runs ORDER BY started DESC LIMIT 200`)
+	rows, err := s.db.Query(`SELECT id, plan_id, server_id, started, finished, status, data FROM backup_runs ORDER BY started DESC LIMIT 300`)
 	if err != nil {
 		return out
 	}
@@ -571,7 +676,7 @@ func (s *Service) Runs(allowed func(string) bool) []Run {
 	for rows.Next() {
 		var r Run
 		var raw string
-		if rows.Scan(&r.ID, &r.ServerID, &r.Started, &r.Finished, &r.Status, &raw) != nil || (allowed != nil && !allowed(r.ServerID)) {
+		if rows.Scan(&r.ID, &r.PlanID, &r.ServerID, &r.Started, &r.Finished, &r.Status, &raw) != nil || (allowed != nil && !allowed(r.ServerID)) {
 			continue
 		}
 		var d Run
@@ -588,9 +693,10 @@ func (s *Service) Runs(allowed func(string) bool) []Run {
 	return out
 }
 
+// Snapshots are each backup's copies, by backup ID.
 func (s *Service) Snapshots() map[string][]proto.BackupSnapshot {
 	out := map[string][]proto.BackupSnapshot{}
-	rows, err := s.db.Query(`SELECT server_id, data FROM backup_snapshots`)
+	rows, err := s.db.Query(`SELECT plan_id, data FROM backup_copies`)
 	if err != nil {
 		return out
 	}
@@ -607,26 +713,26 @@ func (s *Service) Snapshots() map[string][]proto.BackupSnapshot {
 
 // Restore puts a copy back in a folder of its own on the server; the answer comes live
 // as "backup.restored".
-func (s *Service) Restore(serverID, snapshot string) (string, error) {
-	if err := s.ready(serverID); err != nil {
-		return "", err
-	}
+func (s *Service) Restore(id, snapshot string) (string, error) {
 	if !snapshotRe.MatchString(snapshot) {
 		return "", valid.Error("not a copy")
 	}
-	p, ok := s.plans()[serverID]
-	if !ok {
-		return "", valid.Error("this server has no backup plan")
-	}
-	repo, err := s.repo(p.Dest, serverID)
+	p, err := s.plan(id)
 	if err != nil {
 		return "", err
 	}
-	id := randID("bx_", 8)
-	if err := s.Send(serverID, proto.TypeBackupRestore, proto.BackupRestore{RunID: id, Repo: repo, Snapshot: snapshot}); err != nil {
+	if err := s.ready(p.ServerID); err != nil {
+		return "", err
+	}
+	repo, err := s.repo(p.Dest, p.Folder)
+	if err != nil {
+		return "", err
+	}
+	run := randID("bx_", 8)
+	if err := s.Send(p.ServerID, proto.TypeBackupRestore, proto.BackupRestore{RunID: run, Repo: repo, Snapshot: snapshot}); err != nil {
 		return "", valid.Error("the server is not connected")
 	}
-	return id, nil
+	return run, nil
 }
 
 func (s *Service) OnRestored(serverID string, data json.RawMessage) {
@@ -637,10 +743,12 @@ func (s *Service) OnRestored(serverID string, data json.RawMessage) {
 	s.Bus.Publish("backup.restored", map[string]any{"serverId": serverID, "runId": r.RunID, "folder": r.Folder, "files": r.Files, "error": r.Error})
 }
 
-// Tick runs the plans that are due (every minute): once a day at their time.
+// Tick runs the backups that are due (every minute): once a day at their time. A server
+// busy with another backup gets the next one a minute later.
 func (s *Service) Tick() {
 	now := s.Now()
-	for id, p := range s.plans() {
+	plans := s.Plans()
+	for _, p := range plans {
 		if !p.Enabled {
 			continue
 		}
@@ -650,20 +758,20 @@ func (s *Service) Tick() {
 		}
 		local := now.In(loc)
 		day := local.Format("2006-01-02")
-		if day == p.LastDay || local.Format("15:04") < p.At {
+		if day == p.LastDay || local.Format("15:04") < p.At || s.busy(p.ServerID) {
 			continue
 		}
 		s.mu.Lock()
 		m := s.plans()
-		if q, ok := m[id]; ok {
+		if q, ok := m[p.ID]; ok {
 			q.LastDay = day
-			m[id] = q
+			m[p.ID] = q
 			settings.Save(s.db, plansKey, m)
 		}
 		s.mu.Unlock()
-		if _, err := s.RunNow(id, false); err != nil {
-			s.Incidents.Ensure(incidents.Signal{Type: "backup_failed", Key: "backup|" + id, Severity: "critical", ServerID: id,
-				Title: "Backup failed on " + s.Name(id), Sample: "It could not start: " + err.Error()})
+		if _, err := s.RunNow(p.ID, false); err != nil {
+			s.Incidents.Ensure(incidents.Signal{Type: "backup_failed", Key: "backup|" + p.ID, Severity: "critical", ServerID: p.ServerID,
+				Title: fmt.Sprintf("Backup “%s” failed on %s", p.Name, s.Name(p.ServerID)), Sample: "It could not start: " + err.Error()})
 		}
 	}
 }

@@ -3,6 +3,7 @@ package backups
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/secret"
+	"fleetwatch/internal/server/settings"
 )
 
 func setup(t *testing.T) (*Service, *incidents.Store, *time.Time, *[]proto.BackupRun) {
@@ -86,7 +88,7 @@ func TestDests(t *testing.T) {
 	if pw, _ := s.Password(r2.ID); pw != repo.Password {
 		t.Fatal("password")
 	}
-	s.SavePlan(Plan{ServerID: "s1", Dest: r2.ID, At: "03:00", KeepDaily: 7, Items: []proto.BackupItem{{Kind: "postgres", Name: "shop"}}})
+	s.SavePlan(Plan{Name: "Shop", ServerID: "s1", Dest: r2.ID, At: "03:00", KeepDaily: 7, Items: []proto.BackupItem{{Kind: "postgres", Name: "shop"}}})
 	if s.DeleteDest(r2.ID) == nil {
 		t.Fatal("deleted a place a plan uses")
 	}
@@ -96,32 +98,40 @@ func TestRuns(t *testing.T) {
 	s, inc, now, sent := setup(t)
 	d, _ := s.SaveDest(Dest{Name: "R2", Kind: "s3", Endpoint: "https://r2.example.com", Bucket: "backups", KeyID: "k", Secret: "s"})
 	for _, bad := range []Plan{
-		{ServerID: "s1", Dest: d.ID, At: "3am", KeepDaily: 7},
-		{ServerID: "s1", Dest: d.ID, At: "03:00"},
-		{ServerID: "s1", Dest: d.ID, At: "03:00", KeepDaily: 1, Items: []proto.BackupItem{{Kind: "postgres", Name: "a; drop"}}},
-		{ServerID: "s1", Dest: d.ID, At: "03:00", KeepDaily: 1, Items: []proto.BackupItem{{Kind: "folder", Name: "relative"}}},
-		{ServerID: "s1", Dest: "nope", At: "03:00", KeepDaily: 1},
+		{ServerID: "s1", Dest: d.ID, At: "03:00", KeepDaily: 7}, // no name
+		{Name: "x", ServerID: "s1", Dest: d.ID, At: "3am", KeepDaily: 7},
+		{Name: "x", ServerID: "s1", Dest: d.ID, At: "03:00"},
+		{Name: "x", ServerID: "s1", Dest: d.ID, At: "03:00", KeepDaily: 1, Items: []proto.BackupItem{{Kind: "postgres", Name: "a; drop"}}},
+		{Name: "x", ServerID: "s1", Dest: d.ID, At: "03:00", KeepDaily: 1, Items: []proto.BackupItem{{Kind: "folder", Name: "relative"}}},
+		{Name: "x", ServerID: "s1", Dest: "nope", At: "03:00", KeepDaily: 1},
 	} {
 		if _, err := s.SavePlan(bad); err == nil {
 			t.Errorf("%+v saved", bad)
 		}
 	}
 	items := []proto.BackupItem{{Kind: "postgres", Name: "shop"}, {Kind: "folder", Name: "/srv/uploads"}}
-	if _, err := s.SavePlan(Plan{ServerID: "s1", Enabled: true, Dest: d.ID, At: "03:00", TimeZone: "UTC", KeepDaily: 7, KeepWeekly: 4, Items: items}); err != nil {
-		t.Fatal(err)
+	shop, err := s.SavePlan(Plan{Name: "Shop database", ServerID: "s1", Enabled: true, Dest: d.ID, At: "03:00", TimeZone: "UTC", KeepDaily: 7, KeepWeekly: 4, Items: items})
+	if err != nil || shop.Folder != "shop-database" {
+		t.Fatal(err, shop)
+	}
+	// A second backup of the same server, same time, same name: its own folder, and it
+	// waits for the first to finish.
+	shop2, _ := s.SavePlan(Plan{Name: "Shop database", ServerID: "s1", Enabled: true, Dest: d.ID, At: "03:00", TimeZone: "UTC", KeepDaily: 7, Items: items[:1]})
+	if shop2.Folder != "shop-database-2" {
+		t.Fatal(shop2.Folder)
 	}
 	s.Tick() // 02:00: not yet
 	*now = now.Add(time.Hour + time.Minute)
 	s.Tick()
 	s.Tick() // once a day
-	if len(*sent) != 1 || len((*sent)[0].Items) != 2 || (*sent)[0].KeepWeekly != 4 {
+	if len(*sent) != 1 || !strings.HasSuffix((*sent)[0].Repo.Repository, "/backups/"+(*sent)[0].Repo.Repository[strings.LastIndex((*sent)[0].Repo.Repository, "/")+1:]) {
 		t.Fatalf("%+v", *sent)
 	}
-	if _, err := s.RunNow("s1", true); err == nil {
+	if _, err := s.RunNow(shop.ID, true); err == nil {
 		t.Fatal("two runs at once")
 	}
-	run := (*sent)[0].RunID
-	res := func(failItem bool) {
+	// res answers a run like the agent would.
+	res := func(run string, failItem bool) {
 		r := proto.BackupResult{RunID: run, Started: now.UnixMilli(), Finished: now.UnixMilli() + 1000,
 			Items:     []proto.BackupItemResult{{BackupItem: items[0], Snapshot: "abc12345", Added: 100}, {BackupItem: items[1]}},
 			Snapshots: []proto.BackupSnapshot{{ID: "abc12345", Time: now.UnixMilli(), Paths: []string{"/postgres/shop.dump"}}}}
@@ -131,27 +141,50 @@ func TestRuns(t *testing.T) {
 		b, _ := json.Marshal(r)
 		s.OnResult("s1", b)
 	}
-	res(true)
+	first := s.Runs(nil)[0].PlanID
+	res((*sent)[0].RunID, true)
 	list, _ := inc.List(incidents.Filter{Status: "open"})
-	if runs := s.Runs(nil); len(runs) != 1 || runs[0].Status != "partial" || len(list) != 1 || list[0].Severity != "critical" || !strings.Contains(list[0].Samples[0], "no such folder") {
+	if runs := s.Runs(nil); len(runs) != 1 || runs[0].Status != "partial" || len(list) != 1 || list[0].Severity != "critical" || !strings.Contains(list[0].Samples[0], "no such folder") ||
+		!strings.Contains(list[0].Title, "Shop database") {
 		t.Fatalf("%+v %+v", s.Runs(nil), list)
 	}
-	if snaps := s.Snapshots()["s1"]; len(snaps) != 1 {
+	if snaps := s.Snapshots()[first]; len(snaps) != 1 {
 		t.Fatal(snaps)
 	}
-	res(false)
-	if list, _ := inc.List(incidents.Filter{Status: "open"}); len(list) != 0 || s.Runs(nil)[0].Status != "ok" {
-		t.Fatal("not resolved")
+	s.Tick() // the server is free now: the other backup's turn
+	if len(*sent) != 2 || (*sent)[1].Repo.Repository == (*sent)[0].Repo.Repository {
+		t.Fatalf("%+v", *sent)
+	}
+	res((*sent)[1].RunID, false)
+	if list, _ := inc.List(incidents.Filter{Status: "open"}); len(list) != 1 || !slices.ContainsFunc(s.Runs(nil), func(r Run) bool { return r.PlanID != first && r.Status == "ok" }) { // the first one still failed
+		t.Fatal("not resolved", s.Runs(nil))
 	}
 	// A new plan made after its time starts the next day.
-	s.DeletePlan("s1")
+	s.DeletePlan(shop.ID)
+	s.DeletePlan(shop2.ID)
 	*sent = nil
-	s.SavePlan(Plan{ServerID: "s1", Enabled: true, Dest: d.ID, At: "01:00", TimeZone: "UTC", KeepDaily: 7, Items: items})
+	late, _ := s.SavePlan(Plan{Name: "Late", ServerID: "s1", Enabled: true, Dest: d.ID, At: "01:00", TimeZone: "UTC", KeepDaily: 7, Items: items})
 	s.Tick()
 	if len(*sent) != 0 {
 		t.Fatal("ran right after being made")
 	}
-	if _, err := s.Restore("s1", "../etc"); err == nil {
+	if _, err := s.Restore(late.ID, "../etc"); err == nil {
 		t.Fatal("bad snapshot id")
+	}
+}
+
+func TestOldPlansKeepTheirFolder(t *testing.T) {
+	s, _, _, _ := setup(t)
+	settings.Save(s.db, plansKey, map[string]Plan{"s1": {ServerID: "s1", At: "03:00", KeepDaily: 7}})
+	s.db.Exec(`INSERT INTO backup_runs (id, server_id, started, finished, status, data) VALUES ('br_old', 's1', 1, 2, 'ok', '{}')`)
+	list := s.Plans()
+	if len(list) != 1 || list[0].Folder != "s1" || list[0].Name == "" || !strings.HasPrefix(list[0].ID, "bp_") {
+		t.Fatalf("%+v", list)
+	}
+	if runs := s.Runs(nil); len(runs) != 1 || runs[0].PlanID != list[0].ID {
+		t.Fatalf("old runs not moved: %+v", runs)
+	}
+	if again := s.Plans(); again[0].ID != list[0].ID {
+		t.Fatal("converted twice")
 	}
 }

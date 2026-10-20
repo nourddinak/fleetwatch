@@ -32,6 +32,9 @@ interface Item {
   size?: number;
 }
 interface Plan {
+  id: string;
+  name: string;
+  folder: string;
   serverId: string;
   enabled: boolean;
   dest: string;
@@ -44,6 +47,7 @@ interface Plan {
 }
 interface Run {
   id: string;
+  planId: string;
   serverId: string;
   started: number;
   finished: number;
@@ -118,7 +122,7 @@ export function Backups() {
         ) : (
           <div className="space-y-6">
             <Card>
-              <SectionTitle icon={<HardDrive size={15} />} title="Where backups go" sub="Each server gets its own encrypted folder there."
+              <SectionTitle icon={<HardDrive size={15} />} title="Where backups go" sub="Each backup gets its own encrypted folder there, named after it."
                 action={
                   <div className="flex flex-wrap gap-2">
                     {(["s3", "gdrive", "sftp"] as Kind[]).map((k) => <Button key={k} size="sm" variant={k === "s3" ? "primary" : "secondary"} onClick={() => setDestEdit({ kind: k, port: 22, region: "auto" })}><Plus size={14} /> {KIND[k]}</Button>)}
@@ -201,90 +205,67 @@ export function Backups() {
 
 function ServerBackups({ serverId, name, data, reload, onRestore }: { serverId: string; name: string; data: Data; reload: () => void; onRestore: (runId: string) => void }) {
   const { toast } = useStore();
-  const saved = data.plans.find((p) => p.serverId === serverId);
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const blank: Plan = { serverId, enabled: true, dest: data.dests[0]?.id ?? "", items: [], at: "03:00", timeZone: tz, keepDaily: 7, keepWeekly: 4, keepMonthly: 6 };
-  const [p, setP] = useState<Plan>(saved ?? blank);
+  const plans = data.plans.filter((p) => p.serverId === serverId);
+  const [adding, setAdding] = useState(false);
+  const scan = async () => {
+    try {
+      await api("POST", `/api/backups/servers/${serverId}/scan`);
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  return (
+    <Card>
+      <SectionTitle icon={<DatabaseBackup size={15} />} title={name}
+        sub={plans.length ? `${plans.length} backup${plans.length === 1 ? "" : "s"}` : "Not backed up yet."}
+        action={<Button size="sm" variant="secondary" disabled={data.dests.length === 0 || adding} onClick={() => { setAdding(true); if (!data.found[serverId]) scan(); }}><Plus size={14} /> Add backup</Button>} />
+      {data.dests.length === 0 && plans.length === 0 && <p className="text-sm text-muted">Add a place for backups above first.</p>}
+      <div className="space-y-4">
+        {adding && <PlanForm serverId={serverId} data={data} scan={scan} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); reload(); }} />}
+        {plans.map((p) => <PlanCard key={p.id} plan={p} server={name} data={data} scan={scan} reload={reload} onRestore={onRestore} />)}
+      </div>
+    </Card>
+  );
+}
+
+function PlanCard({ plan, server, data, scan, reload, onRestore }: { plan: Plan; server: string; data: Data; scan: () => void; reload: () => void; onRestore: (runId: string) => void }) {
+  const { toast } = useStore();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState("");
   const [restoreSnap, setRestoreSnap] = useState<Snapshot | null>(null);
-  const found = data.found[serverId]?.items ?? null;
-  const runs = data.runs.filter((r) => r.serverId === serverId).slice(0, 5);
-  const snaps = data.snapshots[serverId] ?? [];
-  const folders = p.items.filter((i) => i.kind === "folder").map((i) => i.name).join("\n");
-  const has = (it: Item) => p.items.some((x) => x.kind === it.kind && x.name === it.name);
-  const toggle = (it: Item) => setP({ ...p, items: has(it) ? p.items.filter((x) => !(x.kind === it.kind && x.name === it.name)) : [...p.items, { kind: it.kind, name: it.name }] });
+  const [del, setDel] = useState(false);
+  const runs = data.runs.filter((r) => r.planId === plan.id).slice(0, 5);
+  const snaps = data.snapshots[plan.id] ?? [];
+  const dest = data.dests.find((x) => x.id === plan.dest);
   const call = async (what: string, fn: () => Promise<unknown>, done: string) => {
     setBusy(what);
     try {
       await fn();
       toast(done);
       reload();
-      return true;
     } catch (e) {
       toast((e as ApiError).message, "err");
-      return false;
     } finally {
       setBusy("");
     }
   };
-  const scan = () => call("scan", () => api("POST", `/api/backups/plans/${serverId}/scan`), "Looking for databases…");
-  const listed = [...(found ?? []), ...p.items.filter((i) => i.kind !== "folder" && !(found ?? []).some((f) => f.kind === i.kind && f.name === i.name))];
   return (
-    <Card>
-      <SectionTitle icon={<DatabaseBackup size={15} />} title={name}
-        sub={saved ? `${saved.enabled ? `Every day at ${saved.at} (${saved.timeZone})` : "Paused"} · ${saved.items.length} thing${saved.items.length === 1 ? "" : "s"} → ${data.dests.find((x) => x.id === saved.dest)?.name ?? "?"} · keeps ${saved.keepDaily} daily, ${saved.keepWeekly} weekly, ${saved.keepMonthly} monthly` : "Not backed up yet."}
-        action={
-          <div className="flex flex-wrap gap-2">
-            {saved && <Button size="sm" disabled={!!busy} onClick={() => call("run", () => api("POST", `/api/backups/plans/${serverId}/run`), "Backup started")}>{busy === "run" ? <Spinner size={14} /> : <Play size={14} />} Back up now</Button>}
-            <Button size="sm" variant="secondary" disabled={data.dests.length === 0} onClick={() => { setP(saved ?? blank); setEditing(!editing); if (!editing && !found) scan(); }}>
-              <Pencil size={14} /> {editing ? "Close" : saved ? "Change" : "Set up"}
-            </Button>
+    <div className="rounded-2xl border border-line p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 font-medium">{plan.name} {!plan.enabled && <Badge>paused</Badge>}</div>
+          <div className="text-xs text-muted">
+            {plan.enabled ? `Every day at ${plan.at} (${plan.timeZone})` : "Not running by itself"} · {plan.items.length} thing{plan.items.length === 1 ? "" : "s"} · keeps {plan.keepDaily} daily, {plan.keepWeekly} weekly, {plan.keepMonthly} monthly
           </div>
-        } />
-      {data.dests.length === 0 && !saved && <p className="text-sm text-muted">Add a place for backups above first.</p>}
-      {editing && (
-        <div className="space-y-4 border-b border-line pb-4">
-          <Field label="What to back up">
-            <div className="space-y-1.5">
-              {found === null && <p className="text-xs text-muted"><Spinner size={12} /> Looking for databases on the server…</p>}
-              {found !== null && listed.length === 0 && <p className="text-xs text-muted">No PostgreSQL, MySQL or SQLite databases found. Add folders below.</p>}
-              {listed.map((it) => (
-                <label key={it.kind + it.name} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={has(it)} onChange={() => toggle(it)} />
-                  <Badge>{ITEM[it.kind]}</Badge> <span className="break-all font-mono text-xs">{it.name}</span>
-                  {it.size ? <span className="text-xs text-muted">{fmtBytes(it.size)}</span> : null}
-                </label>
-              ))}
-              <Button size="sm" variant="ghost" disabled={busy === "scan"} onClick={scan}><Search size={13} /> Look again</Button>
-            </div>
-          </Field>
-          <Field label="Folders" hint="One full path per line, like /var/www/uploads.">
-            <Textarea rows={2} className="font-mono" value={folders} placeholder="/var/www/app/storage"
-              onChange={(e) => setP({ ...p, items: [...p.items.filter((i) => i.kind !== "folder"), ...e.target.value.split("\n").map((l) => l.trim()).filter(Boolean).map((name) => ({ kind: "folder" as const, name }))] })} />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Where">
-              <Select value={p.dest} onChange={(e) => setP({ ...p, dest: e.target.value })}>
-                {data.dests.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </Select>
-            </Field>
-            <Field label="Every day at" hint={p.timeZone}>
-              <Input type="time" value={p.at} onChange={(e) => setP({ ...p, at: e.target.value })} />
-            </Field>
-            <Field label="Copies to keep" hint="daily · weekly · monthly">
-              <div className="flex gap-2">
-                {(["keepDaily", "keepWeekly", "keepMonthly"] as const).map((k) => <Input key={k} type="number" min={0} aria-label={k} value={p[k]} onChange={(e) => setP({ ...p, [k]: Number(e.target.value) })} />)}
-              </div>
-            </Field>
-          </div>
-          <ToggleRow label="Back up every day" desc="Off keeps the setup and the copies, without running." checked={p.enabled} onChange={(v) => setP({ ...p, enabled: v })} />
-          <div className="flex gap-2">
-            <Button disabled={!!busy} onClick={async () => { if (await call("save", () => api("PUT", `/api/backups/plans/${serverId}`, p), "Backup plan saved")) setEditing(false); }}>Save</Button>
-            {saved && <Button variant="ghost" onClick={() => call("del", () => api("DELETE", `/api/backups/plans/${serverId}`), "Plan removed (copies stay)").then(() => setEditing(false))}>Remove plan</Button>}
-          </div>
+          <div className="text-xs text-muted">Saved in <span className="font-mono">{dest?.name ?? "?"} / {plan.folder}</span></div>
         </div>
-      )}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={!!busy} onClick={() => call("run", () => api("POST", `/api/backups/plans/${plan.id}/run`), "Backup started")}>{busy === "run" ? <Spinner size={14} /> : <Play size={14} />} Back up now</Button>
+          <Button size="sm" variant="secondary" onClick={() => { setEditing(!editing); if (!editing && !data.found[plan.serverId]) scan(); }}><Pencil size={14} /> {editing ? "Close" : "Change"}</Button>
+          <IconButton aria-label="Remove backup" onClick={() => setDel(true)}><Trash2 size={14} /></IconButton>
+        </div>
+      </div>
+      {editing && <div className="mt-4"><PlanForm serverId={plan.serverId} plan={plan} data={data} scan={scan} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload(); }} /></div>}
       {runs.length > 0 && (
         <div className="mt-3">
           <div className="mb-1 text-xs font-medium text-muted">Recent runs</div>
@@ -297,49 +278,119 @@ function ServerBackups({ serverId, name, data, reload, onRestore }: { serverId: 
                     {r.finished ? `${Math.max(1, Math.round((r.finished - r.started) / 1000))} s · ${fmtBytes(r.items.reduce((a, i) => a + (i.added || 0), 0))} new` : relTime(r.started)}
                   </span>
                 </div>
-                {r.error && <p className="text-xs text-crit">{r.error}</p>}
+                {r.error && <p className="break-all text-xs text-crit">{r.error}</p>}
                 {r.items.filter((i) => i.error).map((i) => <p key={i.kind + i.name} className="break-all text-xs text-crit">{ITEM[i.kind]} {i.name}: {i.error}</p>)}
               </li>
             ))}
           </ul>
         </div>
       )}
-      {saved && (
-        <div className="mt-3">
-          <div className="mb-1 flex items-center justify-between text-xs font-medium text-muted">
-            <span>Copies ({snaps.length})</span>
-            <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => call("list", () => api("POST", `/api/backups/plans/${serverId}/refresh`), "Asking the storage…")}><RefreshCw size={13} /> Refresh</Button>
-          </div>
-          {snaps.length === 0 ? <p className="text-xs text-muted">None yet.</p> : (
-            <ul className="max-h-72 divide-y divide-line overflow-auto text-sm">
-              {snaps.map((s) => (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-                  <span className="min-w-0">
-                    <span className="mr-2">{dateTime(s.time)}</span>
-                    <span className="break-all font-mono text-xs text-muted">{s.paths.join(", ")}</span>
-                    {s.size ? <span className="ml-2 text-xs text-muted">{fmtBytes(s.size)}</span> : null}
-                  </span>
-                  <Button size="sm" variant="ghost" onClick={() => setRestoreSnap(s)}><FolderOpen size={13} /> Restore</Button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between text-xs font-medium text-muted">
+          <span>Copies ({snaps.length})</span>
+          <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => call("list", () => api("POST", `/api/backups/plans/${plan.id}/refresh`), "Asking the storage…")}><RefreshCw size={13} /> Refresh</Button>
         </div>
-      )}
+        {snaps.length === 0 ? <p className="text-xs text-muted">None yet.</p> : (
+          <ul className="max-h-72 divide-y divide-line overflow-auto text-sm">
+            {snaps.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                <span className="min-w-0">
+                  <span className="mr-2">{dateTime(s.time)}</span>
+                  <span className="break-all font-mono text-xs text-muted">{s.paths.join(", ")}</span>
+                  {s.size ? <span className="ml-2 text-xs text-muted">{fmtBytes(s.size)}</span> : null}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => setRestoreSnap(s)}><FolderOpen size={13} /> Restore</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <ConfirmDialog open={!!restoreSnap} title="Restore this copy?" confirmLabel="Restore"
-        message={`The copy of ${dateTime(restoreSnap?.time ?? 0)} is put in a new folder on ${name}, next to the live data (nothing is overwritten). You then move back what you need.`}
+        message={`The copy of ${dateTime(restoreSnap?.time ?? 0)} is put in a new folder on ${server}, next to the live data (nothing is overwritten). You then move back what you need.`}
         onCancel={() => setRestoreSnap(null)} onConfirm={async () => {
           const s = restoreSnap!;
           setRestoreSnap(null);
           try {
-            const { runId } = await api<{ runId: string }>("POST", `/api/backups/plans/${serverId}/restore`, { snapshot: s.id });
+            const { runId } = await api<{ runId: string }>("POST", `/api/backups/plans/${plan.id}/restore`, { snapshot: s.id });
             onRestore(runId);
             toast("Restoring…");
           } catch (e) {
             toast((e as ApiError).message, "err");
           }
         }} />
-    </Card>
+      <ConfirmDialog open={del} danger title={`Remove “${plan.name}”?`} confirmLabel="Remove" message={`It stops running. Its copies stay in ${dest?.name ?? "the place"} / ${plan.folder}.`}
+        onCancel={() => setDel(false)} onConfirm={() => { setDel(false); call("del", () => api("DELETE", `/api/backups/plans/${plan.id}`), "Backup removed (its copies stay)"); }} />
+    </div>
+  );
+}
+
+/** A backup's settings: new (no plan) or changing one. */
+function PlanForm({ serverId, plan, data, scan, onClose, onSaved }: { serverId: string; plan?: Plan; data: Data; scan: () => void; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useStore();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [p, setP] = useState<Plan>(plan ?? { id: "", name: "", folder: "", serverId, enabled: true, dest: data.dests[0]?.id ?? "", items: [], at: "03:00", timeZone: tz, keepDaily: 7, keepWeekly: 4, keepMonthly: 6 });
+  const [busy, setBusy] = useState(false);
+  const found = data.found[serverId]?.items ?? null;
+  const folders = p.items.filter((i) => i.kind === "folder").map((i) => i.name).join("\n");
+  const has = (it: Item) => p.items.some((x) => x.kind === it.kind && x.name === it.name);
+  const toggle = (it: Item) => setP({ ...p, items: has(it) ? p.items.filter((x) => !(x.kind === it.kind && x.name === it.name)) : [...p.items, { kind: it.kind, name: it.name }] });
+  const listed = [...(found ?? []), ...p.items.filter((i) => i.kind !== "folder" && !(found ?? []).some((f) => f.kind === i.kind && f.name === i.name))];
+  const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "backup";
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(plan ? "PUT" : "POST", plan ? `/api/backups/plans/${plan.id}` : "/api/backups/plans", p);
+      toast(plan ? "Backup saved" : `Backup “${p.name}” added`);
+      onSaved();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-4 rounded-2xl bg-surface2 p-4">
+      <Field label="Name" hint={plan ? `Its copies stay in the folder “${plan.folder}”.` : `Its copies go in a folder “${slug}” at the place (a number is added if that is taken).`}>
+        <Input value={p.name} maxLength={60} placeholder="Shop database" onChange={(e) => setP({ ...p, name: e.target.value })} />
+      </Field>
+      <Field label="What to back up">
+        <div className="space-y-1.5">
+          {found === null && <p className="text-xs text-muted"><Spinner size={12} /> Looking for databases on the server…</p>}
+          {found !== null && listed.length === 0 && <p className="text-xs text-muted">No PostgreSQL, MySQL or SQLite databases found. Add folders below.</p>}
+          {listed.map((it) => (
+            <label key={it.kind + it.name} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={has(it)} onChange={() => toggle(it)} />
+              <Badge>{ITEM[it.kind]}</Badge> <span className="break-all font-mono text-xs">{it.name}</span>
+              {it.size ? <span className="text-xs text-muted">{fmtBytes(it.size)}</span> : null}
+            </label>
+          ))}
+          <Button size="sm" variant="ghost" onClick={scan}><Search size={13} /> Look again</Button>
+        </div>
+      </Field>
+      <Field label="Folders" hint="One full path per line, like /var/www/uploads.">
+        <Textarea rows={2} className="font-mono" value={folders} placeholder="/var/www/app/storage"
+          onChange={(e) => setP({ ...p, items: [...p.items.filter((i) => i.kind !== "folder"), ...e.target.value.split("\n").map((l) => l.trim()).filter(Boolean).map((name) => ({ kind: "folder" as const, name }))] })} />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Where" hint={plan ? "A backup keeps its place." : undefined}>
+          <Select value={p.dest} disabled={!!plan} onChange={(e) => setP({ ...p, dest: e.target.value })}>
+            {data.dests.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Every day at" hint={p.timeZone}>
+          <Input type="time" value={p.at} onChange={(e) => setP({ ...p, at: e.target.value })} />
+        </Field>
+        <Field label="Copies to keep" hint="daily · weekly · monthly">
+          <div className="flex gap-2">
+            {(["keepDaily", "keepWeekly", "keepMonthly"] as const).map((k) => <Input key={k} type="number" min={0} aria-label={k} value={p[k]} onChange={(e) => setP({ ...p, [k]: Number(e.target.value) })} />)}
+          </div>
+        </Field>
+      </div>
+      <ToggleRow label="Back up every day" desc="Off keeps the setup and the copies, without running by itself." checked={p.enabled} onChange={(v) => setP({ ...p, enabled: v })} />
+      <div className="flex gap-2">
+        <Button disabled={busy || !p.name.trim()} onClick={save}>{busy && <Spinner size={14} />} Save</Button>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+      </div>
+    </div>
   );
 }
 
