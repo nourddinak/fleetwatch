@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/secret"
+	"github.com/emersion/go-msgauth/dkim"
 )
 
 // fakeSMTP accepts mail without authentication and hands each message over.
@@ -505,5 +507,59 @@ func TestResendDomain(t *testing.T) {
 	verified = true
 	if got, err := m.DomainCheck(ctx, s.ID); err != nil || got.Status != "verified" {
 		t.Fatal(got, err)
+	}
+}
+
+// Sending it yourself: signed with the domain's key (that a receiver can check against
+// the DKIM record), delivered to the recipient domain's mail server, bounces to fwmail.
+func TestDirectSending(t *testing.T) {
+	plan, err := PlanDirect("203.0.113.9")
+	if err != nil || len(plan.Records) != 2 || plan.Records[1].Name != "fwmail" || plan.Records[1].Value != "v=spf1 ip4:203.0.113.9 -all" {
+		t.Fatal(plan.Records, err)
+	}
+	d, _ := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	m := NewMailer(d, box)
+	addr, got := fakeSMTP(t)
+	var asked string
+	lookupMX = func(_ context.Context, domain string) ([]*net.MX, error) {
+		asked = domain
+		return []*net.MX{{Host: "mx.example.org.", Pref: 10}}, nil
+	}
+	dialMX = func(ctx context.Context, host string) (net.Conn, error) {
+		if host != "mx.example.org" {
+			return nil, errors.New("wrong host " + host)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
+	s, err := m.SaveSender(Sender{Label: "Acme", Direct: true, SMTPConfig: SMTPConfig{From: "noreply@acme.test", FromName: "Acme Status", Password: plan.KeyPEM}})
+	if err != nil || !s.Direct || !s.HasPassword {
+		t.Fatal(s, err)
+	}
+	if err := m.SendFrom(context.Background(), s.ID, Mail{To: []string{"sara@example.org"}, Subject: "API is down", Text: "We are on it."}); err != nil {
+		t.Fatal(err)
+	}
+	msg := <-got
+	if asked != "example.org" || !strings.Contains(msg, "DKIM-Signature:") {
+		t.Fatal(asked, msg)
+	}
+	verifs, err := dkim.VerifyWithOptions(strings.NewReader(msg), &dkim.VerifyOptions{LookupTXT: func(name string) ([]string, error) {
+		if name != "fleetwatch._domainkey.acme.test" {
+			return nil, errors.New("no such record " + name)
+		}
+		return []string{plan.Records[0].Value}, nil
+	}})
+	if err != nil || len(verifs) != 1 || verifs[0].Err != nil || verifs[0].Domain != "acme.test" {
+		t.Fatalf("DKIM: %v %+v", err, verifs)
+	}
+	published := map[string]string{}
+	lookupTXT = func(_ context.Context, name string) ([]string, error) { return []string{published[name]}, nil }
+	if c, _ := m.DirectCheck(context.Background(), s.ID); c.Status != "pending" {
+		t.Fatal("nothing published yet", c)
+	}
+	published["fleetwatch._domainkey.acme.test"], published["fwmail.acme.test"] = plan.Records[0].Value, plan.Records[1].Value
+	if c, err := m.DirectCheck(context.Background(), s.ID); err != nil || c.Status != "verified" {
+		t.Fatal("published", c, err)
 	}
 }

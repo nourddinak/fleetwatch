@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -403,6 +404,9 @@ func serve() error {
 		return "outage", rec.CreatedAt, true
 	}
 	status.Mail = statuspage.NewMailer(d, box)
+	if u, err := url.Parse(os.Getenv("OPS_PUBLIC_URL")); err == nil && u.Hostname() != "" {
+		status.Mail.HeloName = u.Hostname() // how direct sending introduces itself
+	}
 	notifier.Email = func(ctx context.Context, to, subject, text string) error { // members' own email alerts
 		return status.Mail.Send(ctx, statuspage.Mail{To: []string{to}, Subject: subject, Text: text})
 	}
