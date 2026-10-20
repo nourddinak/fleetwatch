@@ -42,6 +42,9 @@ var Labels = map[string]string{
 	"uptime_down":       "Site Down",
 	"uptime_slow":       "Slow Response",
 	"anomaly":           "Unusual Activity",
+	"log_alert":         "Log Alert",
+	"cron_missed":       "Missed Job",
+	"cron_failed":       "Job Failed",
 }
 
 type entry struct {

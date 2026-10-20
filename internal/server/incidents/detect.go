@@ -92,13 +92,15 @@ type Detector struct {
 	Connected  func(serverID string) bool
 	ServerName func(serverID string) string
 
-	mu      sync.Mutex
-	apps    map[string]*appState
-	servers map[string]*serverState
-	errs    map[string][]time.Time // repeated-error windows by key
-	rules   Rules
-	rulesAt time.Time
-	grace   time.Duration // overrides OfflineGraceSec (tests)
+	mu       sync.Mutex
+	apps     map[string]*appState
+	servers  map[string]*serverState
+	errs     map[string][]time.Time // repeated-error windows by key
+	rules    Rules
+	rulesAt  time.Time
+	alerts   []compiledAlert // log alert rules, reloaded every minute
+	alertsAt time.Time
+	grace    time.Duration // overrides OfflineGraceSec (tests)
 }
 
 func NewDetector(s *Store, d *sql.DB, connected func(string) bool, name func(string) string) *Detector {
@@ -434,6 +436,7 @@ func fingerprint(s string) string {
 // Logs counts error lines per app and message shape; reaching the threshold within the
 // window opens one grouped incident, further matches add occurrences.
 func (d *Detector) Logs(lines []logs.Line, now time.Time) {
+	d.logAlerts(lines, now)
 	r := d.Rules()
 	window := time.Duration(r.ErrorWindowMin) * time.Minute
 	for _, l := range lines {
@@ -472,6 +475,7 @@ func (d *Detector) Sweep(now time.Time) {
 	r := d.Rules()
 	quiet := 2 * time.Duration(r.ErrorWindowMin) * time.Minute
 	d.Store.ClearStale("repeated_errors", now.Add(-quiet), fmt.Sprintf("No new occurrences for %d minutes", 2*r.ErrorWindowMin))
+	d.sweepLogAlerts(now)
 	d.mu.Lock()
 	for k, ts := range d.errs {
 		if len(ts) == 0 || now.Sub(ts[len(ts)-1]) > quiet {

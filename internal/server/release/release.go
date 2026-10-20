@@ -259,10 +259,10 @@ func (c *Checker) AgentsFollow() bool {
 	return false
 }
 
-// Newer reports whether tag vX.Y.Z is newer than current ("0.9.2", "0.9.2-rc1",
-// "v0.9.2"). Development builds ("dev") never report updates.
+// Newer reports whether tag vX.Y.Z (or X.Y.Z) is newer than current ("0.9.2",
+// "0.9.2-rc1", "v0.9.2"). Development builds ("dev") never report updates.
 func Newer(tag, current string) bool {
-	t := tagRe.FindStringSubmatch(tag)
+	t := tagRe.FindStringSubmatch("v" + strings.TrimPrefix(tag, "v"))
 	core, pre, _ := strings.Cut(strings.TrimPrefix(current, "v"), "-")
 	c := tagRe.FindStringSubmatch("v" + core)
 	if t == nil || c == nil {

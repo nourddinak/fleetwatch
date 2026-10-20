@@ -73,6 +73,22 @@ func (s *server) incidentRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("GET /api/settings/incident-rules", s.authed(s.getIncidentRules))
 	mux.HandleFunc("PUT /api/settings/incident-rules", s.authed(s.putIncidentRules))
+	mux.HandleFunc("GET /api/settings/log-alerts", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, s.Detector.LogAlerts())
+	}))
+	mux.HandleFunc("PUT /api/settings/log-alerts", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in []incidents.LogAlert
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := s.Detector.SaveLogAlerts(in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "settings.log_alerts", "", "")
+		writeJSON(w, http.StatusOK, out)
+	}))
 
 	mux.HandleFunc("GET /api/notifications", s.authed(s.listNotifications))
 	mux.HandleFunc("POST /api/notifications/read", s.authed(s.markNotificationsRead))

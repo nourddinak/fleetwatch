@@ -25,6 +25,7 @@ func TestNewer(t *testing.T) {
 		{"v0.9.3", "0.9.2", true}, {"v0.10.0", "0.9.9", true}, {"v1.0.0", "0.9.2", true},
 		{"v0.9.2", "0.9.2", false}, {"v0.9.1", "0.9.2", false}, {"v0.9.2", "0.9.2-rc1", true},
 		{"v0.9.2", "v0.9.2", false}, {"v0.9.3", "dev", false}, {"latest", "0.9.2", false},
+		{"0.9.46", "0.9.45", true}, {"0.9.46", "v0.9.46", false}, // minimums written without the v
 	}
 	for _, c := range cases {
 		if got := Newer(c.tag, c.cur); got != c.want {

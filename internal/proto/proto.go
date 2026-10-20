@@ -367,7 +367,30 @@ const (
 	TypeSecurityScan   = "security.scan"   // server → agent: SecurityScan
 	TypeSecurityReport = "security.report" // agent → server: SecurityReport
 	TypeSSHLogins      = "ssh.logins"      // agent → server: []SSHLogin, new successful logins
+	TypeCronReport     = "cron.report"     // agent → server: CronReport, every 5 minutes
 )
+
+// CronJob is a scheduled job found on a server: a crontab line or a systemd timer.
+type CronJob struct {
+	ID        string `json:"id"`     // stable: hash of where it is defined and what it runs
+	Source    string `json:"source"` // crontab | cron.d | timer
+	File      string `json:"file"`   // where it is defined (crontab file or timer unit)
+	User      string `json:"user"`
+	Schedule  string `json:"schedule"` // "*/5 * * * *", "@daily", or a timer's OnCalendar
+	Command   string `json:"command"`
+	LastRun   int64  `json:"lastRun,omitempty"` // unix ms; 0 = not seen in the log
+	Failed    bool   `json:"failed,omitempty"`  // timers: the last run failed
+	LastError string `json:"lastError,omitempty"`
+	NextRun   int64  `json:"nextRun,omitempty"` // timers: when systemd runs it next
+}
+
+// CronReport is every job of a server. HasLog: cron's runs could be read from the
+// system log (without it, a job is never called missed).
+type CronReport struct {
+	Jobs     []CronJob `json:"jobs"`
+	HasLog   bool      `json:"hasLog"`
+	TimeZone string    `json:"timeZone"` // the server's, which crontab schedules use ("Europe/Berlin")
+}
 
 type SecurityScan struct {
 	AppPaths []string `json:"appPaths"` // folders to check for readable .env files

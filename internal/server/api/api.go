@@ -18,6 +18,7 @@ import (
 	"fleetwatch/internal/server/apps"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/cron"
 	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
@@ -75,6 +76,7 @@ type Deps struct {
 	OnCall     *oncall.Service
 	Mobile     *mobile.Service
 	Uptime     *uptime.Service
+	Cron       *cron.Service
 	Docker     *docker.Service
 	Admin      *hostadmin.Service
 	Vulns      *vulns.Service
@@ -181,6 +183,9 @@ func New(d Deps) http.Handler {
 	if d.Uptime != nil {
 		s.uptimeRoutes(mux)
 	}
+	if d.Cron != nil {
+		s.cronRoutes(mux)
+	}
 	if d.Docker != nil {
 		s.dockerRoutes(mux)
 	}
@@ -259,8 +264,9 @@ func sameOriginWrites(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			// Unsubscribe links carry their own secret and are posted by mail apps.
-			// The phone app uses its own bearer token, never cookies; GitHub signs its webhooks.
-			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") &&
+			// The phone app uses its own bearer token, never cookies; GitHub signs its webhooks;
+			// heartbeat links are called by scripts, with their secret in the path.
+			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") && !strings.HasPrefix(r.URL.Path, "/api/public/ping/") &&
 				r.URL.Path != "/api/integrations/github/webhook" {
 				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
 				return

@@ -34,6 +34,7 @@ import (
 	"fleetwatch/internal/server/audit"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
+	"fleetwatch/internal/server/cron"
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/dns"
@@ -705,6 +706,9 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeSecurityReport] = sec.OnReport
 	hub.Handlers[proto.TypeSSHLogins] = sec.OnLogins
+	cronSvc := cron.New(d, incStore, bus)
+	cronSvc.Name = serverName
+	hub.Handlers[proto.TypeCronReport] = cronSvc.OnReport
 	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
 		ServerIDs: serverIDs}
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)
@@ -820,7 +824,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -858,7 +862,7 @@ func serve() error {
 	go func() {
 		for range time.Tick(time.Minute) {
 			admin.Sweep()
-			waSvc.Watch()           // tells the owner when WhatsApp stays disconnected
+			cronSvc.Sweep()         // heartbeats that did not check in			waSvc.Watch()           // tells the owner when WhatsApp stays disconnected
 			calls.followUps(ctx)    // resolved messages, follow-up calls
 			calls.briefings(ctx)    // morning briefings, at each person's time
 			calls.blockedDigest()   // the day's blocked addresses, at night

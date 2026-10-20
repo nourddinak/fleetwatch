@@ -141,6 +141,7 @@ func (r *Runner) session(ctx context.Context) error {
 	go r.resultLoop(ctx, c)
 	go r.loginLoop(ctx)
 	go r.failureLoop(ctx)
+	go r.cronLoop(ctx)
 
 	// Reader: handles server frames (and answers pings, which needs an active reader).
 	go func() {
@@ -470,6 +471,18 @@ func (r *Runner) failureLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(time.Minute):
+		}
+	}
+}
+
+// cronLoop reports the server's cron jobs and timers every 5 minutes.
+func (r *Runner) cronLoop(ctx context.Context) {
+	for {
+		r.sendCurrent(proto.TypeCronReport, hostcheck.Cron(ctx))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
 		}
 	}
 }

@@ -324,7 +324,7 @@ func parseEnv(text string) ([]string, error) {
 }
 
 // PathAgent is the first agent whose Caddy sites also answer under /sites/<name>/.
-const PathAgent = "0.9.46"
+const PathAgent = "v0.9.46"
 
 func (s *Service) supported(serverID string) error {
 	if s.AgentVersion != nil && release.Newer(MinAgent, s.AgentVersion(serverID)) {

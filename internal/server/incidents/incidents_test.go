@@ -356,3 +356,35 @@ func TestLearnedOnly(t *testing.T) {
 		t.Fatal("a server not learned yet keeps the fixed limit")
 	}
 }
+
+func TestLogAlerts(t *testing.T) {
+	e := setup(t)
+	now := time.Now()
+	if _, err := e.d.SaveLogAlerts([]LogAlert{{Name: "Bad", Match: "([", Regex: true, Count: 1, WindowMin: 1}}); err == nil {
+		t.Fatal("a broken regular expression was saved")
+	}
+	list, err := e.d.SaveLogAlerts([]LogAlert{{Name: "Payments", Match: "payment failed", Count: 5, WindowMin: 10, Enabled: true, Severity: "critical"},
+		{Name: "Off", Match: "payment", Count: 1, WindowMin: 10}})
+	if err != nil || list[0].ID == "" {
+		t.Fatal(err, list)
+	}
+	line := func(msg string) logs.Line {
+		return logs.Line{ServerID: "s1", AppID: "a1", Message: msg, Severity: "info"}
+	}
+	e.d.Logs([]logs.Line{line("Payment FAILED for order 1"), line("payment failed: card declined"), line("all good")}, now)
+	e.d.Logs([]logs.Line{line("payment failed"), line("payment failed")}, now.Add(time.Minute))
+	if len(e.open(t)) != 0 {
+		t.Fatal("alerted below the count")
+	}
+	e.d.Logs([]logs.Line{line("payment failed again")}, now.Add(2*time.Minute))
+	open := e.open(t)
+	x, ok := open["log_alert"]
+	if len(open) != 1 || !ok || x.Severity != "critical" || x.TypeKey != "log_alert" {
+		t.Fatalf("%+v", open)
+	}
+	// Quiet for two windows: resolved.
+	e.d.Sweep(now.Add(25 * time.Minute))
+	if len(e.open(t)) != 0 {
+		t.Fatal("still open after going quiet")
+	}
+}

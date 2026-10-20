@@ -1,7 +1,7 @@
 import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlertOctagon, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
+import { Activity, AlarmClock, AlertOctagon, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -144,6 +144,7 @@ function Shell() {
       { to: "/metrics", label: "Metrics", icon: Activity },
       { to: "/logs", label: "Logs", icon: ScrollText },
       { to: "/uptime", label: "Uptime", icon: Gauge },
+      { to: "/cron", label: "Cron jobs", icon: AlarmClock },
       { to: "/incidents", label: "Incidents", icon: AlertOctagon, badge: active, crit: true },
       ...(owner ? [{ to: "/oncall", label: "On-call", icon: PhoneCall }] : []),
       { to: "/discoveries", label: "Discoveries", icon: Radar, badge: discoveries.length },
