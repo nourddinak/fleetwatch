@@ -571,6 +571,10 @@ func serve() error {
 		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: severity}, "", "")
 		go calls.securityText(title, body) // and the owner on WhatsApp
 	}
+	admin.AutoBlocked = func(title, body string, ips []string) {
+		notifier.Notice("Security", notify.Message{Title: title, Body: body, Severity: "info"}, "", "")
+		calls.countBlocked(ips) // WhatsApp gets the day's total at night, not each one
+	}
 	hub.Handlers[proto.TypeSSHFailures] = admin.OnFailures
 	hub.Handlers[proto.TypeBlockStatus] = admin.OnBlockStatus
 	hub.Handlers[proto.TypeFirewallReport] = admin.OnFirewallReport
@@ -821,6 +825,7 @@ func serve() error {
 			waSvc.Watch()           // tells the owner when WhatsApp stays disconnected
 			calls.followUps(ctx)    // resolved messages, follow-up calls
 			calls.briefings(ctx)    // morning briefings, at each person's time
+			calls.blockedDigest()   // the day's blocked addresses, at night
 			calls.checkWatches(ctx) // reminders and watches asked for on WhatsApp
 			var connected []string
 			for _, id := range serverIDs() {

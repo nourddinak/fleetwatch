@@ -82,10 +82,11 @@ type Service struct {
 
 	Send            func(serverID, typ string, v any) error
 	AgentVersion    func(serverID string) string
-	BroadcastConfig func()                             // send every agent its config (with the block list)
-	OnBlocks        func()                             // the block list changed (Cloudflare mirrors it)
-	Protected       func() []string                    // never block: servers' own and recently used addresses
-	Notify          func(title, body, severity string) // a notification to the team
+	BroadcastConfig func()                                 // send every agent its config (with the block list)
+	OnBlocks        func()                                 // the block list changed (Cloudflare mirrors it)
+	Protected       func() []string                        // never block: servers' own and recently used addresses
+	Notify          func(title, body, severity string)     // a notification to the team
+	AutoBlocked     func(title, body string, ips []string) // addresses just blocked by themselves; nil = Notify
 
 	mu       sync.Mutex
 	fails    map[string][]failure
@@ -316,7 +317,7 @@ func (s *Service) OnFailures(serverID string, data json.RawMessage) {
 	for _, b := range s.Blocked() {
 		blocked[b.IP] = true
 	}
-	var done []string
+	var done, ips []string
 	for _, b := range toBlock {
 		p, _ := parse(b.IP)
 		if blocked[b.IP] || s.protectedReason(p, nil) != "" {
@@ -324,11 +325,17 @@ func (s *Service) OnFailures(serverID string, data json.RawMessage) {
 		}
 		if s.save(b) == nil {
 			done = append(done, b.IP+" ("+b.Reason+")")
+			ips = append(ips, strings.TrimSuffix(strings.TrimSuffix(b.IP, "/32"), "/128"))
 		}
 	}
 	if len(done) > 0 {
 		sort.Strings(done)
-		s.Notify(fmt.Sprintf("Blocked %d address(es) guessing SSH logins", len(done)), strings.Join(done, "\n")+"\nThey are blocked on every server.", "info")
+		title, body := fmt.Sprintf("Blocked %d address(es) guessing SSH logins", len(done)), strings.Join(done, "\n")+"\nThey are blocked on every server."
+		if s.AutoBlocked != nil {
+			s.AutoBlocked(title, body, ips)
+		} else {
+			s.Notify(title, body, "info")
+		}
 	}
 }
 

@@ -116,3 +116,17 @@ func TestAutoUpdatesWindow(t *testing.T) {
 		t.Fatal("ran on another day", sent)
 	}
 }
+
+func TestAutoBlockedHook(t *testing.T) {
+	s := setup(t)
+	s.Notify = func(title, body, sev string) { t.Fatal("notified each time:", title) }
+	var got []string
+	s.AutoBlocked = func(title, body string, ips []string) { got = append(got, ips...) }
+	cfg := DefaultBlockSettings()
+	cfg.Enabled = true
+	s.SaveSettings(cfg)
+	fails(s, "s1", proto.SSHFailure{IP: "192.0.2.10", Count: 20}, proto.SSHFailure{IP: "192.0.2.11", Count: 20})
+	if len(got) != 2 || got[0] != "192.0.2.10" {
+		t.Fatal(got)
+	}
+}

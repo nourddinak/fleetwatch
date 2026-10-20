@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"fleetwatch/internal/server/domains"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/oncall"
 	"fleetwatch/internal/server/settings"
+	"fleetwatch/internal/server/whatsapp"
 )
 
 // SSL certificates and domain registrations about to expire: a WhatsApp message to
@@ -154,4 +156,57 @@ func (d *callDeps) groupIncident(ev incidents.Event) {
 	if err := d.wa.PostToGroup(ctx, text); err != nil {
 		slog.Warn("whatsapp group post", "err", err)
 	}
+}
+
+// Addresses blocked by themselves are counted, and the owner gets the day's total on
+// WhatsApp at 23:00 their time instead of a message for each one.
+
+var blockedMu sync.Mutex
+
+func (d *callDeps) countBlocked(ips []string) {
+	blockedMu.Lock()
+	defer blockedMu.Unlock()
+	var list []string
+	settings.Load(d.db, "whatsapp.blocked", &list)
+	list = append(list, ips...)
+	if len(list) > 5000 {
+		list = list[len(list)-5000:]
+	}
+	settings.Save(d.db, "whatsapp.blocked", list)
+}
+
+func (d *callDeps) blockedDigest() {
+	if d.wa == nil || !d.wa.Linked() {
+		return
+	}
+	owner, _ := d.wa.PersonOf(oncall.Owner)
+	var last string
+	settings.Load(d.db, "whatsapp.blocked.day", &last)
+	day, due := whatsapp.Person{Briefing: "23:00", TimeZone: owner.TimeZone}.BriefingDue(time.Now(), last)
+	if !due {
+		return
+	}
+	blockedMu.Lock()
+	var list []string
+	settings.Load(d.db, "whatsapp.blocked", &list)
+	settings.Save(d.db, "whatsapp.blocked", []string{})
+	settings.Save(d.db, "whatsapp.blocked.day", day)
+	blockedMu.Unlock()
+	if len(list) == 0 {
+		return
+	}
+	d.text(oncall.Owner, blockedSummary(list))
+}
+
+func blockedSummary(list []string) string {
+	text := fmt.Sprintf("🛡️ Today I blocked %d address(es) guessing SSH logins on your servers.", len(list))
+	if len(list) == 1 {
+		return text + "\n" + list[0]
+	}
+	latest := list[max(0, len(list)-10):]
+	text += "\nLatest: " + strings.Join(latest, ", ")
+	if n := len(list) - len(latest); n > 0 {
+		text += fmt.Sprintf(" and %d more", n)
+	}
+	return text + "\nThe full list is in Security → Blocked addresses."
 }
