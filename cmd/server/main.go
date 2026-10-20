@@ -419,6 +419,7 @@ func serve() error {
 	waSvc.Speak = aiSvc.Speak       // and get voice notes back, if they like
 	calls.status = status           // the owner posts to status pages from WhatsApp
 	groupPost = calls.groupIncident
+	authSvc.OnLogin = calls.signedIn // a sign-in from a new browser: the AI calls its person
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {
 		why := ""
 		if level > 0 {

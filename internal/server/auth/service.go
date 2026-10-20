@@ -109,6 +109,8 @@ type Profile struct {
 }
 
 type Service struct {
+	// OnLogin hears of every completed sign-in (member "" = the owner), to warn about new browsers.
+	OnLogin   func(member, sessionID string, c Client)
 	db        *sql.DB
 	box       *secret.Box
 	lim       *limiter
@@ -237,9 +239,11 @@ func (s *Service) Login(c Client, username, password string) (token string, pend
 				return token, true, err
 			}
 			s.lim.reset(c.IP)
-			token, _, err = s.createSession(c, false, memberID)
+			var sess Session
+			token, sess, err = s.createSession(c, false, memberID)
 			if err == nil {
 				audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password (team member " + strings.TrimSpace(username) + ")"})
+				s.signedIn(c, memberID, sess.ID)
 			}
 			return token, false, err
 		}
@@ -251,9 +255,11 @@ func (s *Service) Login(c Client, username, password string) (token string, pend
 		return token, true, err
 	}
 	s.lim.reset(c.IP)
-	token, _, err = s.createSession(c, false, "")
+	var sess Session
+	token, sess, err = s.createSession(c, false, "")
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password"})
+		s.signedIn(c, "", sess.ID)
 	}
 	return token, false, err
 }
@@ -277,9 +283,11 @@ func (s *Service) LoginExternal(c Client, member, how string) (token string, pen
 		return token, true, err
 	}
 	s.lim.reset(c.IP)
-	token, _, err = s.createSession(c, false, member)
+	var sess Session
+	token, sess, err = s.createSession(c, false, member)
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: how})
+		s.signedIn(c, member, sess.ID)
 	}
 	return token, false, err
 }
@@ -310,11 +318,36 @@ func (s *Service) Verify2FA(c Client, pendingToken, code string, recovery bool) 
 			method += " (team member " + m.Username + ")"
 		}
 	}
-	token, _, err := s.createSession(c, false, sess.MemberID)
+	token, full, err := s.createSession(c, false, sess.MemberID)
 	if err == nil {
 		audit.Record(s.db, audit.Event{Action: "login", OK: true, IP: c.IP, UserAgent: c.UserAgent, Detail: "password + " + method})
+		s.signedIn(c, sess.MemberID, full.ID)
 	}
 	return token, err
+}
+
+// signedIn tells OnLogin about a completed sign-in (in the background).
+func (s *Service) signedIn(c Client, member, sessionID string) {
+	if s.OnLogin != nil {
+		go s.OnLogin(member, sessionID, c)
+	}
+}
+
+// Sessions are someone's live (signed-in) sessions ("" = the owner), oldest first.
+func (s *Service) SessionsOf(member string) []Session {
+	rows, err := s.db.Query(`SELECT id, created_at, ip, user_agent FROM sessions WHERE member_id = ? AND mfa_pending = 0 AND expires_at > ? ORDER BY created_at`, member, s.Now().UnixMilli())
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		var x Session
+		if rows.Scan(&x.ID, &x.CreatedAt, &x.IP, &x.UserAgent) == nil {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // checkSecondFactor consumes a recovery code or validates (and burns) a TOTP code of the

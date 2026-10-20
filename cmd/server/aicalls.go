@@ -103,6 +103,7 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 		lang = "Speak " + n + ". If they switch to another language, switch with them."
 	}
 	rules := `- This is a phone call: answer at once, keep every answer short and plain, no lists, no markdown, no IDs read out unless asked.
+- Talk like a real person, in your own words: vary how you say things, never repeat the same sentence or stock phrase, and fit what you say to the moment.
 - Before you call a tool, say two or three words first (like "one moment" or "let me check") so they are not left in silence. Never leave them in silence while you wait.
 - If they talk while you speak, stop and listen to them.
 - Use the tools for every fact (servers, apps, logs, incidents, uptime, security). Never invent numbers or events; if a tool has nothing, say so.
@@ -613,7 +614,7 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 			}},
 		{Name: "action_status", Description: "How the action do_action started went: waits up to 25 seconds for it to finish.",
 			Run: func(ctx context.Context, _ map[string]any) (any, error) { return gate.status(ctx) }},
-	}, append(append(append(d.watchTools(person, gate, sees, incidentID), d.coverTools(person)...), d.statusTools(gate)...), d.passMessage(person))...)
+	}, append(append(append(d.watchTools(person, gate, sees, incidentID), d.coverTools(person)...), d.statusTools(gate)...), append(d.signInTools(person), d.passMessage(person))...)...)
 }
 
 // voiceActions runs actions asked for on a call or in a chat, in two steps: propose,

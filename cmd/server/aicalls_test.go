@@ -359,3 +359,62 @@ func TestCallBack(t *testing.T) {
 		t.Fatal("three call backs in an hour")
 	}
 }
+
+// A sign-in from a browser the account never used is flagged (not the first one, not a
+// known one), and the AI can sign it out.
+func TestNewBrowserSignIn(t *testing.T) {
+	chromeWin := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
+	firefoxLinux := "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+	for ua, want := range map[string]string{chromeWin: "Chrome on Windows", firefoxLinux: "Firefox on Linux",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1": "Safari on iPhone",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36 Edg/141.0": "Edge on Windows", "curl/8": ""} {
+		if got := browserOf(ua); got != want {
+			t.Fatalf("%q: %q", ua, got)
+		}
+	}
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	a := auth.NewService(d, box)
+	m, err := a.CreateMember(auth.Client{IP: "203.0.113.5"}, auth.MemberInput{Username: "sara", Role: auth.RoleOperator, Password: "member-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := &callDeps{db: d, auth: a, wa: whatsapp.New(d, t.TempDir(), nil), people: func() []oncall.Person { return nil }}
+	signIn := func(ua string) string {
+		c := auth.Client{IP: "198.51.100.7", UserAgent: ua}
+		if _, _, err := a.LoginExternal(c, m.ID, "test"); err != nil {
+			t.Fatal(err)
+		}
+		list := a.SessionsOf(m.ID)
+		id := list[len(list)-1].ID
+		deps.signedIn(m.ID, id, c)
+		return id
+	}
+	flagged := func() (newLogin, bool) {
+		newLogins.Lock()
+		defer newLogins.Unlock()
+		n, ok := newLogins.m[m.ID]
+		return n, ok
+	}
+	signIn(chromeWin)
+	signIn(chromeWin)
+	if _, ok := flagged(); ok {
+		t.Fatal("the first and a known browser are not flagged")
+	}
+	id := signIn(firefoxLinux)
+	if n, ok := flagged(); !ok || n.browser != "Firefox on Linux" || n.session != id {
+		t.Fatalf("a new browser: %+v %v", n, ok)
+	}
+	if _, err := deps.signInTools(m.ID)[0].Run(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range a.SessionsOf(m.ID) {
+		if s.ID == id {
+			t.Fatal("not signed out")
+		}
+	}
+}
