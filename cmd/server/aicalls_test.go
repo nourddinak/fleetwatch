@@ -367,7 +367,7 @@ func TestNewBrowserSignIn(t *testing.T) {
 	firefoxLinux := "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 	for ua, want := range map[string]string{chromeWin: "Chrome on Windows", firefoxLinux: "Firefox on Linux",
 		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1": "Safari on iPhone",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36 Edg/141.0": "Edge on Windows", "curl/8": ""} {
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36 Edg/141.0":                   "Edge on Windows", "curl/8": ""} {
 		if got := browserOf(ua); got != want {
 			t.Fatalf("%q: %q", ua, got)
 		}

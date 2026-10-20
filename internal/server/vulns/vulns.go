@@ -21,6 +21,7 @@ import (
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/live"
 	"fleetwatch/internal/server/release"
+	"fleetwatch/internal/server/settings"
 )
 
 const (
@@ -129,7 +130,9 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.ScanAll()
+			if s.Enabled() {
+				s.ScanAll()
+			}
 			t.Reset(24 * time.Hour)
 		}
 	}
@@ -435,4 +438,38 @@ func compareVersions(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// Enabled reports whether the daily scan runs (Integrations → Vulnerability database).
+func (s *Service) Enabled() bool {
+	var c struct{ Off bool }
+	settings.Load(s.db, "vulns", &c)
+	return !c.Off
+}
+
+func (s *Service) SetEnabled(on bool) error {
+	return settings.Save(s.db, "vulns", struct{ Off bool }{!on})
+}
+
+// Summary is how scanning stands: when it last ran, what it covered and found.
+type Summary struct {
+	Enabled  bool           `json:"enabled"`
+	Source   string         `json:"source"`
+	LastScan int64          `json:"lastScan"`
+	Apps     int            `json:"apps"`
+	Deps     int            `json:"deps"`
+	Found    map[string]int `json:"found"` // by severity
+}
+
+func (s *Service) Summary() Summary {
+	out := Summary{Enabled: s.Enabled(), Source: s.OSV, Found: map[string]int{}}
+	for _, r := range s.List() {
+		out.Apps++
+		out.Deps += r.Deps
+		out.LastScan = max(out.LastScan, r.ScannedAt)
+		for _, x := range r.Vulns {
+			out.Found[x.Severity]++
+		}
+	}
+	return out
 }

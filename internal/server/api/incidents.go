@@ -76,6 +76,7 @@ func (s *server) incidentRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/notifications", s.authed(s.listNotifications))
 	mux.HandleFunc("POST /api/notifications/read", s.authed(s.markNotificationsRead))
+	s.myChannelRoutes(mux)
 	mux.HandleFunc("GET /api/notifications/channels", s.authed(s.listChannels))
 	mux.HandleFunc("PUT /api/notifications/channels/{provider}", s.authed(s.saveChannel))
 	mux.HandleFunc("POST /api/notifications/channels/{provider}/test", s.authed(s.testChannel))

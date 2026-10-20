@@ -403,7 +403,7 @@ export function CodeTab({ c, set }: { c: Config; set: Set }) {
 }
 
 /** The status widget for the admin's own website, and their chat's (Crisp, Intercom). */
-function WidgetCard({ c, savedPublic }: { c: Config; savedPublic: boolean }) {
+export function WidgetCard({ c, savedPublic, title }: { c: { slug: string; domain: string }; savedPublic: boolean; title?: string }) {
   const [pos, setPos] = useState("bottom-right");
   const [mode, setMode] = useState("both");
   const [chat, setChat] = useState("auto");
@@ -411,7 +411,7 @@ function WidgetCard({ c, savedPublic }: { c: Config; savedPublic: boolean }) {
   const snippet = `<script src="${c.domain ? `https://${c.domain}` : location.origin}/api/public/widget.js"${attrs ? " " + attrs : ""} async></script>`;
   return (
     <Card>
-      <SectionTitle icon={<Globe size={15} />} title="Website widget" sub="A small status pill in a corner of your own website, and a card while a notice is open (“We know about the problem…”). Visitors chatting with you through Crisp or Intercom hear about it there too." />
+      <SectionTitle icon={<Globe size={15} />} title={title ?? "Website widget"} sub="A small status pill in a corner of your own website, and a card while a notice is open (“We know about the problem…”). Visitors chatting with you through Crisp or Intercom hear about it there too." />
       {!savedPublic ? (
         <p className="text-sm text-muted">Available once the page is saved, turned on and visible to everyone.</p>
       ) : (

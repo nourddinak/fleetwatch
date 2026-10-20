@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeft, ChevronRight, Mail, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, ChevronRight, Globe, Mail, ShieldAlert, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -11,7 +11,9 @@ import { AISetup } from "../components/AISetup";
 import { MobileCard } from "../components/MobileCard";
 import { CHANNEL_FIELDS, ChannelCard, type Channel } from "./Settings";
 import { EmailSenders, useSenders } from "../components/EmailSenders";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, WhatsApp, Gemini, Telegram, Discord, CopyButton, PageHeader, SearchInput } from "../components/ui";
+import { TokenSettings } from "./Tokens";
+import { WidgetCard } from "./StatusEditorTabs";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Toggle, Tr, Github, Cloudflare, WhatsApp, Gemini, Telegram, Discord, CopyButton, PageHeader, SearchInput } from "../components/ui";
 
 interface App {
   id: number;
@@ -93,6 +95,7 @@ export function IntegrationsSettings() {
       ) : (
         <>
           <GitHubCard status={data.data.github} publicUrl={data.data.publicUrl} webhooks={data.data.webhooks} onChange={data.reload} />
+          <GitHubSignIn />
           {data.data.github.connected && data.data.github.app && <TeamGitHub app={data.data.github.app} installations={data.data.github.installations} publicUrl={data.data.publicUrl} links={data.data.links ?? {}} />}
         </>
       )}
@@ -127,6 +130,7 @@ function MemberIntegrations() {
   const gh = useApi<MyGitHub>("/api/me/github");
   const dns = useApi<{ accounts: unknown[]; ready: boolean }>("/api/me/dns");
   const wa = useApi<{ available: boolean; person: { phone: string } }>("/api/me/whatsapp");
+  const mine = useApi<Channel[]>("/api/me/channels");
   const tab = params.get("tab") ?? "";
   const back = <button className="mb-6 inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg" onClick={() => setParams({})}><ArrowLeft size={14} /> All integrations</button>;
   if (tab === "github") {
@@ -159,6 +163,7 @@ function MemberIntegrations() {
   }
   if (tab === "cloudflare") return <div>{back}<DnsAccounts /></div>;
   if (tab === "whatsapp") return <div>{back}<MyWhatsApp explain /></div>;
+  if (MY_CHANNELS.includes(tab)) return <div>{back}<MyChannel provider={tab} /></div>;
   const items = [
     { key: "github", logo: <Github size={28} />, name: "GitHub", on: !!gh.data?.link,
       desc: "Your own GitHub account: deploy your sites from your repositories, and sign in with it.",
@@ -169,6 +174,12 @@ function MemberIntegrations() {
     { key: "whatsapp", logo: <WhatsApp size={32} />, name: "WhatsApp", on: !!wa.data?.person.phone,
       desc: "Where on-call alerts and calls reach you, in your language, and your quiet hours.",
       status: wa.data?.person.phone ? `+${wa.data.person.phone}` : wa.data?.available ? "No number yet" : "Not set up by the owner yet" },
+    ...MY_CHANNELS.map((p) => {
+      const c = mine.data?.find((x) => x.provider === p);
+      const on = !!c?.enabled && !!c.configured;
+      return { key: p, logo: MY_LOGO[p], name: `My ${p === "email" ? "email" : CHANNEL_FIELDS[p as "telegram"].title} alerts`, on,
+        desc: MY_DESC[p], status: on ? "Sending your alerts" : c?.configured ? "Set up, turned off" : "Not set up" };
+    }),
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -201,6 +212,9 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
   const chans = useApi<Channel[]>("/api/notifications/channels");
   const ch = (p: string) => chans.data?.find((c) => c.provider === p);
   const senders = useSenders().data ?? [];
+  const tokens = useApi<unknown[]>("/api/tokens");
+  const pages = useApi<StatusSummary[]>("/api/status-pages").data ?? [];
+  const vulns = useApi<VulnSummary>("/api/integrations/vulns");
   const alert = (p: "telegram" | "discord" | "webhook", logo: ReactNode, desc: string) => {
     const c = ch(p);
     return { key: p, logo, name: CHANNEL_FIELDS[p].title, on: !!c?.enabled && !!c.configured, desc,
@@ -225,6 +239,15 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
     { key: "email", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#EA4335]/10 text-[#EA4335]"><Mail size={22} /></span>, name: "Email", on: senders.length > 0,
       desc: "Your email senders (Gmail, Brevo, Resend, any SMTP): status page subscriptions, updates and reports, and on-call emails. Each status page picks its own.",
       status: senders.length ? `${senders.length} sender${senders.length === 1 ? "" : "s"} · default ${senders.find((x) => x.default)?.from ?? ""}` : "Add an address to send from" },
+    { key: "api", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-surface2 font-mono text-sm font-bold">{"{}"}</span>, name: "Fleetwatch API", on: (tokens.data?.length ?? 0) > 0,
+      desc: "Tokens for your own scripts and tools (Grafana, Prometheus, n8n…), with example calls.",
+      status: tokens.data?.length ? `${tokens.data.length} token${tokens.data.length === 1 ? "" : "s"}` : "No token yet" },
+    { key: "widget", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#16a34a]/10 text-[#16a34a]"><Globe size={22} /></span>, name: "Website widget", on: pages.some((p) => p.enabled),
+      desc: "A status pill and incident notices on your own websites, and the same news in Crisp or Intercom, for each status page.",
+      status: pages.length ? `${pages.length} status page${pages.length === 1 ? "" : "s"}` : "Make a status page first" },
+    { key: "vulns", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#dc2626]/10 text-[#dc2626]"><ShieldAlert size={22} /></span>, name: "Vulnerability database", on: !!vulns.data?.enabled,
+      desc: "Your apps' packages checked every day against OSV.dev (npm, PyPI, Go, crates, Packagist…); serious findings alert you.",
+      status: vulns.data ? (vulns.data.enabled ? `${vulns.data.apps} apps · ${vulns.data.deps} packages` : "Turned off") : "" },
     alert("telegram", <Telegram size={30} />, "Alerts in a Telegram chat or group, through your own bot."),
     alert("discord", <Discord size={30} />, "Alerts in a Discord channel, through a channel webhook."),
     alert("webhook", <Webhook size={28} color="#C73A63" strokeWidth={2.2} />, "Alerts as JSON to your own URL: n8n, Zapier, Slack workflows, Home Assistant, your code."),
@@ -497,20 +520,172 @@ function Repos() {
   );
 }
 
-const ALERT_TABS = ["telegram", "discord", "webhook", "phone", "email"];
+const ALERT_TABS = ["telegram", "discord", "webhook", "phone", "email", "api", "widget", "vulns"];
 
 /** One place alerts can go: its settings, opened from its card. */
 function AlertChannel({ tab }: { tab: string }) {
   const chans = useApi<Channel[]>("/api/notifications/channels");
   if (tab === "phone") return <MobileCard />;
   if (tab === "email") return <EmailSenders />;
+  if (tab === "api") return <TokenSettings />;
+  if (tab === "widget") return <Widgets />;
+  if (tab === "vulns") return <VulnDatabase />;
   if (chans.error) return <ErrorState message={chans.error} onRetry={chans.reload} />;
   const ch = chans.data?.find((c) => c.provider === tab);
   if (!ch) return <LoadingState />;
   return (
     <>
       <ChannelCard key={JSON.stringify(ch)} ch={ch} onSaved={chans.setData} />
+      {tab === "webhook" && <StatusWebhooks />}
       <p className="text-xs text-muted">Which events send alerts: <Link to="/settings/notifications" className="underline">Settings → Notifications</Link>.</p>
     </>
+  );
+}
+
+interface StatusSummary {
+  id: string;
+  slug: string;
+  title: string;
+  enabled: boolean;
+  domain: string;
+  access: string;
+}
+
+/** Website widget: each status page's code, in one place. */
+function Widgets() {
+  const pages = useApi<StatusSummary[]>("/api/status-pages");
+  if (pages.error) return <ErrorState message={pages.error} onRetry={pages.reload} />;
+  if (!pages.data) return <LoadingState />;
+  if (pages.data.length === 0) return <EmptyState title="No status page yet" desc="Make one in Status pages, then put its widget on your websites." action={<Link to="/status-page"><Button>Status pages</Button></Link>} />;
+  return (
+    <div className="space-y-6">
+      {pages.data.map((p) => (
+        <WidgetCard key={p.id} c={p} title={p.title} savedPublic={p.enabled && (p.access === "" || p.access === "public")} />
+      ))}
+    </div>
+  );
+}
+
+/** Status pages' webhook subscribers: the other outgoing webhooks. */
+function StatusWebhooks() {
+  const pages = useApi<StatusSummary[]>("/api/status-pages");
+  const [subs, setSubs] = useState<{ page: string; id: string; target: string; confirmed: boolean; lastError: string }[] | null>(null);
+  useEffect(() => {
+    if (!pages.data) return;
+    Promise.all(pages.data.map((p) => api<{ id: string; kind: string; target: string; confirmed: boolean; lastError: string }[]>("GET", `/api/status-pages/${p.id}/subscribers`)
+      .then((l) => l.filter((x) => x.kind === "webhook").map((x) => ({ ...x, page: p.title }))).catch(() => [])))
+      .then((all) => setSubs(all.flat()));
+  }, [pages.data]);
+  return (
+    <Card>
+      <SectionTitle title="Status page webhooks" sub="Systems that subscribed to your status pages by webhook: they get a JSON POST on each update. Managed on each page (Subscribers)." />
+      {!subs ? <Spinner /> : subs.length === 0 ? <p className="text-sm text-muted">None.</p> : (
+        <ul className="space-y-2 text-sm">
+          {subs.map((x) => (
+            <li key={x.page + x.id} className="flex flex-wrap items-center gap-2 rounded-2xl border border-line px-3 py-2">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs">{x.target}</span>
+              <Badge>{x.page}</Badge>
+              {x.lastError ? <Badge tone="crit">{x.lastError}</Badge> : <Badge tone={x.confirmed ? "ok" : "warn"}>{x.confirmed ? "active" : "not confirmed"}</Badge>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+interface VulnSummary {
+  enabled: boolean;
+  source: string;
+  lastScan: number;
+  apps: number;
+  deps: number;
+  found: Record<string, number>;
+}
+
+/** The vulnerability database: what is checked, when, and the switch. */
+function VulnDatabase() {
+  const { toast } = useStore();
+  const v = useApi<VulnSummary>("/api/integrations/vulns");
+  const [busy, setBusy] = useState(false);
+  if (v.error) return <ErrorState message={v.error} onRetry={v.reload} />;
+  if (!v.data) return <LoadingState />;
+  const d = v.data;
+  const run = async (fn: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast(done);
+      v.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <SectionTitle title="Vulnerability database" sub={`Every day, your apps' packages (from their lock files) are checked against ${d.source.replace("https://api.", "")}, the open database of known vulnerabilities for npm, PyPI, Go, crates.io, Packagist, RubyGems and more. New critical or high findings alert you.`}
+        action={<Toggle checked={d.enabled} disabled={busy} onChange={(on) => run(() => api("PUT", "/api/integrations/vulns", { enabled: on }), on ? "Daily checks on" : "Daily checks off")} />} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[["Last check", d.lastScan ? relTime(d.lastScan) : "never"], ["Apps", String(d.apps)], ["Packages", String(d.deps)], ["Found", String(Object.values(d.found).reduce((a, b) => a + b, 0))]].map(([k, val]) => (
+          <div key={k} className="rounded-2xl bg-surface2/60 px-3 py-2.5"><div className="text-[11px] text-muted">{k}</div><div className="text-lg font-semibold">{val}</div></div>
+        ))}
+      </div>
+      {Object.keys(d.found).length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">{["critical", "high", "moderate", "low", "unknown"].filter((k) => d.found[k]).map((k) => <Badge key={k} tone={k === "critical" ? "crit" : k === "high" ? "warn" : undefined}>{d.found[k]} {k}</Badge>)}</div>
+      )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(() => api("POST", "/api/vulns/scan"), "Checking all apps now")}>{busy ? <Spinner size={13} /> : <RefreshCw size={13} />} Check now</Button>
+        <Link to="/security"><Button size="sm" variant="ghost">See the findings</Button></Link>
+      </div>
+    </Card>
+  );
+}
+
+/** "Continue with GitHub" on the sign-in page: the owner's switch. */
+function GitHubSignIn() {
+  const { toast } = useStore();
+  const sec = useApi<Record<string, unknown> & { noGitHubLogin?: boolean }>("/api/settings/security");
+  if (!sec.data) return null;
+  const set = async (on: boolean) => {
+    try {
+      sec.setData(await api("PUT", "/api/settings/security", { ...sec.data, noGitHubLogin: !on }));
+      toast(on ? "Signing in with GitHub is on" : "Signing in with GitHub is off");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
+  return (
+    <Card>
+      <SectionTitle icon={<Github size={15} />} title="Sign in with GitHub" sub="The sign-in page offers “Continue with GitHub” to everyone who linked their GitHub account. Turned off, only passwords work."
+        action={<Toggle checked={!sec.data.noGitHubLogin} onChange={set} />} />
+    </Card>
+  );
+}
+
+const MY_CHANNELS = ["telegram", "discord", "webhook", "email"];
+const MY_LOGO: Record<string, ReactNode> = {
+  telegram: <Telegram size={30} />, discord: <Discord size={30} />,
+  webhook: <Webhook size={28} color="#C73A63" strokeWidth={2.2} />,
+  email: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#EA4335]/10 text-[#EA4335]"><Mail size={22} /></span>,
+};
+const MY_DESC: Record<string, string> = {
+  telegram: "Your alerts in your own Telegram chat, through your own bot.",
+  discord: "Your alerts in a Discord channel of yours, through its webhook.",
+  webhook: "Your alerts as JSON to your own URL (n8n, Zapier, Home Assistant…).",
+  email: "Your alerts to your own email address.",
+};
+
+/** A team member's own channel: their alerts, for the servers they see, by their rules. */
+function MyChannel({ provider }: { provider: string }) {
+  const list = useApi<Channel[]>("/api/me/channels");
+  const ch = list.data?.find((c) => c.provider === provider);
+  if (list.error) return <ErrorState message={list.error} onRetry={list.reload} />;
+  if (!ch) return <LoadingState />;
+  return (
+    <div className="space-y-3">
+      <ChannelCard key={JSON.stringify(ch)} ch={ch} base="/api/me/channels" onSaved={list.setData} />
+      <p className="text-xs text-muted">You get the alerts of the servers you can see, filtered by <Link to="/settings/account" className="underline">My phone alerts</Link> (severity, servers, quiet hours).</p>
+    </div>
   );
 }

@@ -134,6 +134,20 @@ func (s *server) adminRoutes(mux *http.ServeMux) {
 
 	// Vulnerable dependencies.
 	if s.Vulns != nil {
+		mux.HandleFunc("GET /api/integrations/vulns", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+			writeJSON(w, http.StatusOK, s.Vulns.Summary())
+		}))
+		mux.HandleFunc("PUT /api/integrations/vulns", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+			var in struct{ Enabled bool }
+			if !decode(w, r, &in) {
+				return
+			}
+			if err := s.Vulns.SetEnabled(in.Enabled); err != nil {
+				fail(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, s.Vulns.Summary())
+		}))
 		mux.HandleFunc("GET /api/vulns", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 			writeJSON(w, http.StatusOK, map[string]any{"apps": s.Vulns.List(), "scanning": s.Vulns.Scanning()})
 		}))

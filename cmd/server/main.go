@@ -323,7 +323,9 @@ func serve() error {
 		case "incident.resolved":
 			kind = "resolved"
 		}
-		phones.Alert(mobile.Message{Kind: kind, Title: msg.Title, Body: msg.Body, Severity: msg.Severity, IncidentID: msg.Details.IncidentID, ServerID: serverID, URL: msg.Link})
+		pm := mobile.Message{Kind: kind, Title: msg.Title, Body: msg.Body, Severity: msg.Severity, IncidentID: msg.Details.IncidentID, ServerID: serverID, URL: msg.Link}
+		phones.Alert(pm)
+		go notifier.Personal(msg, func(member string) bool { return member != "" && phones.Allows(member, pm) }) // members' own channels
 	}
 	go func() {
 		for range time.Tick(time.Hour) {
@@ -401,6 +403,9 @@ func serve() error {
 		return "outage", rec.CreatedAt, true
 	}
 	status.Mail = statuspage.NewMailer(d, box)
+	notifier.Email = func(ctx context.Context, to, subject, text string) error { // members' own email alerts
+		return status.Mail.Send(ctx, statuspage.Mail{To: []string{to}, Subject: subject, Text: text})
+	}
 	// An on-call page: push to that person's phones (tapping opens the acknowledge
 	// button) and an email when they have an address and email is set up.
 	// The owner's WhatsApp, linked like WhatsApp Web, pages people there too.

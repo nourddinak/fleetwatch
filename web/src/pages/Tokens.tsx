@@ -98,6 +98,10 @@ export function TokenSettings() {
         <SectionTitle icon={<Terminal size={15} />} title="Using a token" sub="Send it as a bearer token." />
         <div className="space-y-3 text-sm">
           <Snippet text={`curl -H "Authorization: Bearer fwt_…" ${origin}/api/servers`} />
+          <p className="text-muted">Open incidents, and acknowledging one:</p>
+          <Snippet text={`curl -H "Authorization: Bearer fwt_…" "${origin}/api/incidents?status=open"\ncurl -X POST -H "Authorization: Bearer fwt_…" ${origin}/api/incidents/<id>/acknowledge`} />
+          <p className="text-muted">Uptime checks and their state:</p>
+          <Snippet text={`curl -H "Authorization: Bearer fwt_…" ${origin}/api/uptime`} />
           <p className="text-muted">Prometheus (prometheus.yml):</p>
           <Snippet text={`scrape_configs:\n  - job_name: fleetwatch\n    scheme: ${origin.startsWith("https") ? "https" : "http"}\n    metrics_path: /metrics\n    authorization:\n      credentials: fwt_…\n    static_configs:\n      - targets: ["${location.host}"]`} />
         </div>

@@ -103,6 +103,8 @@ type Service struct {
 	// Overrides returns the server's notify override and whether the app allows
 	// notifications. Optional.
 	Overrides func(serverID, appID string) (serverOverride string, appAllows bool)
+	// Email sends one email (personal channels), through the default sender.
+	Email func(ctx context.Context, to, subject, text string) error
 	// Mirror gets every alert that passed the rules, for the phone app.
 	Mirror     func(msg Message, serverID, appID string)
 	ServerName func(serverID string) string

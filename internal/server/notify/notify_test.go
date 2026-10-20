@@ -251,3 +251,47 @@ func TestWebhook(t *testing.T) {
 		t.Fatalf("test delivery: %+v", r)
 	}
 }
+
+// A member's own channels get what their rules allow, and keep their secrets.
+func TestPersonalChannels(t *testing.T) {
+	s := setup(t)
+	srv, ch := recorder(t, 200)
+	var emailed []string
+	s.Email = func(_ context.Context, to, subject, _ string) error {
+		emailed = append(emailed, to+"|"+subject)
+		return nil
+	}
+	if err := s.SavePersonal("mem_1", "webhook", true, map[string]string{"url": srv.URL + "/sara/s3cret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePersonal("mem_1", "email", true, map[string]string{"to": "sara@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.SavePersonal("mem_1", "email", true, map[string]string{"to": "not an address"}) == nil || s.SavePersonal("mem_1", "ntfy", true, nil) == nil {
+		t.Fatal("bad settings accepted")
+	}
+	raw, _ := json.Marshal(s.PersonalChannels("mem_1"))
+	if strings.Contains(string(raw), "s3cret") || !strings.Contains(string(raw), "sara@example.com") {
+		t.Fatalf("view: %s", raw)
+	}
+	m := Message{Title: "API down", Body: "on web-1", Severity: "critical"}
+	s.Personal(m, func(p string) bool { return false })
+	s.Personal(m, func(p string) bool { return p == "mem_1" })
+	select {
+	case g := <-ch:
+		if g.path != "/sara/s3cret" {
+			t.Fatal(g.path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("not sent to the webhook")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(emailed) != 1 || emailed[0] != "sara@example.com|API down" {
+		t.Fatal("email", emailed)
+	}
+	select {
+	case g := <-ch:
+		t.Fatal("sent when not allowed", g.path)
+	default:
+	}
+}

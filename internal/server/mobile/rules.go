@@ -120,3 +120,16 @@ func (s *Service) SaveRules(member string, r AlertRules) (AlertRules, error) {
 	all[ruleKey(member)] = r
 	return r, settings.Save(s.db, "alertRules", all)
 }
+
+// Allows reports whether an alert may reach someone: a server they can see, and their
+// own rules (severity, servers, quiet hours). Their other channels follow it too.
+func (s *Service) Allows(member string, m Message) bool {
+	if m.ServerID == "" && member != "" {
+		return false
+	}
+	servers, ok := s.Scope(member)
+	if !ok || (servers != nil && !slices.Contains(servers, m.ServerID)) {
+		return false
+	}
+	return s.Rules(member).allows(m, time.Now())
+}

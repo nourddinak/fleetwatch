@@ -94,7 +94,6 @@ const SettingsLayout = page(() => import("./pages/Settings"), "SettingsLayout");
 const SystemSettings = page(() => import("./pages/Settings"), "SystemSettings");
 const OnCallPage = page(() => import("./pages/OnCall"), "OnCallPage");
 const TeamSettings = page(() => import("./pages/Team"), "TeamSettings");
-const TokenSettings = page(() => import("./pages/Tokens"), "TokenSettings");
 const IntegrationsPage = page(() => import("./pages/Integrations"), "IntegrationsPage");
 
 /** The old Settings → Integrations address, kept for links and GitHub's redirects. */
@@ -175,7 +174,7 @@ export default function App() {
               <Route path="incidents" element={<IncidentRulesSettings />} />
               <Route path="team" element={<TeamSettings />} />
               <Route path="oncall" element={<Navigate to="/oncall" replace />} />
-              <Route path="tokens" element={<TokenSettings />} />
+              <Route path="tokens" element={<Navigate to="/integrations?tab=api" replace />} />
               <Route path="integrations" element={<ToIntegrations />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>

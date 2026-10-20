@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Activity, Bell, BookOpen, Bot, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, KeySquare, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
+import { Activity, Bell, BookOpen, Bot, ClipboardList, Cog, Copy, Database, Download, Hourglass, Info, KeyRound, LifeBuoy, LockKeyhole, LogIn, MonitorSmartphone, PackageCheck, Radar, RefreshCw, ScrollText, Send, Server, ShieldCheck, Siren, Timer, UserRound, Users } from "lucide-react";
 import { useStore } from "../store/store";
 import { api, deviceLabel, useApi, type ApiError, type AuditRow, type SecuritySettings as SecurityConfig, type SessionInfo } from "../api/client";
 import { relTime, dateTime, fmtMB } from "../mock/util";
@@ -15,7 +15,7 @@ const GROUPS: { title: string; items: [string, string, typeof Bell][] }[] = [
   { title: "You", items: [["account", "Account", UserRound], ["security", "Security", ShieldCheck], ["2fa", "2FA", KeyRound], ["sessions", "Sessions", MonitorSmartphone]] },
   { title: "Fleet", items: [["servers", "Servers", Server], ["agents", "Agents", Bot], ["logs", "Logs", ScrollText], ["metrics", "Metrics", Activity]] },
   { title: "Alerts", items: [["notifications", "Notifications", Bell], ["incidents", "Incident rules", Siren]] },
-  { title: "Access", items: [["team", "Team", Users], ["tokens", "API tokens", KeySquare]] },
+  { title: "Access", items: [["team", "Team", Users]] },
   { title: "Platform", items: [["system", "System", Cog]] },
 ];
 
@@ -171,7 +171,6 @@ export function SecuritySettings() {
           <ToggleRow label="Re-authenticate before running commands" desc="Ask for your password on Stop / Restart / custom commands" checked={f.reauthForCommands} onChange={(v) => setF({ ...f, reauthForCommands: v })} />
           <ToggleRow label="2FA code for dangerous actions" desc="Deleting servers, apps, sites, members or status pages, blocking addresses, firewall changes, installing updates, cleaning disks and changing these settings ask for a 2FA code each time (the password, for someone without 2FA). Also for the team." checked={!!f.confirmDangerous} onChange={(v) => setF({ ...f, confirmDangerous: v })} />
           <ToggleRow label="Require 2FA for everyone" desc="Team members without two-factor authentication must turn it on before they can use the dashboard. Turn on your own first." checked={!!f.require2FA} onChange={(v) => setF({ ...f, require2FA: v })} />
-          <ToggleRow label="Allow signing in with GitHub" desc="The login page offers Continue with GitHub to everyone who linked their GitHub account (needs GitHub connected in Integrations). Turned off, only passwords work." checked={!f.noGitHubLogin} onChange={(v) => setF({ ...f, noGitHubLogin: !v })} />
         </div>
         <SaveBar dirty={dirty} busy={busy} onSave={save} onReset={() => setF(sec.data)} />
       </Card>
@@ -578,8 +577,11 @@ export function MetricsSettings() {
 }
 
 /* ---------------- Notifications ---------------- */
+/** A member's own email alerts: like a channel, with one field. */
+const PERSONAL_EMAIL = { title: "Email", help: "Alerts to your own address, sent by the dashboard's default email sender.", fields: [["to", "Email address", "you@example.com"]] as FieldDef[] };
+
 export interface Channel {
-  provider: "telegram" | "discord" | "webhook";
+  provider: "telegram" | "discord" | "webhook" | "email";
   enabled: boolean;
   configured: boolean;
   fields: Record<string, string>;
@@ -587,7 +589,7 @@ export interface Channel {
 }
 type NotifyRules = Record<string, boolean>;
 type FieldDef = [key: string, label: string, placeholder: string, secret?: boolean];
-export const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: string; fields: FieldDef[] }> = {
+export const CHANNEL_FIELDS: Record<"telegram" | "discord" | "webhook", { title: string; help: string; fields: FieldDef[] }> = {
   telegram: {
     title: "Telegram",
     help: "Create a bot with @BotFather, send it a message, then use your chat ID (or a group ID starting with -100).",
@@ -605,9 +607,9 @@ export const CHANNEL_FIELDS: Record<Channel["provider"], { title: string; help: 
   },
 };
 
-export function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel[]) => void }) {
+export function ChannelCard({ ch, onSaved, base = "/api/notifications/channels" }: { ch: Channel; onSaved: (l: Channel[]) => void; base?: string }) {
   const { toast } = useStore();
-  const def = CHANNEL_FIELDS[ch.provider];
+  const def: { title: string; help: string; fields: FieldDef[] } = ch.provider === "email" ? PERSONAL_EMAIL : CHANNEL_FIELDS[ch.provider];
   const [enabled, setEnabled] = useState(ch.enabled);
   const [f, setF] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"" | "save" | "test">("");
@@ -617,7 +619,7 @@ export function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel
     setBusy("save");
     try {
       const fields = Object.fromEntries(def.fields.map(([k, , , secret]) => [k, f[k] ?? (secret ? "" : ch.fields[k] ?? "")]));
-      onSaved(await api<Channel[]>("PUT", `/api/notifications/channels/${ch.provider}`, { enabled, fields }));
+      onSaved(await api<Channel[]>("PUT", `${base}/${ch.provider}`, { enabled, fields }));
       setF({});
       toast(`${def.title} settings saved`);
     } catch (e) {
@@ -628,8 +630,8 @@ export function ChannelCard({ ch, onSaved }: { ch: Channel; onSaved: (l: Channel
   const test = async () => {
     setBusy("test");
     try {
-      const h = await api<{ result: string; error?: string; latencyMs: number }>("POST", `/api/notifications/channels/${ch.provider}/test`);
-      setRes(h.result === "delivered" ? { ok: true, msg: `Delivered in ${h.latencyMs} ms` } : { ok: false, msg: h.error ?? "Failed" });
+      const h = await api<{ result?: string; status?: string; error?: string; latencyMs?: number }>("POST", `${base}/${ch.provider}/test`);
+      setRes(h.result === "delivered" ? { ok: true, msg: `Delivered in ${h.latencyMs} ms` } : h.status === "sent" ? { ok: true, msg: "Sent" } : { ok: false, msg: h.error ?? "Failed" });
     } catch (e) {
       setRes({ ok: false, msg: (e as ApiError).message });
     }
