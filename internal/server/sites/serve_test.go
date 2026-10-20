@@ -64,7 +64,7 @@ func TestServeLocalSite(t *testing.T) {
 func TestBuildUnderPath(t *testing.T) {
 	p := underPath(Plan{Kind: "build", Framework: "Vite", Install: "npm ci", Build: "npm run build", Output: "dist", SPA: true}, "/sites/shop/")
 	wf := workflow(p, "main")
-	for _, want := range []string{"npm run build -- --base='/sites/shop/'", `BASE_PATH: "/sites/shop/"`, `PUBLIC_URL: "/sites/shop"`} {
+	for _, want := range []string{"cache: npm", "npm run build -- --base='/sites/shop/'", `BASE_PATH: "/sites/shop/"`, `PUBLIC_URL: "/sites/shop"`} {
 		if !strings.Contains(wf, want) {
 			t.Errorf("workflow lacks %q:\n%s", want, wf)
 		}

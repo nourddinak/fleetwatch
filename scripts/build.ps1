@@ -31,7 +31,7 @@ function Build($os, $arch, $out, $pkg) {
 Build "linux" "amd64" "internal/server/agentbin/bin/ops-agent-linux-amd64" "./cmd/agent"
 Build "linux" "arm64" "internal/server/agentbin/bin/ops-agent-linux-arm64" "./cmd/agent"
 
-Build "" "" "bin/ops-server.exe" "./cmd/server"
+if (-not $Release) { Build "" "" "bin/ops-server.exe" "./cmd/server" } # not published: releases are Linux only
 Build "linux" "amd64" "bin/ops-server-linux-amd64" "./cmd/server"
 Build "linux" "arm64" "bin/ops-server-linux-arm64" "./cmd/server"
 Remove-Item Env:GOOS, Env:GOARCH

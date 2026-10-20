@@ -164,6 +164,9 @@ func workflow(p Plan, branch string) string {
 	if p.Node != "" {
 		node = "          node-version-file: " + p.Node + "\n"
 	}
+	if strings.HasPrefix(p.Install, "npm ci") { // packages come from GitHub's cache, not the internet, on each build
+		node += "          cache: npm\n"
+	}
 	corepack := ""
 	if strings.HasPrefix(p.Install, "pnpm") || strings.HasPrefix(p.Install, "yarn") {
 		corepack = "      - run: corepack enable\n"
