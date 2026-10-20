@@ -421,29 +421,67 @@ func (s *server) statusAdminExtras(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 	}))
 
-	mux.HandleFunc("GET /api/settings/smtp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		writeJSON(w, http.StatusOK, s.Status.Mail.Config())
+	// Email senders (Integrations → Email): owner only, under /api/integrations.
+	senders := func() any {
+		used := map[string][]string{} // sender → the status pages sending through it
+		def := ""
+		list := s.Status.Mail.Senders()
+		for _, x := range list {
+			if x.Default {
+				def = x.ID
+			}
+		}
+		for _, p := range s.Status.Pages() {
+			id := p.Sender
+			if id == "" {
+				id = def
+			}
+			used[id] = append(used[id], p.Title)
+		}
+		type item struct {
+			statuspage.Sender
+			UsedBy []string `json:"usedBy"`
+		}
+		out := []item{}
+		for _, x := range list {
+			out = append(out, item{x, append([]string{}, used[x.ID]...)})
+		}
+		return out
+	}
+	mux.HandleFunc("GET /api/integrations/email", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, senders())
 	}))
-	mux.HandleFunc("PUT /api/settings/smtp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		var in statuspage.SMTPConfig
+	saveSender := func(w http.ResponseWriter, r *http.Request, id string) {
+		var in statuspage.Sender
 		if !decode(w, r, &in) {
 			return
 		}
-		out, err := s.Status.Mail.Save(in)
+		in.ID = id
+		out, err := s.Status.Mail.SaveSender(in)
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		s.audit(r, "settings.smtp", "", out.Host)
-		writeJSON(w, http.StatusOK, out)
+		s.audit(r, "email.sender", out.ID, out.Label+" <"+out.From+">")
+		writeJSON(w, http.StatusOK, senders())
+	}
+	mux.HandleFunc("POST /api/integrations/email", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { saveSender(w, r, "") }))
+	mux.HandleFunc("PUT /api/integrations/email/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) { saveSender(w, r, r.PathValue("id")) }))
+	mux.HandleFunc("DELETE /api/integrations/email/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Status.Mail.DeleteSender(r.PathValue("id")); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "email.sender.delete", r.PathValue("id"), "")
+		writeJSON(w, http.StatusOK, senders())
 	}))
-	mux.HandleFunc("POST /api/settings/smtp/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	mux.HandleFunc("POST /api/integrations/email/{id}/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ To string }
 		if !decode(w, r, &in) {
 			return
 		}
-		err := s.Status.Mail.Send(r.Context(), statuspage.Mail{To: []string{strings.TrimSpace(in.To)}, Subject: "Fleetwatch test email",
-			Text: "Email sending works. Status page subscribers and reports will be sent this way.\n"})
+		err := s.Status.Mail.SendFrom(r.Context(), r.PathValue("id"), statuspage.Mail{To: []string{strings.TrimSpace(in.To)}, Subject: "Fleetwatch test email",
+			Text: "Email sending works through this sender.\n"})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "smtp_failed", err.Error())
 			return

@@ -3,6 +3,7 @@ package statuspage
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -389,5 +390,55 @@ func TestLatency(t *testing.T) {
 	}
 	if latency(nil, now) != nil {
 		t.Fatal("no data should give no chart")
+	}
+}
+
+// Several senders: each sends as itself, one is the default, and deleting it passes
+// the default on.
+func TestSenders(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	m := NewMailer(d, box)
+	addr, got := fakeSMTP(t)
+	m.dial = func(ctx context.Context, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
+	if m.Ready() {
+		t.Fatal("no sender yet")
+	}
+	a, err := m.SaveSender(Sender{Label: "Status", SMTPConfig: SMTPConfig{Host: "mail.test", Port: 25, Security: "none", From: "status@acme.test"}})
+	if err != nil || !a.Default {
+		t.Fatal(a, err)
+	}
+	b, err := m.SaveSender(Sender{Label: "Support", SMTPConfig: SMTPConfig{Host: "mail.test", Port: 25, Security: "none", From: "support@acme.test"}})
+	if err != nil || b.Default {
+		t.Fatal(b, err)
+	}
+	if err := m.SendFrom(context.Background(), b.ID, Mail{To: []string{"x@y.test"}, Subject: "hi", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if msg := <-got; !strings.Contains(msg, "support@acme.test") {
+		t.Fatal("sent as the other sender:", msg)
+	}
+	if err := m.Send(context.Background(), Mail{To: []string{"x@y.test"}, Subject: "hi", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if msg := <-got; !strings.Contains(msg, "status@acme.test") {
+		t.Fatal("the default sends the rest:", msg)
+	}
+	c, _ := m.SaveSender(Sender{Label: "Gmail", SMTPConfig: SMTPConfig{Host: "smtp.gmail.com", Port: 587, Security: "starttls", From: "me@gmail.test", Username: "me", Password: "p1"}})
+	c.Password = "" // kept
+	if c2, err := m.SaveSender(c); err != nil || !c2.HasPassword {
+		t.Fatal("password kept", c2, err)
+	}
+	if err := m.DeleteSender(a.ID); err != nil || len(m.Senders()) != 2 || !m.Senders()[0].Default || m.Senders()[0].ID != b.ID {
+		t.Fatal("the default passes on", m.Senders(), err)
+	}
+	if raw, _ := json.Marshal(NewMailer(d, box).Senders()); strings.Contains(string(raw), "p1") {
+		t.Fatal("password leaked")
 	}
 }

@@ -59,6 +59,7 @@ export interface Config {
   customCss: string;
   headerHtml: string;
   report: { monthly: boolean; to: string; lastSent: string };
+  sender?: string;
 }
 
 export const STAGE_LABEL: Record<Stage, string> = { investigating: "Investigating", identified: "Identified", monitoring: "Monitoring", update: "Update", resolved: "Resolved" };

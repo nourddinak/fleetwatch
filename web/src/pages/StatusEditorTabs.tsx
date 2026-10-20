@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { SenderPicker, useSenders } from "../components/EmailSenders";
 import { BadgeCheck, BarChart3, Globe, BellRing, Code2, FileCode2, Lock, Mail, Megaphone, Plus, Send, Sparkles, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
@@ -186,9 +188,8 @@ interface Subscriber {
 export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
   const { toast } = useStore();
   const list = useApi<Subscriber[]>(`/api/status-pages/${c.id}/subscribers`);
-  const smtp = useApi<SMTP>("/api/settings/smtp");
-  const [mail, setMail] = useState(false);
-  const mailReady = !!smtp.data?.host && !!smtp.data.from;
+  const senders = useSenders();
+  const mailReady = (senders.data?.length ?? 0) > 0;
   const act = async (f: () => Promise<unknown>, done: string) => {
     try {
       await f();
@@ -202,9 +203,14 @@ export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
     <div className="grid gap-6">
       <Card>
         <SectionTitle icon={<BellRing size={15} />} title="Let visitors subscribe" sub="A “Get updates” button on the page. Subscribers hear when something goes down or comes back, and about your notices. Saved with the page." />
-        <ToggleRow label="By email" desc={mailReady ? "They confirm by email first; every message has an unsubscribe link." : "Set up email sending first."} checked={c.subscribe} onChange={(v) => set({ subscribe: v })}>
-          <Button size="sm" variant="ghost" onClick={() => setMail(true)}><Mail size={14} /> {mailReady ? "Email settings" : "Set up email"}</Button>
+        <ToggleRow label="By email" desc={mailReady ? "They confirm by email first; every message has an unsubscribe link." : "Add an email sender first (Integrations → Email)."} checked={c.subscribe} onChange={(v) => set({ subscribe: v })}>
+          {!mailReady && <Link to="/integrations?tab=email"><Button size="sm" variant="ghost"><Mail size={14} /> Add a sender</Button></Link>}
         </ToggleRow>
+        {mailReady && (
+          <Field label="Send emails from" hint={<>Subscriptions, updates and this page's reports. Senders are in <Link to="/integrations?tab=email" className="underline">Integrations → Email</Link>.</>}>
+            <SenderPicker value={c.sender ?? ""} onChange={(sender) => set({ sender })} />
+          </Field>
+        )}
         <ToggleRow label="By webhook" desc="For other systems: a JSON POST to their https:// URL. Addresses inside your own network are refused." checked={c.subscribeHooks} onChange={(v) => set({ subscribeHooks: v })} />
       </Card>
       <Card pad={false}>
@@ -237,108 +243,6 @@ export function SubscribersTab({ c, set }: { c: Config; set: Set }) {
           </Table>
         )}
       </Card>
-      <Modal open={mail} onClose={() => (setMail(false), smtp.reload())} title="Email sending" wide>
-        <EmailSettings onSaved={smtp.reload} />
-      </Modal>
-    </div>
-  );
-}
-
-/* ---------------- email (SMTP) ---------------- */
-
-interface SMTP {
-  host: string;
-  port: number;
-  security: "starttls" | "tls" | "none";
-  username: string;
-  password?: string;
-  hasPassword: boolean;
-  from: string;
-  fromName: string;
-}
-
-const PRESETS: { name: string; host: string; port: number; security: SMTP["security"]; note: string }[] = [
-  { name: "Gmail", host: "smtp.gmail.com", port: 587, security: "starttls", note: "Use an app password (Google account → Security → App passwords)." },
-  { name: "Brevo", host: "smtp-relay.brevo.com", port: 587, security: "starttls", note: "Username and SMTP key from Brevo → SMTP & API." },
-  { name: "Resend", host: "smtp.resend.com", port: 465, security: "tls", note: "Username “resend”, password: your API key." },
-  { name: "Mailgun", host: "smtp.mailgun.org", port: 587, security: "starttls", note: "SMTP credentials from your Mailgun domain." },
-];
-
-export function EmailSettings({ onSaved }: { onSaved?: () => void }) {
-  const { toast, me } = useStore();
-  const saved = useApi<SMTP>("/api/settings/smtp");
-  const [f, setF] = useState<SMTP | null>(null);
-  const [to, setTo] = useState(me?.email ?? "");
-  const [busy, setBusy] = useState("");
-  const v = f ?? saved.data;
-  if (!v) return <Spinner />;
-  const upd = (p: Partial<SMTP>) => setF({ ...v, ...p });
-  const save = async () => {
-    setBusy("save");
-    try {
-      const out = await api<SMTP>("PUT", "/api/settings/smtp", v);
-      saved.setData(out);
-      setF(null);
-      onSaved?.();
-      toast("Email settings saved");
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setBusy("");
-  };
-  const test = async () => {
-    setBusy("test");
-    try {
-      await api("POST", "/api/settings/smtp/test", { to });
-      toast(`Test email sent to ${to}`);
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setBusy("");
-  };
-  const preset = PRESETS.find((p) => p.host === v.host);
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted">Status page emails (confirmations, updates, reports) go out through any email provider's SMTP. The password is stored encrypted.</p>
-      <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p) => (
-          <Button key={p.name} size="sm" variant={v.host === p.host ? "primary" : "secondary"} onClick={() => upd({ host: p.host, port: p.port, security: p.security })}>{p.name}</Button>
-        ))}
-      </div>
-      {preset && <p className="text-xs text-muted">{preset.note}</p>}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="SMTP server" className="sm:col-span-2">
-          <Input value={v.host} placeholder="smtp.example.com" onChange={(e) => upd({ host: e.target.value })} />
-        </Field>
-        <Field label="Port">
-          <Input type="number" value={v.port || ""} placeholder="587" onChange={(e) => upd({ port: Number(e.target.value) })} />
-        </Field>
-        <Field label="Security">
-          <Select value={v.security || "starttls"} onChange={(e) => upd({ security: e.target.value as SMTP["security"] })}>
-            <option value="starttls">STARTTLS (port 587)</option>
-            <option value="tls">TLS (port 465)</option>
-            <option value="none">None (local relay only)</option>
-          </Select>
-        </Field>
-        <Field label="Username">
-          <Input value={v.username} autoComplete="off" onChange={(e) => upd({ username: e.target.value })} />
-        </Field>
-        <Field label="Password" hint={v.hasPassword && !v.password ? "Saved. Type to replace it." : undefined}>
-          <Input type="password" value={v.password ?? ""} autoComplete="new-password" placeholder={v.hasPassword ? "••••••••" : ""} onChange={(e) => upd({ password: e.target.value })} />
-        </Field>
-        <Field label="Sender address" className="sm:col-span-2">
-          <Input value={v.from} placeholder="status@example.com" onChange={(e) => upd({ from: e.target.value })} />
-        </Field>
-        <Field label="Sender name">
-          <Input value={v.fromName} placeholder="Acme Status" onChange={(e) => upd({ fromName: e.target.value })} />
-        </Field>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-        <Button disabled={!f || !!busy} onClick={save}>{busy === "save" && <Spinner size={14} />} Save</Button>
-        <span className="ml-auto text-xs text-muted">Send a test to</span>
-        <Input className="max-w-[220px]" value={to} placeholder="you@example.com" onChange={(e) => setTo(e.target.value)} />
-        <Button variant="secondary" disabled={!!f || !to || !!busy || !saved.data?.host} onClick={test}>{busy === "test" && <Spinner size={14} />} Send test</Button>
-      </div>
     </div>
   );
 }

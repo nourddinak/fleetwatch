@@ -6,7 +6,7 @@ import { useStore } from "../store/store";
 import { Badge, Button, Card, CodeBlock, ConfirmDialog, CopyButton, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Segmented, Select, Spinner, Textarea, ToggleRow } from "../components/ui";
 import { StatusView, type PublicStatus } from "./StatusPage";
 import type { Component, Config, Group } from "./statusTypes";
-import { AccessTab, CodeTab, EmailSettings, NoticesTab, ShareTab, SubscribersTab } from "./StatusEditorTabs";
+import { AccessTab, CodeTab, NoticesTab, ShareTab, SubscribersTab } from "./StatusEditorTabs";
 
 type Tab = "page" | "components" | "notices" | "subscribers" | "access" | "share" | "code";
 const TABS: { value: Tab; label: string; icon: typeof Globe }[] = [
@@ -46,7 +46,6 @@ export function StatusPages() {
   const [from, setFrom] = useState("");
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState<Summary | null>(null);
-  const [mail, setMail] = useState(false);
   const hasMain = list.data?.some((p) => p.slug === "") ?? false;
 
   const open = () => {
@@ -98,7 +97,7 @@ export function StatusPages() {
         sub="Public pages your users can check when something is down. Make one for everything, one per app or customer, or both; each has its own address, look and contents."
         actions={
           <>
-            <Button size="sm" variant="secondary" onClick={() => setMail(true)}><Mail size={14} /> Email sending</Button>
+            <Link to="/integrations?tab=email"><Button size="sm" variant="secondary"><Mail size={14} /> Email senders</Button></Link>
             <Button size="sm" onClick={open}><Plus size={14} /> New page</Button>
           </>
         }
@@ -174,9 +173,6 @@ export function StatusPages() {
           </Field>
           <p className="text-xs text-muted">New pages start turned off, so you can set them up first.</p>
         </div>
-      </Modal>
-      <Modal open={mail} onClose={() => setMail(false)} title="Email sending" wide>
-        <EmailSettings />
       </Modal>
       <ConfirmDialog open={!!del} title="Delete status page?" message={`"${del?.title}" and its notices are deleted, and its address stops working.`} confirmLabel="Delete" danger onConfirm={() => del && remove(del)} onCancel={() => setDel(null)} />
     </>

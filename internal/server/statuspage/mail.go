@@ -41,69 +41,161 @@ type SMTPConfig struct {
 	FromName    string `json:"fromName"`
 }
 
-type storedSMTP struct {
+// Sender is one way out for emails (Integrations → Email): status pages pick one, and
+// the default sends everything else (on-call emails, pages without their own).
+type Sender struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"` // how people know it: "Acme support", "Gmail"
+	Default bool   `json:"default"`
 	SMTPConfig
+}
+
+type storedSender struct {
+	Sender
 	Sealed []byte `json:"sealed,omitempty"`
 }
 
-// Mailer sends emails with the saved SMTP settings.
+const sendersKey = "smtp.senders"
+
+// Mailer sends emails through the saved senders.
 type Mailer struct {
-	db  *sql.DB
-	box *secret.Box
-	mu  sync.Mutex
-	cfg storedSMTP
+	db      *sql.DB
+	box     *secret.Box
+	mu      sync.Mutex
+	senders []storedSender
 	// dial is replaced in tests.
 	dial func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 func NewMailer(d *sql.DB, box *secret.Box) *Mailer {
 	m := &Mailer{db: d, box: box}
-	settings.Load(d, smtpKey, &m.cfg)
+	if settings.Load(d, sendersKey, &m.senders) != nil || m.senders == nil {
+		var old struct { // before several senders: the one SMTP setting becomes the default
+			SMTPConfig
+			Sealed []byte `json:"sealed,omitempty"`
+		}
+		if settings.Load(d, smtpKey, &old) == nil && old.Host != "" {
+			m.senders = []storedSender{{Sender: Sender{ID: "default", Label: "Main", Default: true, SMTPConfig: old.SMTPConfig}, Sealed: old.Sealed}}
+			settings.Save(d, sendersKey, m.senders)
+		}
+	}
 	m.dial = func(ctx context.Context, addr string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", addr)
 	}
 	return m
 }
 
-// Ready reports whether email can be sent.
-func (m *Mailer) Ready() bool {
+// Ready reports whether email can be sent (through the default sender).
+func (m *Mailer) Ready() bool { return m.ReadyFor("") }
+
+// ReadyFor reports whether a sender ("" = the default) can send.
+func (m *Mailer) ReadyFor(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg.Host != "" && m.cfg.From != ""
+	s, ok := m.pick(id)
+	return ok && s.Host != "" && s.From != ""
 }
 
+// pick is a sender by id, or the default ("" or a sender that is gone). Lock held.
+func (m *Mailer) pick(id string) (storedSender, bool) {
+	var def *storedSender
+	for i := range m.senders {
+		if id != "" && m.senders[i].ID == id {
+			return m.senders[i], true
+		}
+		if m.senders[i].Default && def == nil {
+			def = &m.senders[i]
+		}
+	}
+	if def == nil && len(m.senders) > 0 {
+		def = &m.senders[0]
+	}
+	if def == nil {
+		return storedSender{}, false
+	}
+	return *def, true
+}
+
+// Senders are all of them, without their passwords.
+func (m *Mailer) Senders() []Sender {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Sender{}
+	for _, s := range m.senders {
+		x := s.Sender
+		x.Password, x.HasPassword = "", len(s.Sealed) > 0
+		out = append(out, x)
+	}
+	return out
+}
+
+// Config is the default sender's settings (the dashboard's email before several senders).
 func (m *Mailer) Config() SMTPConfig {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	c := m.cfg.SMTPConfig
-	c.Password, c.HasPassword = "", len(m.cfg.Sealed) > 0
-	return c
+	for _, s := range m.Senders() {
+		if s.Default {
+			return s.SMTPConfig
+		}
+	}
+	return SMTPConfig{}
 }
 
-// Save validates and stores the settings; an empty password keeps the saved one, and
-// an empty host turns email off.
+// Save sets the default sender's settings (made if there is none).
 func (m *Mailer) Save(c SMTPConfig) (SMTPConfig, error) {
+	m.mu.Lock()
+	def, ok := m.pick("")
+	m.mu.Unlock()
+	in := Sender{Label: "Main", Default: true, SMTPConfig: c}
+	if ok {
+		in.ID, in.Label = def.ID, def.Label
+	}
+	out, err := m.SaveSender(in)
+	return out.SMTPConfig, err
+}
+
+// SaveSender adds (no id) or changes a sender. An empty password keeps the saved one.
+func (m *Mailer) SaveSender(in Sender) (Sender, error) {
+	c := in.SMTPConfig
 	c.Host, c.Username, c.From, c.FromName = strings.TrimSpace(c.Host), strings.TrimSpace(c.Username), strings.TrimSpace(c.From), strings.TrimSpace(c.FromName)
-	if c.Host != "" {
-		if strings.ContainsAny(c.Host, " /:") || len(c.Host) > 253 {
-			return c, valid.Error("SMTP server must be a host name like smtp.example.com")
-		}
-		if c.Port <= 0 || c.Port > 65535 {
-			return c, valid.Error("SMTP port must be 1-65535 (usually 587 or 465)")
-		}
-		if c.Security != "starttls" && c.Security != "tls" && c.Security != "none" {
-			return c, valid.Error("security must be starttls, tls or none")
-		}
-		if a, err := mail.ParseAddress(c.From); err != nil || a.Address != c.From {
-			return c, valid.Error("the sender must be a plain email address, like status@example.com")
-		}
-		if len(c.FromName) > 80 || strings.ContainsAny(c.FromName, "\r\n") || len(c.Username) > 200 || len(c.Password) > 500 {
-			return c, valid.Error("sender name, username or password is too long")
-		}
+	in.Label = strings.TrimSpace(in.Label)
+	switch {
+	case c.Host == "" || strings.ContainsAny(c.Host, " /:") || len(c.Host) > 253:
+		return in, valid.Error("SMTP server must be a host name like smtp.example.com")
+	case c.Port <= 0 || c.Port > 65535:
+		return in, valid.Error("SMTP port must be 1-65535 (usually 587 or 465)")
+	case c.Security != "starttls" && c.Security != "tls" && c.Security != "none":
+		return in, valid.Error("security must be starttls, tls or none")
+	case len(in.Label) > 60:
+		return in, valid.Error("the name is too long")
+	}
+	if a, err := mail.ParseAddress(c.From); err != nil || a.Address != c.From {
+		return in, valid.Error("the sender must be a plain email address, like status@example.com")
+	}
+	if len(c.FromName) > 80 || strings.ContainsAny(c.FromName, "\r\n") || len(c.Username) > 200 || len(c.Password) > 500 {
+		return in, valid.Error("sender name, username or password is too long")
+	}
+	if in.Label == "" {
+		in.Label = c.From
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := storedSMTP{SMTPConfig: c, Sealed: m.cfg.Sealed}
+	i := -1
+	for k := range m.senders {
+		if in.ID != "" && m.senders[k].ID == in.ID {
+			i = k
+		}
+	}
+	if i < 0 {
+		if in.ID != "" {
+			return in, valid.Error("no such sender")
+		}
+		if len(m.senders) >= 20 {
+			return in, valid.Error("20 senders at most")
+		}
+		in.ID = "snd_" + newID()[3:]
+		m.senders = append(m.senders, storedSender{})
+		i = len(m.senders) - 1
+	}
+	st := storedSender{Sender: Sender{ID: in.ID, Label: in.Label, Default: in.Default || len(m.senders) == 1, SMTPConfig: c}, Sealed: m.senders[i].Sealed}
 	if c.Password != "" {
 		st.Sealed = m.box.Seal([]byte(c.Password), "smtp.password")
 	}
@@ -111,13 +203,35 @@ func (m *Mailer) Save(c SMTPConfig) (SMTPConfig, error) {
 		st.Sealed = nil
 	}
 	st.Password, st.HasPassword = "", false
-	if err := settings.Save(m.db, smtpKey, st); err != nil {
-		return c, err
+	m.senders[i] = st
+	if st.Default {
+		for k := range m.senders {
+			m.senders[k].Default = k == i
+		}
 	}
-	m.cfg = st
-	out := st.SMTPConfig
+	if err := settings.Save(m.db, sendersKey, m.senders); err != nil {
+		return in, err
+	}
+	out := st.Sender
 	out.HasPassword = len(st.Sealed) > 0
 	return out, nil
+}
+
+// DeleteSender removes one; another becomes the default if it was.
+func (m *Mailer) DeleteSender(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.senders {
+		if m.senders[k].ID == id {
+			was := m.senders[k].Default
+			m.senders = append(m.senders[:k], m.senders[k+1:]...)
+			if was && len(m.senders) > 0 {
+				m.senders[0].Default = true
+			}
+			return settings.Save(m.db, sendersKey, m.senders)
+		}
+	}
+	return valid.Error("no such sender")
 }
 
 // Attachment is a file sent with an email.
@@ -135,12 +249,16 @@ type Mail struct {
 	Attached *Attachment
 }
 
-func (m *Mailer) Send(ctx context.Context, msg Mail) error {
+// Send sends through the default sender.
+func (m *Mailer) Send(ctx context.Context, msg Mail) error { return m.SendFrom(ctx, "", msg) }
+
+// SendFrom sends through a sender ("" or one that is gone = the default).
+func (m *Mailer) SendFrom(ctx context.Context, sender string, msg Mail) error {
 	m.mu.Lock()
-	cfg := m.cfg
+	cfg, ok := m.pick(sender)
 	m.mu.Unlock()
-	if cfg.Host == "" || cfg.From == "" {
-		return valid.Error("email is not set up: add your SMTP settings under Status pages → Email sending")
+	if !ok || cfg.Host == "" || cfg.From == "" {
+		return valid.Error("email is not set up: add a sender in Integrations → Email")
 	}
 	pass := ""
 	if len(cfg.Sealed) > 0 {

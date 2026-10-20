@@ -111,6 +111,7 @@ type Config struct {
 	CustomCSS        string       `json:"customCss"`
 	HeaderHTML       string       `json:"headerHtml"`
 	Report           ReportConfig `json:"report"`
+	Sender           string       `json:"sender"` // its emails' sender (Integrations → Email); "" = the default
 }
 
 // Redacted is the page as the editor gets it: without the password hash.
@@ -395,6 +396,9 @@ func (s *Service) Save(c Config) (Config, error) {
 	if err := c.Validate(); err != nil {
 		return c, err
 	}
+	if c.Sender != "" && s.Mail != nil && !slices.ContainsFunc(s.Mail.Senders(), func(x Sender) bool { return x.ID == c.Sender }) {
+		return c, valid.Error("that email sender is gone: pick another in Subscribers")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	at := -1
@@ -593,7 +597,7 @@ func (s *Service) build(c Config) *Public {
 	p := &Public{Title: c.Title, Description: c.Description, Logo: c.Logo, Accent: c.Accent, Theme: c.Theme, HomeURL: c.HomeURL,
 		HomeLabel: c.HomeLabel, Footer: c.Footer, PoweredBy: c.PoweredBy, HistoryDays: c.HistoryDays, Notices: []PublicNotice{},
 		Groups: []PublicGroup{}, UpdatedAt: now.UnixMilli(), Subscribe: []string{}, CustomCSS: c.CustomCSS, HeaderHTML: c.HeaderHTML}
-	if c.Subscribe && s.Mail != nil && s.Mail.Ready() {
+	if c.Subscribe && s.Mail != nil && s.Mail.ReadyFor(c.Sender) {
 		p.Subscribe = append(p.Subscribe, "email")
 	}
 	if c.SubscribeHooks {

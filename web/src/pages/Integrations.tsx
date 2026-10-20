@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeft, ChevronRight, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, ChevronRight, Mail, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -10,6 +10,7 @@ import { goGitHub } from "./Sites";
 import { AISetup } from "../components/AISetup";
 import { MobileCard } from "../components/MobileCard";
 import { CHANNEL_FIELDS, ChannelCard, type Channel } from "./Settings";
+import { EmailSenders, useSenders } from "../components/EmailSenders";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, SectionTitle, Spinner, Table, Td, Tr, Github, Cloudflare, WhatsApp, Gemini, Telegram, Discord, CopyButton, PageHeader, SearchInput } from "../components/ui";
 
 interface App {
@@ -199,6 +200,7 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
   const people = dns.data?.everyone?.length ?? 0;
   const chans = useApi<Channel[]>("/api/notifications/channels");
   const ch = (p: string) => chans.data?.find((c) => c.provider === p);
+  const senders = useSenders().data ?? [];
   const alert = (p: "telegram" | "discord" | "webhook", logo: ReactNode, desc: string) => {
     const c = ch(p);
     return { key: p, logo, name: CHANNEL_FIELDS[p].title, on: !!c?.enabled && !!c.configured, desc,
@@ -220,6 +222,9 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
     { key: "phone", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-accent-fg"><Activity size={22} /></span>, name: "Phone app", on: false,
       desc: "The Fleetwatch app on Android: alerts that ring like a call, one tap to acknowledge, your servers at a glance.",
       status: "Pair a phone with a QR code" },
+    { key: "email", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#EA4335]/10 text-[#EA4335]"><Mail size={22} /></span>, name: "Email", on: senders.length > 0,
+      desc: "Your email senders (Gmail, Brevo, Resend, any SMTP): status page subscriptions, updates and reports, and on-call emails. Each status page picks its own.",
+      status: senders.length ? `${senders.length} sender${senders.length === 1 ? "" : "s"} · default ${senders.find((x) => x.default)?.from ?? ""}` : "Add an address to send from" },
     alert("telegram", <Telegram size={30} />, "Alerts in a Telegram chat or group, through your own bot."),
     alert("discord", <Discord size={30} />, "Alerts in a Discord channel, through a channel webhook."),
     alert("webhook", <Webhook size={28} color="#C73A63" strokeWidth={2.2} />, "Alerts as JSON to your own URL: n8n, Zapier, Slack workflows, Home Assistant, your code."),
@@ -492,12 +497,13 @@ function Repos() {
   );
 }
 
-const ALERT_TABS = ["telegram", "discord", "webhook", "phone"];
+const ALERT_TABS = ["telegram", "discord", "webhook", "phone", "email"];
 
 /** One place alerts can go: its settings, opened from its card. */
 function AlertChannel({ tab }: { tab: string }) {
   const chans = useApi<Channel[]>("/api/notifications/channels");
   if (tab === "phone") return <MobileCard />;
+  if (tab === "email") return <EmailSenders />;
   if (chans.error) return <ErrorState message={chans.error} onRetry={chans.reload} />;
   const ch = chans.data?.find((c) => c.provider === tab);
   if (!ch) return <LoadingState />;

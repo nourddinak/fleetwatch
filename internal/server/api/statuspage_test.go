@@ -232,7 +232,7 @@ func TestPrivatePagesAndBadge(t *testing.T) {
 		t.Fatalf("one-click unsubscribe refused: %d", res.StatusCode)
 	}
 	// Tokens cannot read subscribers or email settings.
-	if st, _ := anon.do("GET", "/api/settings/smtp", nil); st != 401 {
+	if st, _ := anon.do("GET", "/api/integrations/email", nil); st != 401 {
 		t.Fatal("SMTP settings readable without sign-in")
 	}
 }

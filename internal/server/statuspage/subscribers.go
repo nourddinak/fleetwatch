@@ -72,7 +72,7 @@ func (s *Service) Subscribe(ctx context.Context, c Config, kind, target, base st
 	target = strings.TrimSpace(target)
 	switch kind {
 	case "email":
-		if !c.Subscribe || s.Mail == nil || !s.Mail.Ready() {
+		if !c.Subscribe || s.Mail == nil || !s.Mail.ReadyFor(c.Sender) {
 			return valid.Error("email updates are not offered on this page")
 		}
 		a, err := mail.ParseAddress(target)
@@ -116,7 +116,7 @@ func (s *Service) Subscribe(ctx context.Context, c Config, kind, target, base st
 		sub.Confirmed = true
 	} else {
 		link := linkBase(c, base) + "/api/public/subscribe/confirm?t=" + sub.token
-		if err := s.Mail.Send(ctx, Mail{To: []string{target}, Subject: "Confirm updates from " + c.Title,
+		if err := s.Mail.SendFrom(ctx, c.Sender, Mail{To: []string{target}, Subject: "Confirm updates from " + c.Title,
 			Text: "Someone (hopefully you) asked to get updates about " + c.Title + " at this address.\n\nConfirm: " + link +
 				"\n\nIf it was not you, ignore this email: nothing will be sent without confirming."}); err != nil {
 			slog.Warn("status page: confirmation email failed", "err", err)
@@ -250,7 +250,7 @@ func (s *Service) deliver(ctx context.Context, e event) {
 			if s.Mail == nil {
 				continue
 			}
-			err = s.Mail.Send(ctx, Mail{To: []string{sub.Target}, Subject: subject,
+			err = s.Mail.SendFrom(ctx, e.page.Sender, Mail{To: []string{sub.Target}, Subject: subject,
 				Text:    text + "\nStatus page: " + PageURL(e.page, sub.base) + "\nStop these emails: " + unsub + "\n",
 				Headers: map[string]string{"List-Unsubscribe": "<" + unsub + ">", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}})
 		} else {

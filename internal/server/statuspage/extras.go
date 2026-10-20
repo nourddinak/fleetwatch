@@ -244,7 +244,8 @@ func (s *Service) EmailReport(ctx context.Context, id, month, to string) error {
 		fmt.Fprintf(&b, "%s: %s (%d min down, %d outage(s))\n", name, up, x.DownMinutes, x.Outages)
 	}
 	b.WriteString("\nThe same figures are attached as a CSV file.\n")
-	return s.Mail.Send(ctx, Mail{To: addrs, Subject: fmt.Sprintf("Uptime report %s: %s", month, r.Page), Text: b.String(),
+	c, _ := s.Page(id)
+	return s.Mail.SendFrom(ctx, c.Sender, Mail{To: addrs, Subject: fmt.Sprintf("Uptime report %s: %s", month, r.Page), Text: b.String(),
 		Attached: &Attachment{Name: fmt.Sprintf("uptime-%s.csv", month), Type: "text/csv; charset=utf-8", Data: r.CSV()}})
 }
 
