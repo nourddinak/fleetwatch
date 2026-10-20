@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { AlertTriangle, Bell, CheckCircle2, Info, Lock, Wrench, XCircle } from "lucide-react";
 import { cn } from "../utils/cn";
+import { countryName } from "../utils/regions";
 
 // The public status page: no sign-in, no store, no router. Data comes from
 // /api/public/status, which holds only what the admin chose to publish.
@@ -18,6 +19,14 @@ interface Component {
   uptime?: number;
   days?: Day[];
   latency?: { t: number; ms: number }[];
+  places?: string[];
+}
+
+/** "Checked from 3 places: Germany, United States": where an uptime check runs. */
+function checkedFrom(places: string[]) {
+  const names = [...new Set(places.filter(Boolean).map((c) => countryName(c)))];
+  const n = places.length;
+  return `Checked from ${n} place${n === 1 ? "" : "s"}${names.length ? `: ${names.join(", ")}` : ""}`;
 }
 type Stage = "investigating" | "identified" | "monitoring" | "resolved" | "update";
 interface Notice {
@@ -180,6 +189,7 @@ export function StatusView({ data, slug, preview }: { data: PublicStatus; slug?:
                     <div className="min-w-0">
                       <div className="font-medium">{c.name}</div>
                       {c.description && <div className="text-xs text-muted">{c.description}</div>}
+                      {c.places && c.places.length > 0 && <div className="sp-places text-xs text-muted">{checkedFrom(c.places)}</div>}
                     </div>
                     <span className={cn("shrink-0 text-sm font-medium", STATE[c.status][1])}>{STATE[c.status][0]}</span>
                   </div>

@@ -80,6 +80,12 @@ func (s *Service) stateOf(x Component) string {
 				return st
 			}
 		}
+	case "check":
+		if s.CheckState != nil {
+			if st, _, _, ok := s.CheckState(x.ID); ok {
+				return st
+			}
+		}
 	}
 	return "unknown"
 }

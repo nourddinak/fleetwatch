@@ -166,6 +166,20 @@ func (s *Service) related(x Component) ([]incidents.Incident, int64) {
 				related = append(related, i)
 			}
 		}
+	case "check":
+		if s.CheckState == nil {
+			return nil, 0
+		}
+		_, cr, _, ok := s.CheckState(x.ID)
+		if !ok {
+			return nil, 0
+		}
+		created = cr
+		for _, i := range s.incidents(incidents.Filter{Type: "uptime_down"}) {
+			if i.Key == "uptime|"+x.ID {
+				related = append(related, i)
+			}
+		}
 	}
 	return related, created
 }

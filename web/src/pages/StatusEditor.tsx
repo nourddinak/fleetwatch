@@ -183,6 +183,8 @@ export function StatusEditor() {
   const { servers, apps, getServer, toast } = useStore();
   const { id } = useParams();
   const saved = useApi<Config>(`/api/status-pages/${id}`);
+  const checks = useApi<{ id: string; name: string; url: string; locations: string[] }[]>("/api/uptime").data ?? [];
+  const nameOf = (kind: string, id: string) => (kind === "app" ? apps.find((a) => a.id === id)?.name : kind === "check" ? checks.find((u) => u.id === id)?.name : getServer(id)?.name);
   const [c, setC] = useState<Config | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
@@ -207,8 +209,9 @@ export function StatusEditor() {
   const addComponent = (gi: number) => {
     const app = apps.find((a) => !used.has(`app:${a.id}`));
     const srv = servers.find((s) => !used.has(`server:${s.id}`));
-    const x: Component | null = app ? { kind: "app", id: app.id, name: app.name, description: "" } : srv ? { kind: "server", id: srv.id, name: srv.name, description: "" } : null;
-    if (!x) return toast("Every app and server is already on the page", "err");
+    const chk = checks.find((u) => !used.has(`check:${u.id}`));
+    const x: Component | null = app ? { kind: "app", id: app.id, name: app.name, description: "" } : srv ? { kind: "server", id: srv.id, name: srv.name, description: "" } : chk ? { kind: "check", id: chk.id, name: chk.name, description: "" } : null;
+    if (!x) return toast("Every app, server and uptime check is already on the page", "err");
     setGroup(gi, { ...c.groups[gi], components: [...c.groups[gi].components, x] });
   };
 
@@ -398,15 +401,15 @@ export function StatusEditor() {
                       return (
                         <div key={ci} className="grid gap-2 rounded-xl bg-surface2 p-3 md:grid-cols-[1fr_1fr_1.4fr_auto]">
                           <Select
-                            aria-label="App or server"
+                            aria-label="App, server or uptime check"
                             value={`${x.kind}:${x.id}`}
                             onChange={(e) => {
                               const [kind, id] = e.target.value.split(/:(.*)/s) as [Component["kind"], string];
-                              const name = kind === "app" ? apps.find((a) => a.id === id)?.name : servers.find((s) => s.id === id)?.name;
-                              upd({ kind, id, name: x.name && x.name !== (x.kind === "app" ? apps.find((a) => a.id === x.id)?.name : getServer(x.id)?.name) ? x.name : name ?? x.name });
+                              const name = nameOf(kind, id);
+                              upd({ kind, id, name: x.name && x.name !== nameOf(x.kind, x.id) ? x.name : name ?? x.name });
                             }}
                           >
-                            {!apps.some((a) => a.id === x.id) && !servers.some((s) => s.id === x.id) && <option value={`${x.kind}:${x.id}`}>(deleted {x.kind})</option>}
+                            {!nameOf(x.kind, x.id) && <option value={`${x.kind}:${x.id}`}>{x.kind === "check" && !checks.length ? x.name : `(deleted ${x.kind})`}</option>}
                             <optgroup label="Applications">
                               {apps.map((a) => (
                                 <option key={a.id} value={`app:${a.id}`} disabled={used.has(`app:${a.id}`) && !(x.kind === "app" && x.id === a.id)}>
@@ -419,6 +422,15 @@ export function StatusEditor() {
                                 <option key={s.id} value={`server:${s.id}`} disabled={used.has(`server:${s.id}`) && !(x.kind === "server" && x.id === s.id)}>{s.name}</option>
                               ))}
                             </optgroup>
+                            {checks.length > 0 && (
+                              <optgroup label="Uptime checks (from many places)">
+                                {checks.map((u) => (
+                                  <option key={u.id} value={`check:${u.id}`} disabled={used.has(`check:${u.id}`) && !(x.kind === "check" && x.id === u.id)}>
+                                    {u.name} · {u.locations.length} place{u.locations.length === 1 ? "" : "s"}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </Select>
                           <Input aria-label="Public name" placeholder="Public name" value={x.name} maxLength={60} onChange={(e) => upd({ name: e.target.value })} />
                           <Input aria-label="Description" placeholder="Description (optional)" value={x.description} maxLength={200} onChange={(e) => upd({ description: e.target.value })} />

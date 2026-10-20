@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -666,6 +668,40 @@ func serve() error {
 		if severity != "info" {
 			go calls.securityText(title, body)
 		}
+	}
+	// Uptime checks on status pages, with the countries they are checked from.
+	status.CheckState = func(id string) (string, int64, []string, bool) {
+		c, err := upSvc.Get(id)
+		if err != nil {
+			return "", 0, nil, false
+		}
+		state := map[string]string{"down": "outage", "partial": "degraded", "slow": "degraded"}[upSvc.View(c).Status]
+		if state == "" {
+			state = "operational"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		places := []string{}
+		for _, l := range c.Locations {
+			ip := ""
+			if l == uptime.Dashboard {
+				if u, err := url.Parse(os.Getenv("OPS_PUBLIC_URL")); err == nil && u.Hostname() != "" {
+					if ips, err := net.DefaultResolver.LookupHost(ctx, u.Hostname()); err == nil && len(ips) > 0 {
+						ip = ips[0]
+					}
+				}
+			} else if rec, err := hub.Reg.Get(l); err == nil {
+				ip = rec.PublicIP
+			}
+			country := ""
+			if ip != "" {
+				if country = sec.CountryOf(ctx, ip); country == "LAN" {
+					country = ""
+				}
+			}
+			places = append(places, country)
+		}
+		return state, c.CreatedAt, places, true
 	}
 	hub.Handlers[proto.TypeSecurityReport] = sec.OnReport
 	hub.Handlers[proto.TypeSSHLogins] = sec.OnLogins

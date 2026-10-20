@@ -37,7 +37,7 @@ const (
 
 // Component is one row on the page: an app or a server under a public name.
 type Component struct {
-	Kind        string `json:"kind"` // app | server
+	Kind        string `json:"kind"` // app | server | check (an uptime check)
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -228,8 +228,8 @@ func (c *Config) Validate() error {
 		for ci := range g.Components {
 			x := &g.Components[ci]
 			x.Name = strings.TrimSpace(x.Name)
-			if x.Kind != "app" && x.Kind != "server" || x.ID == "" || len(x.ID) > 64 {
-				return valid.Error("each component must be an app or a server")
+			if x.Kind != "app" && x.Kind != "server" && x.Kind != "check" || x.ID == "" || len(x.ID) > 64 {
+				return valid.Error("each component must be an app, a server or an uptime check")
 			}
 			if x.Name == "" || len(x.Name) > 60 {
 				return valid.Error("each component needs a public name (1-60 characters)")
@@ -306,7 +306,10 @@ type Service struct {
 	// degraded, outage, maintenance, unknown), its server, and when it was created.
 	AppState    func(id string) (state, serverID string, created int64, ok bool)
 	ServerState func(id string) (state string, created int64, ok bool)
-	Now         func() time.Time
+	// CheckState is an uptime check's state, and the countries it is checked from
+	// (one per place, "" when unknown).
+	CheckState func(id string) (state string, created int64, places []string, ok bool)
+	Now        func() time.Time
 	// DataDir and HelperPath enable the automatic Caddy setup for page domains (see
 	// caddy.go); empty DataDir turns it off.
 	DataDir, HelperPath string
@@ -531,6 +534,7 @@ type PublicComponent struct {
 	Uptime      *float64       `json:"uptime,omitempty"` // percent over the history window
 	Days        []Day          `json:"days,omitempty"`
 	Latency     []LatencyPoint `json:"latency,omitempty"` // last 24 hours
+	Places      []string       `json:"places,omitempty"`  // uptime checks: country of each place checking it
 }
 
 type PublicGroup struct {
@@ -668,6 +672,9 @@ func (s *Service) component(x Component, c Config, now time.Time) PublicComponen
 	pc := PublicComponent{Name: x.Name, Description: x.Description, Status: s.stateOf(x)}
 	if pc.Status == "unknown" {
 		return pc // deleted since it was added to the page
+	}
+	if x.Kind == "check" && s.CheckState != nil {
+		_, _, pc.Places, _ = s.CheckState(x.ID)
 	}
 	if c.ShowResponseTime && x.Kind == "app" && s.Latency != nil {
 		pc.Latency = latency(s.Latency(x.ID), now)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"fleetwatch/internal/server/incidents"
+	"fleetwatch/internal/server/live"
 )
 
 func TestHistory(t *testing.T) {
@@ -98,5 +99,39 @@ func TestMigrateSinglePage(t *testing.T) {
 	}
 	if p := New(d, nil).Pages(); len(p) != 0 {
 		t.Fatalf("a deleted page came back: %+v", p)
+	}
+}
+
+func TestCheckComponent(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	inc := incidents.NewStore(d, live.NewBus())
+	s := New(d, inc)
+	state := "outage"
+	s.CheckState = func(id string) (string, int64, []string, bool) {
+		return state, time.Now().Add(-48 * time.Hour).UnixMilli(), []string{"DE", "US", ""}, id == "chk_1"
+	}
+	inc.Ensure(incidents.Signal{Type: "uptime_down", Key: "uptime|chk_1", Severity: "critical", Title: "Shop is down"})
+	inc.Ensure(incidents.Signal{Type: "uptime_down", Key: "uptime|chk_2", Severity: "critical", Title: "Other is down"})
+	c := Defaults()
+	c.Title, c.Enabled, c.ShowUptime = "Status", true, true
+	c.Groups = []Group{{Components: []Component{{Kind: "check", ID: "chk_1", Name: "Shop"}}}}
+	if c, err = s.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	p := s.build(c)
+	x := p.Groups[0].Components[0]
+	if x.Status != "outage" || p.Overall != "major" || len(x.Places) != 3 || x.Places[0] != "DE" {
+		t.Fatalf("%+v %s", x, p.Overall)
+	}
+	if related, _ := s.related(Component{Kind: "check", ID: "chk_1"}); len(related) != 1 || related[0].Title != "Shop is down" {
+		t.Fatalf("related: %+v", related)
+	}
+	state = "operational"
+	if p := s.build(c); p.Overall != "operational" {
+		t.Fatal(p.Overall)
 	}
 }

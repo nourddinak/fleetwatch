@@ -1,7 +1,7 @@
 // Shapes of /api/status-pages, shared by the editor and its tabs.
 
 export interface Component {
-  kind: "app" | "server";
+  kind: "app" | "server" | "check";
   id: string;
   name: string;
   description: string;
