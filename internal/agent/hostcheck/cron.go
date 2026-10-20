@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,61 @@ var (
 	shortcuts = map[string]bool{"@yearly": true, "@annually": true, "@monthly": true, "@weekly": true, "@daily": true, "@midnight": true, "@hourly": true}
 )
 
+// pausedMark starts a crontab line paused from the dashboard (cron skips comments).
+const pausedMark = "#fleetwatch-paused# "
+
+// cronLine reads one crontab line: system crontabs (user "") name the user on the line.
+// paused lines are read too, without their mark.
+func cronLine(line, user string) (sched, u, cmd string, paused, ok bool) {
+	line = strings.TrimSpace(line)
+	if rest, isPaused := strings.CutPrefix(line, pausedMark); isPaused {
+		line, paused = strings.TrimSpace(rest), true
+	}
+	if line == "" || line[0] == '#' || envLine.MatchString(line) {
+		return
+	}
+	f := strings.Fields(line)
+	n := 5
+	switch {
+	case shortcuts[f[0]]:
+		sched, n = f[0], 1
+	case strings.HasPrefix(f[0], "@") || len(f) < 6: // @reboot, or not a schedule
+		return
+	default:
+		sched = strings.Join(f[:5], " ")
+	}
+	u = user
+	if u == "" {
+		if len(f) < n+2 {
+			return
+		}
+		u, n = f[n], n+1
+	}
+	cmd = skipFields(line, n) // the rest of the line as written (spacing kept)
+	if cmd == "" || strings.Contains(cmd, "run-parts") || strings.Contains(cmd, "anacron") {
+		return // the system's own cron.daily/weekly/monthly
+	}
+	return sched, u, cmd, paused, true
+}
+
+// skipFields drops the first n whitespace-separated fields of a line.
+func skipFields(line string, n int) string {
+	for range n {
+		line = strings.TrimLeft(line, " \t")
+		i := strings.IndexAny(line, " \t")
+		if i < 0 {
+			return ""
+		}
+		line = line[i:]
+	}
+	return strings.TrimSpace(line)
+}
+
+func jobID(file, user, sched, cmd string) string {
+	h := sha1.Sum([]byte(file + "\n" + user + "\n" + sched + "\n" + cmd))
+	return hex.EncodeToString(h[:6])
+}
+
 // crontab reads one crontab. user is its owner for users' crontabs; system crontabs
 // ("" here) name the user on each line.
 func crontab(path, source, user string) []proto.CronJob {
@@ -74,39 +130,13 @@ func crontab(path, source, user string) []proto.CronJob {
 		return nil
 	}
 	var out []proto.CronJob
+	file := onHost(path)
 	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line[0] == '#' || envLine.MatchString(line) {
+		sched, u, cmd, paused, ok := cronLine(line, user)
+		if !ok {
 			continue
 		}
-		f := strings.Fields(line)
-		var sched string
-		switch {
-		case shortcuts[f[0]]:
-			sched, f = f[0], f[1:]
-		case strings.HasPrefix(f[0], "@") || len(f) < 6: // @reboot, or not a schedule
-			continue
-		default:
-			sched, f = strings.Join(f[:5], " "), f[5:]
-		}
-		u := user
-		if u == "" {
-			if len(f) < 2 {
-				continue
-			}
-			u, f = f[0], f[1:]
-		}
-		if len(f) == 0 {
-			continue
-		}
-		// The command is the rest of the line as written (spacing kept).
-		cmd := strings.TrimSpace(line[strings.Index(line, f[0]):])
-		if strings.Contains(cmd, "run-parts") || strings.Contains(cmd, "anacron") {
-			continue // the system's own cron.daily/weekly/monthly
-		}
-		file := onHost(path)
-		h := sha1.Sum([]byte(file + "\n" + u + "\n" + sched + "\n" + cmd))
-		out = append(out, proto.CronJob{ID: hex.EncodeToString(h[:6]), Source: source, File: file, User: u, Schedule: sched, Command: cmd})
+		out = append(out, proto.CronJob{ID: jobID(file, u, sched, cmd), Source: source, File: file, User: u, Schedule: sched, Command: cmd, Paused: paused})
 		if len(out) >= 200 {
 			break
 		}
@@ -209,17 +239,19 @@ func onHost(path string) string {
 	return "/" + filepath.ToSlash(rel)
 }
 
+type timerEntry struct {
+	Next      int64  `json:"next"` // µs
+	Last      int64  `json:"last"`
+	Unit      string `json:"unit"`
+	Activates string `json:"activates"`
+}
+
 func timers(ctx context.Context) []proto.CronJob {
 	raw, ok := output(ctx, 15*time.Second, "systemctl", "list-timers", "--all", "--output=json", "--no-pager")
 	if !ok {
 		return nil
 	}
-	var list []struct {
-		Next      int64  `json:"next"` // µs
-		Last      int64  `json:"last"`
-		Unit      string `json:"unit"`
-		Activates string `json:"activates"`
-	}
+	var list []timerEntry
 	if json.Unmarshal([]byte(raw), &list) != nil {
 		return nil
 	}
@@ -255,6 +287,20 @@ func timers(ctx context.Context) []proto.CronJob {
 		if len(out) >= 100 {
 			break
 		}
+	}
+	// Timers made here but disabled (paused): not in the list above.
+	files, _ := filepath.Glob(p("etc", "systemd", "system", "*.timer"))
+	for _, f := range files {
+		unit := filepath.Base(f)
+		if slices.ContainsFunc(list, func(t timerEntry) bool { return t.Unit == unit }) || len(out) >= 100 {
+			continue
+		}
+		props := show(ctx, unit, "TimersCalendar", "Unit")
+		sched := props["TimersCalendar"]
+		if m := calendarRe.FindStringSubmatch(sched); m != nil {
+			sched = strings.TrimSpace(m[1])
+		}
+		out = append(out, proto.CronJob{ID: "timer:" + unit, Source: "timer", File: unit, User: "root", Schedule: sched, Paused: true})
 	}
 	return out
 }

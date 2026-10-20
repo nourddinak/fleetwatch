@@ -234,6 +234,14 @@ func (r *Runner) session(ctx context.Context) error {
 						}
 					}()
 				}
+			case proto.TypeCronChange:
+				var req proto.CronChange
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() {
+						r.sendCurrent(proto.TypeCronResult, hostcheck.ChangeCron(rootCtx, req, r.Cfg.AllowCustomCommands))
+						r.sendCurrent(proto.TypeCronReport, hostcheck.Cron(rootCtx))
+					}()
+				}
 			case proto.TypeFirewallScan:
 				go func() { r.sendCurrent(proto.TypeFirewallReport, hostcheck.Firewall(rootCtx)) }()
 			case proto.TypeFirewallChange:

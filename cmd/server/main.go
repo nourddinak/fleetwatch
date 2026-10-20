@@ -709,6 +709,8 @@ func serve() error {
 	cronSvc := cron.New(d, incStore, bus)
 	cronSvc.Name = serverName
 	hub.Handlers[proto.TypeCronReport] = cronSvc.OnReport
+	hub.Handlers[proto.TypeCronResult] = cronSvc.OnResult
+	cronSvc.Send, cronSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
 	forecasts := &forecast.Service{Servers: store, AppStore: appStore, Apps: appSvc, Name: serverName, Incidents: incStore, Now: time.Now,
 		ServerIDs: serverIDs}
 	domainChecks := domains.New(d, appSvc, incStore, detector.Rules, bus)

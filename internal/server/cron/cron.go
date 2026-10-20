@@ -14,6 +14,7 @@ import (
 	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/release"
 	"fleetwatch/internal/server/settings"
 	"fleetwatch/internal/server/valid"
 )
@@ -27,6 +28,10 @@ type Service struct {
 	Bus       *live.Bus
 	Now       func() time.Time
 	Name      func(serverID string) string // a server's name, for incident titles
+	// Send asks an agent for a change; AgentVersion says whether it can (cron editing
+	// came with EditAgent).
+	Send         func(serverID, typ string, v any) error
+	AgentVersion func(serverID string) string
 
 	mu sync.Mutex // pings
 }
@@ -38,7 +43,7 @@ func New(d *sql.DB, inc *incidents.Store, bus *live.Bus) *Service {
 // Job is a job as the UI shows it.
 type Job struct {
 	proto.CronJob
-	Status   string `json:"status"`             // ok | missed | failed | waiting (not run yet) | unknown
+	Status   string `json:"status"`             // ok | missed | failed | paused | waiting (not run yet) | unknown
 	Expected int64  `json:"expected,omitempty"` // when it should last have run, unix ms
 	Next     int64  `json:"next,omitempty"`
 }
@@ -141,6 +146,11 @@ func (s *Service) view(serverID string, r proto.CronReport, first map[string]int
 	out := Server{ServerID: serverID, Jobs: []Job{}, HasLog: r.HasLog, TimeZone: r.TimeZone, At: at}
 	for _, j := range r.Jobs {
 		v := Job{CronJob: j, Status: "ok", Next: j.NextRun}
+		if j.Paused {
+			v.Status, v.Next = "paused", 0
+			out.Jobs = append(out.Jobs, v)
+			continue
+		}
 		if j.Source == "timer" {
 			switch {
 			case j.Failed:
@@ -201,6 +211,58 @@ func (s *Service) List(allowed func(serverID string) bool) []Server {
 		out = append(out, s.view(id, r, first, at, now))
 	}
 	return out
+}
+
+// ---------- changes ----------
+
+// EditAgent is the first agent version that changes cron jobs.
+const EditAgent = "v0.9.151"
+
+// Change asks a server's agent to add, change, pause, resume, delete or run a job. The
+// result comes back by itself (OnResult), live as "cron.result".
+func (s *Service) Change(serverID string, c proto.CronChange) (string, error) {
+	if s.Send == nil {
+		return "", errors.New("not connected")
+	}
+	if s.AgentVersion != nil && release.Newer(EditAgent, s.AgentVersion(serverID)) {
+		return "", valid.Error("this server's agent is too old to change cron jobs; update the agent first")
+	}
+	switch c.Op {
+	case "add", "update":
+		c.Schedule, c.Command = strings.Join(strings.Fields(c.Schedule), " "), strings.TrimSpace(c.Command)
+		if _, err := Parse(c.Schedule); err != nil {
+			return "", valid.Error("the schedule must be five fields like */5 * * * *, or @hourly, @daily, @weekly, @monthly")
+		}
+		if c.Command == "" || len(c.Command) > 2000 || strings.ContainsAny(c.Command, "\n\r") {
+			return "", valid.Error("the command must be one line (up to 2000 characters)")
+		}
+		if c.Op == "add" && strings.TrimSpace(c.User) == "" {
+			c.User = "root"
+		}
+	case "delete", "pause", "resume", "run":
+	default:
+		return "", valid.Error("unknown change")
+	}
+	if c.Op != "add" && c.JobID == "" {
+		return "", valid.Error("which job?")
+	}
+	c.RunID = "cr_" + randHex(8)
+	if err := s.Send(serverID, proto.TypeCronChange, c); err != nil {
+		return "", valid.Error("the server is not connected")
+	}
+	return c.RunID, nil
+}
+
+// OnResult passes an agent's answer to the page that asked.
+func (s *Service) OnResult(serverID string, data json.RawMessage) {
+	var r proto.CronResult
+	if json.Unmarshal(data, &r) != nil || s.Bus == nil {
+		return
+	}
+	s.Bus.Publish("cron.result", struct {
+		ServerID string `json:"serverId"`
+		proto.CronResult
+	}{serverID, r})
 }
 
 // ---------- heartbeat links ----------

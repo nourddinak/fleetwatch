@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"fleetwatch/internal/proto"
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/cron"
 )
@@ -26,6 +27,20 @@ func (s *server) cronRoutes(mux *http.ServeMux) {
 			out["pings"] = s.Cron.Pings()
 		}
 		writeJSON(w, http.StatusOK, out)
+	}))
+	// Owner only (not in the members' write lists): adds and changes run code on the server.
+	mux.HandleFunc("POST /api/servers/{id}/cron", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in proto.CronChange
+		if !decode(w, r, &in) {
+			return
+		}
+		run, err := s.Cron.Change(r.PathValue("id"), in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "cron."+in.Op, r.PathValue("id"), strings.TrimSpace(in.Schedule+" "+in.Command+" "+in.JobID))
+		writeJSON(w, http.StatusAccepted, map[string]string{"runId": run})
 	}))
 	mux.HandleFunc("POST /api/cron/pings", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in cron.Ping

@@ -368,6 +368,8 @@ const (
 	TypeSecurityReport = "security.report" // agent → server: SecurityReport
 	TypeSSHLogins      = "ssh.logins"      // agent → server: []SSHLogin, new successful logins
 	TypeCronReport     = "cron.report"     // agent → server: CronReport, every 5 minutes
+	TypeCronChange     = "cron.change"     // server → agent: CronChange
+	TypeCronResult     = "cron.result"     // agent → server: CronResult
 )
 
 // CronJob is a scheduled job found on a server: a crontab line or a systemd timer.
@@ -382,6 +384,29 @@ type CronJob struct {
 	Failed    bool   `json:"failed,omitempty"`  // timers: the last run failed
 	LastError string `json:"lastError,omitempty"`
 	NextRun   int64  `json:"nextRun,omitempty"` // timers: when systemd runs it next
+	Paused    bool   `json:"paused,omitempty"`  // paused from the dashboard (commented out; timers: disabled)
+}
+
+// CronChange changes a server's cron jobs. Op: add | update | delete | pause | resume | run.
+// add needs User, Schedule and Command; the others name the job by JobID (update also
+// takes the new Schedule and Command).
+type CronChange struct {
+	RunID    string `json:"runId"`
+	Op       string `json:"op"`
+	JobID    string `json:"jobId,omitempty"`
+	User     string `json:"user,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+	Command  string `json:"command,omitempty"`
+}
+
+// CronResult is how a CronChange went; Output is what a run printed.
+type CronResult struct {
+	RunID    string `json:"runId"`
+	Op       string `json:"op"`
+	JobID    string `json:"jobId,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Output   string `json:"output,omitempty"`
+	ExitCode int    `json:"exitCode"`
 }
 
 // CronReport is every job of a server. HasLog: cron's runs could be read from the

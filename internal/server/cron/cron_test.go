@@ -141,3 +141,31 @@ func TestPings(t *testing.T) {
 		t.Fatal("delete")
 	}
 }
+
+func TestChange(t *testing.T) {
+	s, inc, _ := setup(t)
+	var sent []proto.CronChange
+	s.Send = func(_, typ string, v any) error { sent = append(sent, v.(proto.CronChange)); return nil }
+	s.AgentVersion = func(string) string { return "0.9.150" }
+	if _, err := s.Change("s1", proto.CronChange{Op: "pause", JobID: "a"}); err == nil {
+		t.Fatal("old agent asked")
+	}
+	s.AgentVersion = func(string) string { return "0.9.151" }
+	for _, bad := range []proto.CronChange{{Op: "add", Schedule: "* * *", Command: "x"}, {Op: "add", Schedule: "@daily", Command: "a\nb"}, {Op: "pause"}, {Op: "explode", JobID: "a"}} {
+		if _, err := s.Change("s1", bad); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+	if run, err := s.Change("s1", proto.CronChange{Op: "add", Schedule: " 0  3 * * * ", Command: "/opt/backup.sh"}); err != nil || run == "" {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 || sent[0].User != "root" || sent[0].Schedule != "0 3 * * *" || sent[0].RunID == "" {
+		t.Fatalf("%+v", sent)
+	}
+	// A paused job is never missed.
+	b, _ := json.Marshal(proto.CronReport{HasLog: true, TimeZone: "UTC", Jobs: []proto.CronJob{{ID: "p", Source: "crontab", Schedule: "* * * * *", Command: "x", Paused: true}}})
+	s.OnReport("s1", b)
+	if st := s.List(nil)[0].Jobs[0].Status; st != "paused" || len(open(t, inc)) != 0 {
+		t.Fatal(st)
+	}
+}

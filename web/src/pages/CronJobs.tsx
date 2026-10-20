@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { AlarmClock, HeartPulse, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlarmClock, HeartPulse, Pause, Pencil, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
-import { Badge, Button, Card, CodeBlock, ConfirmDialog, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle } from "../components/ui";
+import { Badge, Button, Card, CodeBlock, ConfirmDialog, EmptyState, ErrorState, Field, Gate, IconButton, Input, LoadingState, Modal, PageHeader, SectionTitle, Select } from "../components/ui";
 import { dateTime, relTime } from "../mock/util";
 
 interface Job {
@@ -15,7 +15,8 @@ interface Job {
   lastRun?: number;
   failed?: boolean;
   lastError?: string;
-  status: "ok" | "missed" | "failed" | "waiting" | "unknown";
+  status: "ok" | "missed" | "failed" | "paused" | "waiting" | "unknown";
+  paused?: boolean;
   expected?: number;
   next?: number;
 }
@@ -45,6 +46,7 @@ const STATUS: Record<string, [tone: "ok" | "warn" | "crit" | "neutral", label: s
   failed: ["crit", "Failed"],
   late: ["crit", "Late"],
   waiting: ["neutral", "Not run yet"],
+  paused: ["neutral", "Paused"],
   unknown: ["neutral", "Runs not logged"],
 };
 
@@ -64,12 +66,61 @@ function inWords(s: string) {
   return s;
 }
 
+const PRESETS = [
+  ["*/5 * * * *", "Every 5 minutes"],
+  ["*/15 * * * *", "Every 15 minutes"],
+  ["0 * * * *", "Every hour"],
+  ["0 3 * * *", "Every day at 03:00"],
+  ["0 3 * * 0", "Every Sunday at 03:00"],
+  ["0 3 1 * *", "The 1st of each month at 03:00"],
+] as const;
+
+interface CronResult {
+  serverId: string;
+  runId: string;
+  op: string;
+  error?: string;
+  output?: string;
+}
+
 const MINUTES = [[5, "5 minutes"], [15, "15 minutes"], [60, "hour"], [1440, "day"], [10080, "week"]] as const;
 
 export function CronJobs() {
-  const { me, getServer, toast } = useStore();
+  const { me, getServer, toast, subscribeLive } = useStore();
   const owner = !me || me.role === "owner";
   const data = useApi<{ servers: ServerJobs[]; pings: Ping[] }>("/api/cron");
+  const [jobEdit, setJobEdit] = useState<{ serverId: string; job?: Job } | null>(null);
+  const [jobDel, setJobDel] = useState<{ serverId: string; job: Job } | null>(null);
+  const [output, setOutput] = useState<{ title: string; text: string; error?: string } | null>(null);
+  const pending = useRef(new Map<string, string>()); // run ID → what was asked, for the answer
+  const { reload } = data;
+  useEffect(
+    () =>
+      subscribeLive((m) => {
+        if (m.type === "cron") reload();
+        if (m.type !== "cron.result") return;
+        const r = m.data as CronResult;
+        const what = pending.current.get(r.runId);
+        if (!what) return;
+        pending.current.delete(r.runId);
+        if (r.op === "run") setOutput({ title: what, text: r.output || "(no output)", error: r.error });
+        else if (r.error) toast(r.error, "err");
+        else toast(what);
+        reload();
+      }),
+    [subscribeLive, reload, toast],
+  );
+  const change = async (serverId: string, body: { op: string; jobId?: string; user?: string; schedule?: string; command?: string }, done: string) => {
+    try {
+      const { runId } = await api<{ runId: string }>("POST", `/api/servers/${serverId}/cron`, body);
+      pending.current.set(runId, done);
+      toast(body.op === "run" ? "Running it now…" : "Sent to the server…");
+      return true;
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+      return false;
+    }
+  };
   const [edit, setEdit] = useState<Partial<Ping> | null>(null);
   const [del, setDel] = useState<Ping | null>(null);
   const [shown, setShown] = useState<string | null>(null);
@@ -95,7 +146,7 @@ export function CronJobs() {
       toast((e as ApiError).message, "err");
     }
   };
-  const servers = data.data?.servers.filter((s) => s.jobs.length > 0) ?? [];
+  const servers = data.data?.servers ?? [];
   return (
     <>
       <PageHeader
@@ -116,7 +167,9 @@ export function CronJobs() {
             {servers.map((s) => (
               <Card key={s.serverId}>
                 <SectionTitle icon={<AlarmClock size={15} />} title={getServer(s.serverId)?.name ?? s.serverId}
-                  sub={`${s.jobs.length} job${s.jobs.length === 1 ? "" : "s"} · times in ${s.timeZone || "UTC"} · checked ${relTime(s.at)}${s.hasLog ? "" : " · this server's log does not show cron runs, so missed runs cannot be told"}`} />
+                  sub={`${s.jobs.length} job${s.jobs.length === 1 ? "" : "s"} · times in ${s.timeZone || "UTC"} · checked ${relTime(s.at)}${s.hasLog ? "" : " · this server's log does not show cron runs, so missed runs cannot be told"}`}
+                  action={owner && <Button size="sm" variant="secondary" onClick={() => setJobEdit({ serverId: s.serverId })}><Plus size={14} /> Add job</Button>} />
+                {s.jobs.length === 0 && <p className="text-sm text-muted">No jobs on this server yet.</p>}
                 <ul className="divide-y divide-line">
                   {s.jobs.map((j) => (
                     <li key={j.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
@@ -134,6 +187,18 @@ export function CronJobs() {
                         <Badge tone={STATUS[j.status][0]}>{STATUS[j.status][1]}</Badge>
                         <div className="mt-1">{j.lastRun ? `ran ${relTime(j.lastRun)}` : "no run seen"}</div>
                         {j.next ? <div>next {dateTime(j.next)}</div> : null}
+                        {owner && (
+                          <div className="mt-1 flex justify-end gap-0.5">
+                            <IconButton aria-label="Run now" title="Run now" onClick={() => change(s.serverId, { op: "run", jobId: j.id }, `Ran ${j.source === "timer" ? j.file : j.command}`)}><Play size={14} /></IconButton>
+                            {j.paused ? (
+                              <IconButton aria-label="Resume" title="Resume" onClick={() => change(s.serverId, { op: "resume", jobId: j.id }, "Job resumed")}><RotateCcw size={14} /></IconButton>
+                            ) : (
+                              <IconButton aria-label="Pause" title="Pause" onClick={() => change(s.serverId, { op: "pause", jobId: j.id }, "Job paused: it will not run until resumed")}><Pause size={14} /></IconButton>
+                            )}
+                            {j.source !== "timer" && <IconButton aria-label="Edit" title="Edit" onClick={() => setJobEdit({ serverId: s.serverId, job: j })}><Pencil size={14} /></IconButton>}
+                            {j.source !== "timer" && <IconButton aria-label="Delete" title="Delete" onClick={() => setJobDel({ serverId: s.serverId, job: j })}><Trash2 size={14} /></IconButton>}
+                          </div>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -184,6 +249,20 @@ export function CronJobs() {
         )}
       </Gate>
       {edit && <PingForm value={edit} onSave={save} onClose={() => setEdit(null)} />}
+      {jobEdit && (
+        <JobForm job={jobEdit.job} server={getServer(jobEdit.serverId)?.name ?? jobEdit.serverId} onClose={() => setJobEdit(null)}
+          onSave={async (v) => {
+            const ok = await change(jobEdit.serverId, jobEdit.job ? { op: "update", jobId: jobEdit.job.id, schedule: v.schedule, command: v.command } : { op: "add", user: v.user, schedule: v.schedule, command: v.command },
+              jobEdit.job ? "Job changed" : "Job added");
+            if (ok) setJobEdit(null);
+          }} />
+      )}
+      <ConfirmDialog open={!!jobDel} danger title="Delete this job?" confirmLabel="Delete job" message={<>It is removed from the server's crontab: <code className="break-all font-mono text-xs">{jobDel?.job.command}</code>. Pausing keeps it to turn back on later.</>}
+        onCancel={() => setJobDel(null)} onConfirm={() => { const d = jobDel!; setJobDel(null); change(d.serverId, { op: "delete", jobId: d.job.id }, "Job deleted"); }} />
+      <Modal open={!!output} onClose={() => setOutput(null)} title={output?.title ?? ""} wide footer={<Button onClick={() => setOutput(null)}>Close</Button>}>
+        {output?.error && <p className="mb-2 text-sm text-crit">{output.error}</p>}
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded-xl bg-surface2 p-3 font-mono text-xs">{output?.text}</pre>
+      </Modal>
       <ConfirmDialog open={!!del} danger title={`Delete ${del?.name}?`} confirmLabel="Delete" message="Its link stops working; the job's calls to it are refused." onCancel={() => setDel(null)} onConfirm={remove} />
     </>
   );
@@ -206,6 +285,37 @@ function PingForm({ value, onSave, onClose }: { value: Partial<Ping>; onSave: (p
             <Input type="number" min={0} value={f.graceMin ?? 0} onChange={(e) => setF({ ...f, graceMin: Number(e.target.value) })} />
           </Field>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+function JobForm({ job, server, onSave, onClose }: { job?: Job; server: string; onSave: (v: { user: string; schedule: string; command: string }) => void; onClose: () => void }) {
+  const [f, setF] = useState({ user: job?.user ?? "root", schedule: job?.schedule ?? "0 3 * * *", command: job?.command ?? "" });
+  const [busy, setBusy] = useState(false);
+  const preset = PRESETS.some(([v]) => v === f.schedule) ? f.schedule : "custom";
+  return (
+    <Modal open onClose={onClose} title={job ? "Edit job" : `New job on ${server}`}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={busy || !f.command.trim() || !f.schedule.trim()} onClick={async () => { setBusy(true); await onSave(f); setBusy(false); }}>Save</Button></>}>
+      <div className="space-y-4">
+        <Field label="When" hint={inWords(f.schedule) !== f.schedule ? inWords(f.schedule) : "Minute, hour, day of month, month, day of week (crontab), in the server's time zone."}>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Select value={preset} onChange={(e) => e.target.value !== "custom" && setF({ ...f, schedule: e.target.value })}>
+              {PRESETS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              <option value="custom">Custom…</option>
+            </Select>
+            <Input value={f.schedule} className="font-mono" placeholder="*/5 * * * *" onChange={(e) => setF({ ...f, schedule: e.target.value })} />
+          </div>
+        </Field>
+        <Field label="Command" hint="Runs with /bin/sh in the user's home folder. Write \% for a percent sign.">
+          <Input value={f.command} className="font-mono" placeholder="cd /srv/app && php artisan schedule:run" onChange={(e) => setF({ ...f, command: e.target.value })} />
+        </Field>
+        {!job && (
+          <Field label="Run as user">
+            <Input value={f.user} className="font-mono" onChange={(e) => setF({ ...f, user: e.target.value.trim() })} />
+          </Field>
+        )}
+        <p className="text-xs text-muted">Adding or changing a command needs “custom commands” allowed on that server (allowCustomCommands in /etc/ops-agent/config.json). Pausing, running and deleting always work.</p>
       </div>
     </Modal>
   );
