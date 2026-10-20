@@ -458,7 +458,15 @@ export function ServerSettings() {
         <Button variant="danger" onClick={() => setDel(true)}><Trash2 size={14} /> Delete {s.name}</Button>
         <p className="mt-3 text-xs text-muted">The agent stays installed on the VPS but can no longer connect. Uninstall it there first (see above).</p>
       </Card>
-      <ConfirmDialog open={del} danger title={`Delete ${s.name}?`} confirmLabel="Delete server" message="This cannot be undone. All metrics history and events for this server are deleted." onCancel={() => setDel(false)} onConfirm={remove} />
+      <ConfirmDialog open={del} danger title={`Delete ${s.name}?`} confirmLabel="Delete server" message="This cannot be undone. All metrics history and events for this server are deleted." onCancel={() => setDel(false)} onConfirm={remove}>
+        <div className="mt-4 space-y-2">
+          <p className="text-sm">Want the agent gone from the VPS too? Copy this and run it there (before or after deleting). Your apps are not touched.</p>
+          <div className="flex items-center gap-2 rounded-2xl bg-surface2 px-4 py-3">
+            <code className="flex-1 break-all font-mono text-xs">{`curl -fsSL ${location.origin}/uninstall.sh | sudo bash`}</code>
+            <CopyButton text={`curl -fsSL ${location.origin}/uninstall.sh | sudo bash`} />
+          </div>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
