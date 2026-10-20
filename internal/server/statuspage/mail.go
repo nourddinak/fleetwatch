@@ -50,9 +50,6 @@ type Sender struct {
 	SMTPConfig
 	// DomainID: a sender from your own domain through Resend (see resend.go).
 	DomainID string `json:"domainId,omitempty"`
-	// Direct: the dashboard sends itself, signed with its DKIM key (see direct.go); the
-	// key is kept where a password would be.
-	Direct bool `json:"direct,omitempty"`
 }
 
 type storedSender struct {
@@ -70,8 +67,6 @@ type Mailer struct {
 	senders []storedSender
 	// dial is replaced in tests.
 	dial func(ctx context.Context, addr string) (net.Conn, error)
-	// HeloName is how direct sending introduces itself (the dashboard's host name).
-	HeloName string
 }
 
 func NewMailer(d *sql.DB, box *secret.Box) *Mailer {
@@ -164,9 +159,6 @@ func (m *Mailer) SaveSender(in Sender) (Sender, error) {
 	c := in.SMTPConfig
 	c.Host, c.Username, c.From, c.FromName = strings.TrimSpace(c.Host), strings.TrimSpace(c.Username), strings.TrimSpace(c.From), strings.TrimSpace(c.FromName)
 	in.Label = strings.TrimSpace(in.Label)
-	if in.Direct { // no SMTP server: the recipients' own
-		c.Host, c.Port, c.Security, c.Username = "direct", 25, "none", ""
-	}
 	switch {
 	case c.Host == "" || strings.ContainsAny(c.Host, " /:") || len(c.Host) > 253:
 		return in, valid.Error("SMTP server must be a host name like smtp.example.com")
@@ -180,7 +172,7 @@ func (m *Mailer) SaveSender(in Sender) (Sender, error) {
 	if a, err := mail.ParseAddress(c.From); err != nil || a.Address != c.From {
 		return in, valid.Error("the sender must be a plain email address, like status@example.com")
 	}
-	if len(c.FromName) > 80 || strings.ContainsAny(c.FromName, "\r\n") || len(c.Username) > 200 || (len(c.Password) > 500 && !in.Direct) || len(c.Password) > 8000 {
+	if len(c.FromName) > 80 || strings.ContainsAny(c.FromName, "\r\n") || len(c.Username) > 200 || len(c.Password) > 500 {
 		return in, valid.Error("sender name, username or password is too long")
 	}
 	if in.Label == "" {
@@ -208,15 +200,11 @@ func (m *Mailer) SaveSender(in Sender) (Sender, error) {
 	if in.DomainID == "" {
 		in.DomainID = m.senders[i].DomainID // edits keep their domain
 	}
-	in.Direct = in.Direct || m.senders[i].Direct
-	if in.Direct {
-		c.Host, c.Port, c.Security, c.Username = "direct", 25, "none", ""
-	}
-	st := storedSender{Sender: Sender{ID: in.ID, Label: in.Label, Default: in.Default || len(m.senders) == 1, SMTPConfig: c, DomainID: in.DomainID, Direct: in.Direct}, Sealed: m.senders[i].Sealed}
+	st := storedSender{Sender: Sender{ID: in.ID, Label: in.Label, Default: in.Default || len(m.senders) == 1, SMTPConfig: c, DomainID: in.DomainID}, Sealed: m.senders[i].Sealed}
 	if c.Password != "" {
 		st.Sealed = m.box.Seal([]byte(c.Password), "smtp.password")
 	}
-	if c.Username == "" && !in.Direct {
+	if c.Username == "" {
 		st.Sealed = nil
 	}
 	st.Password, st.HasPassword = "", false
@@ -276,15 +264,6 @@ func (m *Mailer) SendFrom(ctx context.Context, sender string, msg Mail) error {
 	m.mu.Unlock()
 	if !ok || cfg.Host == "" || cfg.From == "" {
 		return valid.Error("email is not set up: add a sender in Integrations → Email")
-	}
-	if cfg.Direct {
-		key, err := m.box.Open(cfg.Sealed, "smtp.password")
-		if err != nil {
-			return fmt.Errorf("the signing key cannot be read: %w", err)
-		}
-		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		return m.sendDirect(ctx, cfg, key, msg)
 	}
 	pass := ""
 	if len(cfg.Sealed) > 0 {

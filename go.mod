@@ -4,7 +4,6 @@ go 1.26.0
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/emersion/go-msgauth v0.7.0
 	github.com/purpshell/meowcaller v0.0.0-20260811012811-27a3c6b18657
 	github.com/shirou/gopsutil/v4 v4.26.9
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e

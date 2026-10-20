@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Copy, Globe, Mail, Pencil, Plus, RefreshCw, Send, Star, Trash2 } from "lucide-react";
+import { Check, Copy, Globe, Mail, Pencil, Plus, RefreshCw, Send, Star, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
@@ -18,7 +18,6 @@ export interface Sender {
   fromName: string;
   usedBy: string[];
   domainId?: string;
-  direct?: boolean;
 }
 
 const PRESETS: { name: string; host: string; port: number; security: Sender["security"]; note: string }[] = [
@@ -29,6 +28,25 @@ const PRESETS: { name: string; host: string; port: number; security: Sender["sec
   { name: "Outlook", host: "smtp.office365.com", port: 587, security: "starttls", note: "Your Microsoft 365 address and password (or an app password)." },
 ];
 
+const GMAIL = { label: "Gmail", host: "smtp.gmail.com", port: 587, security: "starttls" as const };
+
+/** Free: send from your own domain's address through your Gmail account. */
+function GmailSteps() {
+  const a = (href: string, text: string) => <a href={href} target="_blank" rel="noreferrer" className="underline">{text}</a>;
+  return (
+    <div className="space-y-2 rounded-xl border border-line p-3 text-xs text-muted">
+      <p className="text-sm text-fg">Send from <b>noreply@yourdomain.com</b> through your free Gmail (up to about 500 emails a day):</p>
+      <ol className="list-decimal space-y-1.5 pl-5">
+        <li>Turn on 2-Step Verification in your Google account, then make an app password at {a("https://myaccount.google.com/apppasswords", "myaccount.google.com/apppasswords")}. Copy the 16 letters.</li>
+        <li>Let the address receive mail, so Gmail can confirm it is yours: in Cloudflare → your domain → <b className="text-fg">Email → Email Routing</b>, forward <b className="text-fg">noreply@yourdomain.com</b> to your Gmail (free). Domain not in Cloudflare? Use your registrar's email forwarding, or {a("https://improvmx.com", "ImprovMX")} (free).</li>
+        <li>In Gmail: <b className="text-fg">Settings → See all settings → Accounts and Import → Send mail as → Add another email address</b>. Enter the address, then for its mail server: <b className="text-fg">smtp.gmail.com</b>, port <b className="text-fg">587</b>, your Gmail address, the app password, TLS. Gmail sends a code to the address; it lands in your Gmail. Confirm it.</li>
+        <li>So emails don't go to spam, let Google send for your domain: add <code className="text-fg">include:_spf.google.com</code> to the domain's SPF record (a TXT on the domain itself starting with <code className="text-fg">v=spf1</code>; with Email Routing it already has one, add it there).</li>
+        <li>Below: sender address <b className="text-fg">noreply@yourdomain.com</b>, username <b className="text-fg">your Gmail address</b>, password <b className="text-fg">the app password</b>. Then save and send a test.</li>
+      </ol>
+    </div>
+  );
+}
+
 const EMPTY: Sender = { id: "", label: "", default: false, host: "", port: 587, security: "starttls", username: "", hasPassword: false, from: "", fromName: "", usedBy: [] };
 
 /** Integrations → Email: the addresses emails go out from, any provider's SMTP. */
@@ -37,7 +55,6 @@ export function EmailSenders() {
   const list = useApi<Sender[]>("/api/integrations/email");
   const [edit, setEdit] = useState<Sender | null>(null);
   const [ownDomain, setOwnDomain] = useState(false);
-  const [direct, setDirect] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
   const [del, setDel] = useState<Sender | null>(null);
   const [testTo, setTestTo] = useState(me?.email ?? "");
@@ -61,10 +78,10 @@ export function EmailSenders() {
     <div className="space-y-6">
       <Card>
         <SectionTitle icon={<Mail size={15} />} title="Email senders" sub="The addresses emails go out from: status page updates, subscriptions and reports (each page picks its sender), and on-call emails (the default one). Passwords are stored encrypted."
-          action={!edit && !ownDomain && !direct && (
+          action={!edit && !ownDomain && (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setDirect(true)}><Globe size={14} /> Send it yourself (free)</Button>
-              <Button size="sm" variant="secondary" onClick={() => setOwnDomain(true)}>Through Resend</Button>
+              <Button size="sm" onClick={() => setEdit({ ...EMPTY, ...GMAIL, default: senders.length === 0 })}><Mail size={14} /> Gmail (free)</Button>
+              <Button size="sm" variant="secondary" onClick={() => setOwnDomain(true)}><Globe size={14} /> Through Resend</Button>
               <Button size="sm" variant="secondary" onClick={() => setEdit({ ...EMPTY, default: senders.length === 0 })}><Plus size={14} /> Other SMTP</Button>
             </div>
           )} />
@@ -76,15 +93,15 @@ export function EmailSenders() {
               <li key={s.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-line px-3 py-2.5">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-surface2"><Mail size={16} /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{s.label} {s.default && <Badge tone="ok">default</Badge>}{s.domainId && <Badge tone="info">your domain · Resend</Badge>}{s.direct && <Badge tone="info">sends itself</Badge>}</div>
-                  <div className="truncate text-xs text-muted">{s.fromName ? `${s.fromName} <${s.from}>` : s.from}{s.direct ? " · from this server" : ` · ${s.host}`}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{s.label} {s.default && <Badge tone="ok">default</Badge>}{s.domainId && <Badge tone="info">your domain</Badge>}</div>
+                  <div className="truncate text-xs text-muted">{s.fromName ? `${s.fromName} <${s.from}>` : s.from} · {s.host}</div>
                   <div className="text-xs text-muted">{s.usedBy.length ? `Status pages: ${s.usedBy.join(", ")}` : s.default ? "On-call emails, and pages without their own sender" : "Not used by a status page yet"}</div>
                 </div>
                 {!s.default && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("def", () => api("PUT", `/api/integrations/email/${s.id}`, { ...s, password: "", default: true }), `${s.label} is the default now`)}><Star size={13} /> Make default</Button>}
                 <IconButton aria-label="Send a test email" title={`Send a test to ${testTo || "you"}`} disabled={!testTo || !!busy} onClick={() => run("test" + s.id, () => api("POST", `/api/integrations/email/${s.id}/test`, { to: testTo }), `Test email sent to ${testTo}`)}>
                   {busy === "test" + s.id ? <Spinner size={13} /> : <Send size={14} />}
                 </IconButton>
-                {(s.domainId || s.direct) && <Button size="sm" variant="ghost" onClick={() => setChecking(checking === s.id ? null : s.id)}>{checking === s.id ? "Hide" : "Domain"}</Button>}
+                {s.domainId && <Button size="sm" variant="ghost" onClick={() => setChecking(checking === s.id ? null : s.id)}>{checking === s.id ? "Hide" : "Domain"}</Button>}
                 <IconButton aria-label="Edit" onClick={() => setEdit({ ...s, password: "" })}><Pencil size={14} /></IconButton>
                 <IconButton aria-label="Delete" onClick={() => setDel(s)}><Trash2 size={14} /></IconButton>
                 {checking === s.id && <div className="basis-full"><DomainStatus senderId={s.id} /></div>}
@@ -99,7 +116,6 @@ export function EmailSenders() {
         )}
       </Card>
       {ownDomain && <DomainForm onClose={() => setOwnDomain(false)} onDone={() => list.reload()} />}
-      {direct && <DirectForm onClose={() => setDirect(false)} onDone={() => list.reload()} />}
       {edit && <SenderForm value={edit} busy={busy === "save"} onCancel={() => setEdit(null)}
         onSave={async (v) => { if (await run("save", () => api(v.id ? "PUT" : "POST", v.id ? `/api/integrations/email/${v.id}` : "/api/integrations/email", v), "Sender saved")) setEdit(null); }} />}
       <ConfirmDialog open={!!del} title={`Delete ${del?.label}?`} danger confirmLabel="Delete"
@@ -122,7 +138,7 @@ function SenderForm({ value, busy, onSave, onCancel }: { value: Sender; busy: bo
             <Button key={p.name} size="sm" variant={v.host === p.host ? "primary" : "secondary"} onClick={() => upd({ host: p.host, port: p.port, security: p.security })}>{p.name}</Button>
           ))}
         </div>
-        {preset && <p className="text-xs text-muted">{preset.note}</p>}
+        {preset?.name === "Gmail" ? <GmailSteps /> : preset && <p className="text-xs text-muted">{preset.note}</p>}
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Name" hint="How you will know it, e.g. “Acme support”.">
             <Input value={v.label} maxLength={60} onChange={(e) => upd({ label: e.target.value })} />
@@ -289,68 +305,4 @@ function DomainStatus({ senderId }: { senderId: string }) {
   if (d.error) return <p className="text-xs text-crit">{d.error}</p>;
   if (!d.data) return <Spinner />;
   return <div className="space-y-2 pt-2"><DomainRecords d={d.data} /><DomainCheckButton senderId={senderId} onChecked={d.setData} /></div>;
-}
-
-interface Ready {
-  ip: string;
-  port25: boolean;
-  ptr: string;
-}
-
-/** Free: this server signs and delivers the emails itself; DNS allows it. */
-function DirectForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const { toast } = useStore();
-  const ready = useApi<Ready>("/api/integrations/email/direct/check");
-  const [f, setF] = useState({ address: "", fromName: "", label: "" });
-  const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<{ sender: string; domain: Domain; dnsAdded: boolean; note: string } | null>(null);
-  const go = async () => {
-    setBusy(true);
-    try {
-      const r = await api<{ sender: string; domain: Domain; dnsAdded: boolean; note: string }>("POST", "/api/integrations/email/direct", f);
-      setRes(r);
-      onDone();
-      toast("Sender added: check its DNS records below");
-    } catch (e) {
-      toast((e as ApiError).message, "err");
-    }
-    setBusy(false);
-  };
-  const r = ready.data;
-  return (
-    <Card>
-      <SectionTitle icon={<Globe size={15} />} title="Send it yourself (free)" sub="No email company: this server signs each email with your domain's own key (DKIM) and delivers it straight to people's mail servers. Your domain's DNS gets two records that allow it, added in Cloudflare by themselves when it is there. Your existing email is not touched." />
-      {!r ? <Spinner /> : (
-        <ul className="mb-4 space-y-1.5 text-sm">
-          <li className="flex items-start gap-2">{r.ip ? <Check size={14} className="mt-0.5 text-ok" /> : <AlertTriangle size={14} className="mt-0.5 text-crit" />}<span>Public address: <b className="font-mono">{r.ip || "not found"}</b></span></li>
-          <li className="flex items-start gap-2">{r.port25 ? <Check size={14} className="mt-0.5 text-ok" /> : <AlertTriangle size={14} className="mt-0.5 text-crit" />}
-            <span>{r.port25 ? "Outgoing port 25 is open: emails can leave." : "Outgoing port 25 is blocked by your server's provider (DigitalOcean, AWS and new Hetzner accounts do this). Ask them to unblock it, or use Gmail or Brevo's free plan with “Other SMTP” instead."}</span></li>
-          <li className="flex items-start gap-2">{r.ptr ? <Check size={14} className="mt-0.5 text-ok" /> : <AlertTriangle size={14} className="mt-0.5 text-warn" />}
-            <span>{r.ptr ? <>Reverse DNS: <b className="font-mono">{r.ptr}</b>. Best when it is a name of your domain (set it in your server provider's panel).</> : "No reverse DNS for this address: set one in your server provider's panel (like mail.yourdomain.com), or Gmail may put emails in spam."}</span></li>
-        </ul>
-      )}
-      {!res ? (
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Address to send from" hint="Any name before the @; the domain must be yours.">
-              <Input value={f.address} placeholder="noreply-status@yourdomain.com" onChange={(e) => setF({ ...f, address: e.target.value.trim() })} />
-            </Field>
-            <Field label="Sender name" hint="What people see as the sender.">
-              <Input value={f.fromName} placeholder="Acme Status" onChange={(e) => setF({ ...f, fromName: e.target.value })} />
-            </Field>
-          </div>
-          <div className="flex gap-2 border-t border-line pt-4">
-            <Button disabled={busy || !f.address.includes("@") || !r?.ip} onClick={go}>{busy ? <Spinner size={14} /> : <Check size={14} />} Set it up</Button>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <p className={res.dnsAdded ? "text-sm text-ok" : "text-sm"}>{res.note}</p>
-          <DomainRecords d={res.domain} />
-          <div className="flex gap-2"><DomainCheckButton senderId={res.sender} onChecked={(d) => setRes({ ...res, domain: d })} /><Button variant="ghost" onClick={onClose}>Done</Button></div>
-        </div>
-      )}
-    </Card>
-  );
 }

@@ -530,67 +530,10 @@ func (s *server) statusAdminExtras(mux *http.ServeMux) {
 		s.audit(r, "email.domain", out.ID, out.From)
 		writeJSON(w, http.StatusOK, map[string]any{"sender": out.ID, "domain": d, "dnsAdded": dnsDone, "note": dnsNote})
 	}))
-	// Sending it yourself (free): this server signs and delivers; DNS allows it.
-	mux.HandleFunc("GET /api/integrations/email/direct/check", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		writeJSON(w, http.StatusOK, statuspage.CheckDirect(ctx))
-	}))
-	mux.HandleFunc("POST /api/integrations/email/direct", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		var in struct{ Address, FromName, Label string }
-		if !decode(w, r, &in) {
-			return
-		}
-		addr, err := mail.ParseAddress(strings.TrimSpace(in.Address))
-		_, domain, ok := strings.Cut(strings.ToLower(addrOf(addr)), "@")
-		if err != nil || !ok || !strings.Contains(domain, ".") {
-			writeError(w, http.StatusBadRequest, "invalid", "An address like noreply@yourdomain.com.")
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		defer cancel()
-		ready := statuspage.CheckDirect(ctx)
-		if ready.IP == "" {
-			writeError(w, http.StatusBadGateway, "no_ip", "This server's public IPv4 address could not be found.")
-			return
-		}
-		plan, err := statuspage.PlanDirect(ready.IP)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		dnsDone, dnsNote := false, "Add these records at your DNS provider, then check again."
-		if s.DNS != nil {
-			recs := []dns.MailRecord{}
-			for _, x := range plan.Records {
-				recs = append(recs, dns.MailRecord{Type: x.Type, Name: x.Name, Value: x.Value})
-			}
-			switch err := s.DNS.AddMailRecords(ctx, "owner", domain, recs); {
-			case err == nil:
-				dnsDone, dnsNote = true, "The records were added in Cloudflare: they work within minutes."
-			case !errors.Is(err, dns.ErrNoZone):
-				dnsNote = "Cloudflare refused a record (" + err.Error() + "): add them by hand, then check again."
-			}
-		}
-		out, err := s.Status.Mail.SaveSender(statuspage.Sender{Label: cmp.Or(strings.TrimSpace(in.Label), domain), Direct: true,
-			SMTPConfig: statuspage.SMTPConfig{From: addrOf(addr), FromName: cmp.Or(strings.TrimSpace(in.FromName), addr.Name), Password: plan.KeyPEM}})
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		s.audit(r, "email.direct", out.ID, out.From)
-		writeJSON(w, http.StatusOK, map[string]any{"sender": out.ID, "domain": statuspage.ResendDomain{Name: domain, Status: "pending", Records: plan.Records}, "dnsAdded": dnsDone, "note": dnsNote, "ready": ready})
-	}))
 	mux.HandleFunc("GET /api/integrations/email/{id}/domain", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		check := s.Status.Mail.DomainCheck
-		for _, x := range s.Status.Mail.Senders() {
-			if x.ID == r.PathValue("id") && x.Direct {
-				check = s.Status.Mail.DirectCheck
-			}
-		}
-		d, err := check(ctx, r.PathValue("id"))
+		d, err := s.Status.Mail.DomainCheck(ctx, r.PathValue("id"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "resend", err.Error())
 			return
