@@ -70,15 +70,24 @@ func TestDests(t *testing.T) {
 	if r2, err = s.SaveDest(r2); err != nil || !r2.HasSecret {
 		t.Fatal(err)
 	}
-	repo, err := s.repo(r2.ID, "s1")
+	repo, err := s.repo(r2.ID, "s1", false)
 	if err != nil || repo.Repository != "s3:https://acct.r2.cloudflarestorage.com/backups2/fw/s1" || repo.Env["AWS_SECRET_ACCESS_KEY"] != "SECRET" || len(repo.Password) < 40 {
 		t.Fatalf("%v %+v", err, repo)
 	}
-	if repo, _ := s.repo(drive.ID, "s1"); repo.Repository != "rclone:fw:Fleetwatch backups/s1" || !repo.Rclone || !strings.Contains(repo.Env["RCLONE_CONFIG_FW_TOKEN"], "refresh_token") {
+	if repo, _ := s.repo(drive.ID, "s1", false); repo.Repository != "rclone:fw:Fleetwatch backups/s1" || !repo.Rclone || !strings.Contains(repo.Env["RCLONE_CONFIG_FW_TOKEN"], "refresh_token") {
 		t.Fatalf("%+v", repo)
 	}
-	if repo, _ := s.repo(nas.ID, "s1"); repo.Repository != "sftp:bk@nas.local:/backups/s1" || !strings.Contains(repo.SSHKey, "OPENSSH PRIVATE KEY") {
+	if repo, _ := s.repo(nas.ID, "s1", false); repo.Repository != "sftp:bk@nas.local:/backups/s1" || !strings.Contains(repo.SSHKey, "OPENSSH PRIVATE KEY") {
 		t.Fatalf("%+v", repo)
+	}
+	if f, _ := s.repo(drive.ID, "shop", true); !f.Files || f.Repository != "fw:Fleetwatch backups/shop" || f.Env["RCLONE_CONFIG_FW_TYPE"] != "drive" || f.Password != "" {
+		t.Fatalf("%+v", f)
+	}
+	if f, _ := s.repo(r2.ID, "shop", true); f.Repository != "fw:backups2/fw/shop" || f.Env["RCLONE_CONFIG_FW_SECRET_ACCESS_KEY"] != "SECRET" {
+		t.Fatalf("%+v", f)
+	}
+	if f, _ := s.repo(nas.ID, "shop", true); f.Repository != "fw:/backups/shop" || f.SSHKey == "" || f.Env["RCLONE_CONFIG_FW_HOST"] != "nas.local" {
+		t.Fatalf("%+v", f)
 	}
 	for _, d := range s.Dests() {
 		if d.Secret != "" || d.Token != "" {

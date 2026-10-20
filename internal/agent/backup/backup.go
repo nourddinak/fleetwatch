@@ -129,6 +129,9 @@ func Run(ctx context.Context, req proto.BackupRun) (res proto.BackupResult) {
 		return res
 	}
 	defer running.Unlock()
+	if req.Repo.Files {
+		return runFiles(ctx, req, res)
+	}
 	r, cleanup, err := prepare(ctx, req.Repo)
 	if err != nil {
 		res.Error = err.Error()
@@ -325,6 +328,9 @@ func Restore(ctx context.Context, req proto.BackupRestore) proto.BackupRestored 
 	if strings.ContainsAny(req.Snapshot, "/ .") || req.Snapshot == "" {
 		res.Error = "not a copy"
 		return res
+	}
+	if req.Repo.Files {
+		return restoreFiles(ctx, req, res)
 	}
 	r, cleanup, err := prepare(ctx, req.Repo)
 	if err != nil {

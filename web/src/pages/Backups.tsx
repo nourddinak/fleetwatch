@@ -35,6 +35,7 @@ interface Plan {
   id: string;
   name: string;
   folder: string;
+  format: "files" | "encrypted";
   serverId: string;
   enabled: boolean;
   dest: string;
@@ -74,6 +75,22 @@ interface Data {
 const KIND: Record<Kind, string> = { s3: "S3-style storage", gdrive: "Google Drive", sftp: "Another server (SFTP)" };
 const ITEM: Record<Item["kind"], string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", folder: "Folder" };
 const RUN: Record<Run["status"], ["ok" | "warn" | "crit" | "info", string]> = { running: ["info", "Running"], ok: ["ok", "Done"], partial: ["warn", "Partly failed"], failed: ["crit", "Failed"] };
+const KEEP = [
+  { label: "The last 7 days", d: 7, w: 0, m: 0 },
+  { label: "The last 30 days", d: 30, w: 0, m: 0 },
+  { label: "7 days, then weekly for a month", d: 7, w: 4, m: 0 },
+  { label: "7 days, 4 weeks, then monthly for 6 months (recommended)", d: 7, w: 4, m: 6 },
+  { label: "7 days, 4 weeks, then monthly for a year", d: 7, w: 4, m: 12 },
+];
+
+/** "You keep …": what a keep setting means, in words. */
+function keepText(d: number, w: number, m: number) {
+  const parts = [d && `the copy of each of the last ${d} day${d === 1 ? "" : "s"}`, w && `one copy a week for ${w} week${w === 1 ? "" : "s"}`, m && `one copy a month for ${m} month${m === 1 ? "" : "s"}`].filter(Boolean);
+  const back = m ? `${m} month${m === 1 ? "" : "s"}` : w ? `${w} week${w === 1 ? "" : "s"}` : `${d} day${d === 1 ? "" : "s"}`;
+  return `You keep ${parts.join(", plus ")}: at most ${d + w + m} copies, going back about ${back}. Older copies are deleted by themselves after each backup.`;
+}
+const keepShort = (d: number, w: number, m: number) => [d && `${d} days`, w && `${w} weeks`, m && `${m} months`].filter(Boolean).join(" · ");
+
 const S3 = [
   { name: "Cloudflare R2", endpoint: "https://<ACCOUNT_ID>.r2.cloudflarestorage.com", region: "auto", note: "R2 → Manage R2 API tokens → Create API token (Object Read & Write). 10 GB free." },
   { name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.com", region: "us-west-004", note: "B2 → Application Keys → Add a key. The endpoint is on the bucket's page. 10 GB free." },
@@ -113,7 +130,7 @@ export function Backups() {
   const d = data.data;
   return (
     <>
-      <PageHeader title="Backups" sub="Your databases and folders, backed up every day with restic: encrypted before they leave the server, only new data sent each time, and the copies you choose kept (like 7 daily and 4 weekly)." />
+      <PageHeader title="Backups" sub="Your databases and folders, copied every day to storage you choose, with old copies cleaned up by themselves." />
       <Gate>
         {data.error ? (
           <ErrorState message={data.error} onRetry={reload} />
@@ -122,7 +139,18 @@ export function Backups() {
         ) : (
           <div className="space-y-6">
             <Card>
-              <SectionTitle icon={<HardDrive size={15} />} title="Where backups go" sub="Each backup gets its own encrypted folder there, named after it."
+              <ol className="grid gap-3 text-sm sm:grid-cols-3">
+                {[
+                  ["Add a place", "Google Drive, an S3-style bucket (Cloudflare R2, Backblaze…) or another server."],
+                  ["Add a backup to a server", "Give it a name, tick the databases it found, add folders, pick a time."],
+                  ["It runs every day", "A new copy each day in the backup's own folder; old copies are deleted as you chose. You hear of it when one fails."],
+                ].map(([t, d], i) => (
+                  <li key={t} className="flex gap-3"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-accent/15 text-xs font-semibold text-accent">{i + 1}</span><span><b>{t}</b><span className="block text-xs text-muted">{d}</span></span></li>
+                ))}
+              </ol>
+            </Card>
+            <Card>
+              <SectionTitle icon={<HardDrive size={15} />} title="Where backups go" sub="Each backup gets its own folder there, named after it."
                 action={
                   <div className="flex flex-wrap gap-2">
                     {(["s3", "gdrive", "sftp"] as Kind[]).map((k) => <Button key={k} size="sm" variant={k === "s3" ? "primary" : "secondary"} onClick={() => setDestEdit({ kind: k, port: 22, region: "auto" })}><Plus size={14} /> {KIND[k]}</Button>)}
@@ -253,11 +281,15 @@ function PlanCard({ plan, server, data, scan, reload, onRestore }: { plan: Plan;
     <div className="rounded-2xl border border-line p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 font-medium">{plan.name} {!plan.enabled && <Badge>paused</Badge>}</div>
+          <div className="flex flex-wrap items-center gap-2 font-medium">{plan.name} <Badge tone={plan.format === "files" ? "info" : undefined}>{plan.format === "files" ? "plain files" : "encrypted"}</Badge> {!plan.enabled && <Badge>paused</Badge>}</div>
           <div className="text-xs text-muted">
-            {plan.enabled ? `Every day at ${plan.at} (${plan.timeZone})` : "Not running by itself"} · {plan.items.length} thing{plan.items.length === 1 ? "" : "s"} · keeps {plan.keepDaily} daily, {plan.keepWeekly} weekly, {plan.keepMonthly} monthly
+            {plan.enabled ? `Every day at ${plan.at} (${plan.timeZone})` : "Not running by itself"} · {plan.items.length} thing{plan.items.length === 1 ? "" : "s"} · keeps {keepShort(plan.keepDaily, plan.keepWeekly, plan.keepMonthly)}
           </div>
-          <div className="text-xs text-muted">Saved in <span className="font-mono">{dest?.name ?? "?"} / {plan.folder}</span></div>
+          <div className="text-xs text-muted">
+            {plan.format === "files"
+              ? <>Open them in <span className="font-mono">{dest?.name ?? "?"} → {dest?.kind === "gdrive" ? dest.folder + " → " : dest?.kind === "s3" ? (dest.bucket ?? "") + (dest.prefix ? "/" + dest.prefix : "") + " → " : (dest?.path ?? "") + " → "}{plan.folder} → (date)</span></>
+              : <>In <span className="font-mono">{dest?.name ?? "?"} → {plan.folder}</span>, encrypted: restore them from here.</>}
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!!busy} onClick={() => call("run", () => api("POST", `/api/backups/plans/${plan.id}/run`), "Backup started")}>{busy === "run" ? <Spinner size={14} /> : <Play size={14} />} Back up now</Button>
@@ -296,6 +328,7 @@ function PlanCard({ plan, server, data, scan, reload, onRestore }: { plan: Plan;
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                 <span className="min-w-0">
                   <span className="mr-2">{dateTime(s.time)}</span>
+                  {plan.format === "files" && <span className="mr-2 font-mono text-xs">{s.id}/</span>}
                   <span className="break-all font-mono text-xs text-muted">{s.paths.join(", ")}</span>
                   {s.size ? <span className="ml-2 text-xs text-muted">{fmtBytes(s.size)}</span> : null}
                 </span>
@@ -328,13 +361,16 @@ function PlanCard({ plan, server, data, scan, reload, onRestore }: { plan: Plan;
 function PlanForm({ serverId, plan, data, scan, onClose, onSaved }: { serverId: string; plan?: Plan; data: Data; scan: () => void; onClose: () => void; onSaved: () => void }) {
   const { toast } = useStore();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [p, setP] = useState<Plan>(plan ?? { id: "", name: "", folder: "", serverId, enabled: true, dest: data.dests[0]?.id ?? "", items: [], at: "03:00", timeZone: tz, keepDaily: 7, keepWeekly: 4, keepMonthly: 6 });
+  const [p, setP] = useState<Plan>(plan ?? { id: "", name: "", folder: "", format: "files", serverId, enabled: true, dest: data.dests[0]?.id ?? "", items: [], at: "03:00", timeZone: tz, keepDaily: 7, keepWeekly: 4, keepMonthly: 6 });
   const [busy, setBusy] = useState(false);
   const found = data.found[serverId]?.items ?? null;
   const folders = p.items.filter((i) => i.kind === "folder").map((i) => i.name).join("\n");
   const has = (it: Item) => p.items.some((x) => x.kind === it.kind && x.name === it.name);
   const toggle = (it: Item) => setP({ ...p, items: has(it) ? p.items.filter((x) => !(x.kind === it.kind && x.name === it.name)) : [...p.items, { kind: it.kind, name: it.name }] });
   const listed = [...(found ?? []), ...p.items.filter((i) => i.kind !== "folder" && !(found ?? []).some((f) => f.kind === i.kind && f.name === i.name))];
+  const [custom, setCustom] = useState(false);
+  const presetIdx = KEEP.findIndex((k) => k.d === p.keepDaily && k.w === p.keepWeekly && k.m === p.keepMonthly);
+  const keepPreset = custom || presetIdx < 0 ? "custom" : String(presetIdx);
   const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "backup";
   const save = async () => {
     setBusy(true);
@@ -351,6 +387,20 @@ function PlanForm({ serverId, plan, data, scan, onClose, onSaved }: { serverId: 
     <div className="space-y-4 rounded-2xl bg-surface2 p-4">
       <Field label="Name" hint={plan ? `Its copies stay in the folder “${plan.folder}”.` : `Its copies go in a folder “${slug}” at the place (a number is added if that is taken).`}>
         <Input value={p.name} maxLength={60} placeholder="Shop database" onChange={(e) => setP({ ...p, name: e.target.value })} />
+      </Field>
+      <Field label="Kind of copies" hint={plan ? "A backup keeps its kind; make a new one for the other." : undefined}>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([
+            ["files", "Files you can open", "Each day gets a dated folder with the real files: open app.db or shop.dump right in Google Drive or the bucket. Not encrypted, and everything is uploaded again each day: best for databases and small folders."],
+            ["encrypted", "Encrypted copies", "With restic: encrypted on the server, only what changed is uploaded, so big folders are cheap. At the storage you only see restic's own files; restore from this page (or with restic and the password)."],
+          ] as const).map(([v, t, d]) => (
+            <button key={v} type="button" disabled={!!plan && plan.format !== v} onClick={() => setP({ ...p, format: v })}
+              className={`rounded-xl border p-3 text-left disabled:opacity-40 ${p.format === v ? "border-accent bg-accent/10" : "border-line"}`}>
+              <div className="text-sm font-medium">{t}</div>
+              <div className="mt-1 text-xs text-muted">{d}</div>
+            </button>
+          ))}
+        </div>
       </Field>
       <Field label="What to back up">
         <div className="space-y-1.5">
@@ -376,15 +426,26 @@ function PlanForm({ serverId, plan, data, scan, onClose, onSaved }: { serverId: 
             {data.dests.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </Select>
         </Field>
-        <Field label="Every day at" hint={p.timeZone}>
+        <Field label="Every day at" hint={`Time in ${p.timeZone}`}>
           <Input type="time" value={p.at} onChange={(e) => setP({ ...p, at: e.target.value })} />
         </Field>
-        <Field label="Copies to keep" hint="daily · weekly · monthly">
-          <div className="flex gap-2">
-            {(["keepDaily", "keepWeekly", "keepMonthly"] as const).map((k) => <Input key={k} type="number" min={0} aria-label={k} value={p[k]} onChange={(e) => setP({ ...p, [k]: Number(e.target.value) })} />)}
-          </div>
-        </Field>
       </div>
+      <Field label="How long to keep copies">
+        <div className="space-y-2">
+          <Select value={keepPreset} onChange={(e) => { const k = KEEP[Number(e.target.value)]; if (k) setP({ ...p, keepDaily: k.d, keepWeekly: k.w, keepMonthly: k.m }); else setCustom(true); }}>
+            {KEEP.map((k, i) => <option key={k.label} value={i}>{k.label}</option>)}
+            <option value="custom">Custom…</option>
+          </Select>
+          {keepPreset === "custom" && (
+            <div className="grid grid-cols-3 gap-2">
+              {([["keepDaily", "Daily copies"], ["keepWeekly", "Weekly copies"], ["keepMonthly", "Monthly copies"]] as const).map(([k, l]) => (
+                <Field key={k} label={l}><Input type="number" min={0} value={p[k]} onChange={(e) => setP({ ...p, [k]: Math.max(0, Number(e.target.value)) })} /></Field>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-muted">{p.keepDaily + p.keepWeekly + p.keepMonthly > 0 ? keepText(p.keepDaily, p.keepWeekly, p.keepMonthly) : "Keep at least one copy."}</p>
+        </div>
+      </Field>
       <ToggleRow label="Back up every day" desc="Off keeps the setup and the copies, without running by itself." checked={p.enabled} onChange={(v) => setP({ ...p, enabled: v })} />
       <div className="flex gap-2">
         <Button disabled={busy || !p.name.trim()} onClick={save}>{busy && <Spinner size={14} />} Save</Button>

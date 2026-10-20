@@ -418,6 +418,10 @@ type BackupRepo struct {
 	SSHKey     string            `json:"sshKey,omitempty"`  // sftp: private key
 	SSHPort    int               `json:"sshPort,omitempty"` // sftp
 	Rclone     bool              `json:"rclone,omitempty"`  // needs rclone (Google Drive)
+	// Files: plain files instead of restic. Each run is a dated folder of the real files
+	// (app.db, shop.dump, folders) at Repository, an rclone path ("fw:bucket/folder")
+	// with the remote in Env (RCLONE_CONFIG_FW_*). Password is not used.
+	Files bool `json:"files,omitempty"`
 }
 
 type BackupRun struct {

@@ -78,6 +78,7 @@ type Plan struct {
 	ID          string             `json:"id"`
 	Name        string             `json:"name"`
 	Folder      string             `json:"folder"`
+	Format      string             `json:"format"` // encrypted (restic) | files (plain files you can open)
 	ServerID    string             `json:"serverId"`
 	Enabled     bool               `json:"enabled"`
 	Dest        string             `json:"dest"`
@@ -305,7 +306,7 @@ func (s *Service) Password(id string) (string, error) {
 }
 
 // repo is what an agent needs to reach a backup's repository (its folder) at a place.
-func (s *Service) repo(destID, folder string) (proto.BackupRepo, error) {
+func (s *Service) repo(destID, folder string, files bool) (proto.BackupRepo, error) {
 	i := slices.IndexFunc(s.stored(), func(d storedDest) bool { return d.ID == destID })
 	if i < 0 {
 		return proto.BackupRepo{}, valid.Error("the plan's backup place is gone: pick another")
@@ -321,6 +322,37 @@ func (s *Service) repo(destID, folder string) (proto.BackupRepo, error) {
 		if sec, err = s.box.Open(d.SealedSecret, "backup.secret"); err != nil {
 			return proto.BackupRepo{}, err
 		}
+	}
+	if files { // plain files through rclone: the remote "fw" from environment variables
+		r.Files, r.Password = true, ""
+		env := func(k, v string) { r.Env["RCLONE_CONFIG_FW_"+k] = v }
+		switch d.Kind {
+		case "s3":
+			env("TYPE", "s3")
+			env("PROVIDER", "Other")
+			env("ENDPOINT", d.Endpoint)
+			env("ACCESS_KEY_ID", d.KeyID)
+			env("SECRET_ACCESS_KEY", string(sec))
+			env("REGION", d.Region)
+			env("NO_CHECK_BUCKET", "true")
+			r.Repository = "fw:" + path.Join(d.Bucket, d.Prefix, folder)
+		case "gdrive":
+			env("TYPE", "drive")
+			env("SCOPE", "drive")
+			env("TOKEN", string(sec))
+			r.Repository = "fw:" + path.Join(d.Folder, folder)
+		case "sftp":
+			key, err := s.box.Open(d.SealedKey, "backup.sshkey")
+			if err != nil {
+				return proto.BackupRepo{}, err
+			}
+			env("TYPE", "sftp")
+			env("HOST", d.Host)
+			env("USER", d.User)
+			env("PORT", fmt.Sprint(d.Port))
+			r.SSHKey, r.Repository = string(key), "fw:"+path.Join(d.Path, folder)
+		}
+		return r, nil
 	}
 	switch d.Kind {
 	case "s3":
@@ -364,6 +396,12 @@ func (s *Service) plans() map[string]Plan {
 	if changed {
 		settings.Save(s.db, plansKey, m)
 	}
+	for k, p := range m {
+		if p.Format == "" {
+			p.Format = "encrypted"
+			m[k] = p
+		}
+	}
 	return m
 }
 
@@ -387,7 +425,7 @@ func (s *Service) plan(id string) (Plan, error) {
 var (
 	atRe       = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 	dbNameRe   = regexp.MustCompile(`^[A-Za-z0-9_$-]{1,64}$`)
-	snapshotRe = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
+	snapshotRe = regexp.MustCompile(`^([0-9a-f]{8,64}|\d{4}-\d\d-\d\d_\d{6})$`) // restic's IDs, or a files run's folder
 	slugRe     = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
@@ -413,6 +451,9 @@ func (s *Service) SavePlan(p Plan) (Plan, error) {
 	p.Name = strings.TrimSpace(p.Name)
 	if _, err := time.LoadLocation(p.TimeZone); err != nil || p.TimeZone == "" {
 		p.TimeZone = "UTC"
+	}
+	if p.Format != "files" {
+		p.Format = "encrypted"
 	}
 	switch {
 	case p.Name == "" || len(p.Name) > 60:
@@ -466,6 +507,12 @@ func (s *Service) SavePlan(p Plan) (Plan, error) {
 		}
 		if old.Dest != p.Dest {
 			return Plan{}, valid.Error("a backup keeps its place (its copies are there): make a new backup for another place")
+		}
+		if old.Format == "" {
+			old.Format = "encrypted"
+		}
+		if old.Format != p.Format {
+			return Plan{}, valid.Error("a backup keeps its kind of copies: make a new backup for the other kind")
 		}
 		p.ServerID, p.Folder, p.LastDay = old.ServerID, old.Folder, old.LastDay
 	}
@@ -547,7 +594,7 @@ func (s *Service) RunNow(id string, manual bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.ready(p.ServerID); err != nil {
+	if err := s.readyFor(p); err != nil {
 		return "", err
 	}
 	if len(p.Items) == 0 {
@@ -556,7 +603,7 @@ func (s *Service) RunNow(id string, manual bool) (string, error) {
 	if s.busy(p.ServerID) {
 		return "", valid.Error("a backup of this server is still running: one at a time")
 	}
-	repo, err := s.repo(p.Dest, p.Folder)
+	repo, err := s.repo(p.Dest, p.Folder, p.Format == "files")
 	if err != nil {
 		return "", err
 	}
@@ -576,10 +623,10 @@ func (s *Service) Refresh(id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.ready(p.ServerID); err != nil {
+	if err := s.readyFor(p); err != nil {
 		return err
 	}
-	repo, err := s.repo(p.Dest, p.Folder)
+	repo, err := s.repo(p.Dest, p.Folder, p.Format == "files")
 	if err != nil {
 		return err
 	}
@@ -721,10 +768,10 @@ func (s *Service) Restore(id, snapshot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.ready(p.ServerID); err != nil {
+	if err := s.readyFor(p); err != nil {
 		return "", err
 	}
-	repo, err := s.repo(p.Dest, p.Folder)
+	repo, err := s.repo(p.Dest, p.Folder, p.Format == "files")
 	if err != nil {
 		return "", err
 	}
@@ -774,4 +821,17 @@ func (s *Service) Tick() {
 				Title: fmt.Sprintf("Backup “%s” failed on %s", p.Name, s.Name(p.ServerID)), Sample: "It could not start: " + err.Error()})
 		}
 	}
+}
+
+// FilesAgent is the first agent version that makes plain-file backups.
+const FilesAgent = "v0.9.153"
+
+func (s *Service) readyFor(p Plan) error {
+	if err := s.ready(p.ServerID); err != nil {
+		return err
+	}
+	if p.Format == "files" && s.AgentVersion != nil && release.Newer(FilesAgent, s.AgentVersion(p.ServerID)) {
+		return valid.Error("this server's agent is too old for plain-file backups; update the agent first")
+	}
+	return nil
 }
