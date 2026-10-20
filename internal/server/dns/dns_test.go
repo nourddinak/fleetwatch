@@ -287,6 +287,25 @@ func TestCloudflare(t *testing.T) {
 		t.Fatal(st, err)
 	}
 	on := true
+	nRec := len(f.records)
+	if err := s.AddMailRecords(ctx, "mem_1", "example.com", []MailRecord{{Type: "TXT", Name: "resend._domainkey", Value: "p=abc"}, {Type: "MX", Name: "send", Value: "feedback.example.net", Priority: 10}}); err != nil || len(f.records) != nRec+2 {
+		t.Fatal("email records", err, len(f.records)-nRec)
+	}
+	found := false
+	for _, r := range f.records {
+		found = found || (r.Name == "resend._domainkey.example.com" && r.Content == "p=abc")
+	}
+	if !found {
+		t.Fatal("named under the domain", f.records)
+	}
+	for id, r := range f.records { // out of the way of the checks below
+		if r.Name == "resend._domainkey.example.com" || r.Name == "send.example.com" {
+			delete(f.records, id)
+		}
+	}
+	if err := s.AddMailRecords(ctx, "mem_2", "example.com", nil); err != ErrNoZone {
+		t.Fatal("another person's zone", err)
+	}
 	if v, err := s.SiteUnderAttack(ctx, "mem_1", []string{"shop.example.com"}, nil); err != nil || v {
 		t.Fatal("read for a site", v, err)
 	}

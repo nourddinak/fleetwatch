@@ -42,7 +42,8 @@ type Provider interface {
 // CDN is what Cloudflare adds.
 type CDN interface {
 	Purge(ctx context.Context, z Zone, urls []string) error
-	PurgeHosts(ctx context.Context, z Zone, hosts []string) error // everything cached for those hostnames
+	PurgeHosts(ctx context.Context, z Zone, hosts []string) error                         // everything cached for those hostnames
+	AddRecord(ctx context.Context, z Zone, typ, name, content string, priority int) error // kept when it is there already
 	SecurityLevel(ctx context.Context, z Zone) (string, error)
 	SetSecurityLevel(ctx context.Context, z Zone, level string) error
 	SetProxied(ctx context.Context, z Zone, id string, on bool) error
@@ -165,6 +166,18 @@ func (c cloudflare) DeleteA(ctx context.Context, z Zone, id string) error {
 
 func (c cloudflare) Purge(ctx context.Context, z Zone, urls []string) error {
 	_, err := c.call(ctx, http.MethodPost, "/zones/"+z.ID+"/purge_cache", map[string]any{"files": urls}, nil)
+	return err
+}
+
+func (c cloudflare) AddRecord(ctx context.Context, z Zone, typ, name, content string, priority int) error {
+	body := map[string]any{"type": typ, "name": name, "content": content, "ttl": 1}
+	if typ == "MX" {
+		body["priority"] = priority
+	}
+	_, err := c.call(ctx, http.MethodPost, "/zones/"+z.ID+"/dns_records", body, nil)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "already exist") {
+		return nil // set up before: fine
+	}
 	return err
 }
 

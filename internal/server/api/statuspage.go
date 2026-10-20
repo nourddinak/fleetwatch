@@ -1,18 +1,22 @@
 package api
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"html"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/statuspage"
 )
 
@@ -475,6 +479,67 @@ func (s *server) statusAdminExtras(mux *http.ServeMux) {
 		s.audit(r, "email.sender.delete", r.PathValue("id"), "")
 		writeJSON(w, http.StatusOK, senders())
 	}))
+	// A sender from your own domain, through Resend: the domain added there, its DNS
+	// records put in Cloudflare when one of your accounts holds it, then verified.
+	mux.HandleFunc("POST /api/integrations/email/domain", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ APIKey, Address, FromName, Label string }
+		if !decode(w, r, &in) {
+			return
+		}
+		addr, err := mail.ParseAddress(strings.TrimSpace(in.Address))
+		_, domain, ok := strings.Cut(strings.ToLower(addrOf(addr)), "@")
+		if err != nil || !ok || !strings.Contains(domain, ".") {
+			writeError(w, http.StatusBadRequest, "invalid", "An address like noreply@yourdomain.com.")
+			return
+		}
+		key := strings.TrimSpace(in.APIKey)
+		if !strings.HasPrefix(key, "re_") {
+			writeError(w, http.StatusBadRequest, "invalid", "A Resend API key starts with re_ (resend.com → API keys).")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		d, err := statuspage.ResendAddDomain(ctx, key, domain)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "resend", err.Error())
+			return
+		}
+		dnsDone, dnsNote := false, "Add these records at your DNS provider, then check again."
+		if s.DNS != nil {
+			recs := []dns.MailRecord{}
+			for _, x := range d.Records {
+				recs = append(recs, dns.MailRecord{Type: x.Type, Name: x.Name, Value: x.Value, Priority: x.Priority})
+			}
+			switch err := s.DNS.AddMailRecords(ctx, "owner", domain, recs); {
+			case err == nil:
+				dnsDone, dnsNote = true, "The records were added in Cloudflare. Resend checks them within minutes."
+			case !errors.Is(err, dns.ErrNoZone):
+				dnsNote = "Cloudflare refused a record (" + err.Error() + "): add them by hand, then check again."
+			}
+		}
+		statuspage.ResendVerify(ctx, key, d.ID)
+		out, err := s.Status.Mail.SaveSender(statuspage.Sender{Label: cmp.Or(strings.TrimSpace(in.Label), domain), DomainID: d.ID,
+			SMTPConfig: statuspage.SMTPConfig{Host: "smtp.resend.com", Port: 465, Security: "tls", Username: "resend", Password: key, From: addrOf(addr), FromName: cmp.Or(strings.TrimSpace(in.FromName), addr.Name)}})
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if d2, err := statuspage.ResendGetDomain(ctx, key, d.ID); err == nil {
+			d = d2
+		}
+		s.audit(r, "email.domain", out.ID, out.From)
+		writeJSON(w, http.StatusOK, map[string]any{"sender": out.ID, "domain": d, "dnsAdded": dnsDone, "note": dnsNote})
+	}))
+	mux.HandleFunc("GET /api/integrations/email/{id}/domain", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		d, err := s.Status.Mail.DomainCheck(ctx, r.PathValue("id"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "resend", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
+	}))
 	mux.HandleFunc("POST /api/integrations/email/{id}/test", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in struct{ To string }
 		if !decode(w, r, &in) {
@@ -546,4 +611,11 @@ func (s *server) statusHost(next http.Handler) http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+func addrOf(a *mail.Address) string {
+	if a == nil {
+		return ""
+	}
+	return a.Address
 }

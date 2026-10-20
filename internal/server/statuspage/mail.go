@@ -48,6 +48,8 @@ type Sender struct {
 	Label   string `json:"label"` // how people know it: "Acme support", "Gmail"
 	Default bool   `json:"default"`
 	SMTPConfig
+	// DomainID: a sender from your own domain through Resend (see resend.go).
+	DomainID string `json:"domainId,omitempty"`
 }
 
 type storedSender struct {
@@ -195,7 +197,10 @@ func (m *Mailer) SaveSender(in Sender) (Sender, error) {
 		m.senders = append(m.senders, storedSender{})
 		i = len(m.senders) - 1
 	}
-	st := storedSender{Sender: Sender{ID: in.ID, Label: in.Label, Default: in.Default || len(m.senders) == 1, SMTPConfig: c}, Sealed: m.senders[i].Sealed}
+	if in.DomainID == "" {
+		in.DomainID = m.senders[i].DomainID // edits keep their domain
+	}
+	st := storedSender{Sender: Sender{ID: in.ID, Label: in.Label, Default: in.Default || len(m.senders) == 1, SMTPConfig: c, DomainID: in.DomainID}, Sealed: m.senders[i].Sealed}
 	if c.Password != "" {
 		st.Sealed = m.box.Seal([]byte(c.Password), "smtp.password")
 	}

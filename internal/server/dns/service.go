@@ -462,3 +462,37 @@ func (s *Service) SyncBlocks(ctx context.Context, ips []string) {
 		}
 	}
 }
+
+// MailRecord is a DNS record an email provider needs, named relative to the domain
+// ("send", "resend._domainkey").
+type MailRecord struct {
+	Type, Name, Value string
+	Priority          int
+}
+
+// AddMailRecords puts an email provider's records into the Cloudflare zone holding the
+// domain, in someone's accounts. ErrNoZone when none holds it.
+func (s *Service) AddMailRecords(ctx context.Context, owner, domain string, recs []MailRecord) error {
+	a, z, ok := s.zoneFor(owner, domain)
+	if !ok || a.Provider != "cloudflare" {
+		return ErrNoZone
+	}
+	_, p, err := s.account(owner, a.ID)
+	if err != nil {
+		return err
+	}
+	cdn, ok := p.(CDN)
+	if !ok {
+		return ErrNoZone
+	}
+	for _, r := range recs {
+		name := domain
+		if r.Name != "" && r.Name != "@" {
+			name = r.Name + "." + domain
+		}
+		if err := cdn.AddRecord(ctx, z, r.Type, name, r.Value, r.Priority); err != nil {
+			return fmt.Errorf("%s %s: %w", r.Type, name, err)
+		}
+	}
+	return nil
+}

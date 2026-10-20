@@ -442,3 +442,68 @@ func TestSenders(t *testing.T) {
 		t.Fatal("password leaked")
 	}
 }
+
+// A sender from your own domain: added at Resend (or found there), then checked.
+func TestResendDomain(t *testing.T) {
+	verified := false
+	var created int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer re_key" {
+			w.WriteHeader(401)
+			w.Write([]byte(`{"message":"API key is invalid"}`))
+			return
+		}
+		status := "pending"
+		if verified {
+			status = "verified"
+		}
+		dom := `{"id":"d1","name":"acme.test","status":"` + status + `","records":[{"record":"DKIM","name":"resend._domainkey","type":"TXT","value":"p=abc","status":"` + status + `"},{"record":"SPF","name":"send","type":"MX","value":"feedback-smtp.eu-west-1.amazonses.com","priority":10,"status":"` + status + `"}]}`
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/domains":
+			if created > 0 {
+				w.Write([]byte(`{"data":[{"id":"d1","name":"acme.test"}]}`))
+			} else {
+				w.Write([]byte(`{"data":[]}`))
+			}
+		case r.Method == "POST" && r.URL.Path == "/domains":
+			created++
+			w.Write([]byte(dom))
+		case r.URL.Path == "/domains/d1/verify":
+			w.Write([]byte(`{}`))
+		case r.URL.Path == "/domains/d1":
+			w.Write([]byte(dom))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	ResendAPI = srv.URL
+	ctx := context.Background()
+	if _, err := ResendAddDomain(ctx, "re_bad", "acme.test"); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatal("a bad key", err)
+	}
+	d, err := ResendAddDomain(ctx, "re_key", "acme.test")
+	if err != nil || d.ID != "d1" || len(d.Records) != 2 || d.Records[1].Priority != 10 {
+		t.Fatal(d, err)
+	}
+	if again, _ := ResendAddDomain(ctx, "re_key", "ACME.test"); again.ID != "d1" || created != 1 {
+		t.Fatal("added twice", created)
+	}
+
+	db1, _ := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db1.Close()
+	box, _ := secret.New(make([]byte, 32))
+	m := NewMailer(db1, box)
+	s, err := m.SaveSender(Sender{Label: "Acme", DomainID: "d1", SMTPConfig: SMTPConfig{Host: "smtp.resend.com", Port: 465, Security: "tls", Username: "resend", Password: "re_key", From: "noreply@acme.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Label, s.DomainID, s.Password = "Acme status", "", ""
+	if s2, _ := m.SaveSender(s); s2.DomainID != "d1" || !s2.HasPassword {
+		t.Fatal("an edit keeps the domain and key", s2)
+	}
+	verified = true
+	if got, err := m.DomainCheck(ctx, s.ID); err != nil || got.Status != "verified" {
+		t.Fatal(got, err)
+	}
+}

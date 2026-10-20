@@ -1,4 +1,4 @@
-import { Check, Mail, Pencil, Plus, Send, Star, Trash2 } from "lucide-react";
+import { Check, Copy, Globe, Mail, Pencil, Plus, RefreshCw, Send, Star, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
@@ -17,6 +17,7 @@ export interface Sender {
   from: string;
   fromName: string;
   usedBy: string[];
+  domainId?: string;
 }
 
 const PRESETS: { name: string; host: string; port: number; security: Sender["security"]; note: string }[] = [
@@ -34,6 +35,8 @@ export function EmailSenders() {
   const { toast, me } = useStore();
   const list = useApi<Sender[]>("/api/integrations/email");
   const [edit, setEdit] = useState<Sender | null>(null);
+  const [ownDomain, setOwnDomain] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
   const [del, setDel] = useState<Sender | null>(null);
   const [testTo, setTestTo] = useState(me?.email ?? "");
   const [busy, setBusy] = useState("");
@@ -56,7 +59,12 @@ export function EmailSenders() {
     <div className="space-y-6">
       <Card>
         <SectionTitle icon={<Mail size={15} />} title="Email senders" sub="The addresses emails go out from: status page updates, subscriptions and reports (each page picks its sender), and on-call emails (the default one). Passwords are stored encrypted."
-          action={!edit && <Button size="sm" onClick={() => setEdit({ ...EMPTY, default: senders.length === 0 })}><Plus size={14} /> Add a sender</Button>} />
+          action={!edit && !ownDomain && (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setOwnDomain(true)}><Globe size={14} /> Use your own domain</Button>
+              <Button size="sm" variant="secondary" onClick={() => setEdit({ ...EMPTY, default: senders.length === 0 })}><Plus size={14} /> Other SMTP</Button>
+            </div>
+          )} />
         {!list.data ? <Spinner /> : senders.length === 0 && !edit ? (
           <p className="text-sm text-muted">None yet. Add one to send status page emails and on-call emails.</p>
         ) : (
@@ -65,7 +73,7 @@ export function EmailSenders() {
               <li key={s.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-line px-3 py-2.5">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-surface2"><Mail size={16} /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{s.label} {s.default && <Badge tone="ok">default</Badge>}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{s.label} {s.default && <Badge tone="ok">default</Badge>}{s.domainId && <Badge tone="info">your domain</Badge>}</div>
                   <div className="truncate text-xs text-muted">{s.fromName ? `${s.fromName} <${s.from}>` : s.from} · {s.host}</div>
                   <div className="text-xs text-muted">{s.usedBy.length ? `Status pages: ${s.usedBy.join(", ")}` : s.default ? "On-call emails, and pages without their own sender" : "Not used by a status page yet"}</div>
                 </div>
@@ -73,8 +81,10 @@ export function EmailSenders() {
                 <IconButton aria-label="Send a test email" title={`Send a test to ${testTo || "you"}`} disabled={!testTo || !!busy} onClick={() => run("test" + s.id, () => api("POST", `/api/integrations/email/${s.id}/test`, { to: testTo }), `Test email sent to ${testTo}`)}>
                   {busy === "test" + s.id ? <Spinner size={13} /> : <Send size={14} />}
                 </IconButton>
+                {s.domainId && <Button size="sm" variant="ghost" onClick={() => setChecking(checking === s.id ? null : s.id)}>{checking === s.id ? "Hide" : "Domain"}</Button>}
                 <IconButton aria-label="Edit" onClick={() => setEdit({ ...s, password: "" })}><Pencil size={14} /></IconButton>
                 <IconButton aria-label="Delete" onClick={() => setDel(s)}><Trash2 size={14} /></IconButton>
+                {checking === s.id && <div className="basis-full"><DomainStatus senderId={s.id} /></div>}
               </li>
             ))}
           </ul>
@@ -85,6 +95,7 @@ export function EmailSenders() {
           </div>
         )}
       </Card>
+      {ownDomain && <DomainForm onClose={() => setOwnDomain(false)} onDone={() => list.reload()} />}
       {edit && <SenderForm value={edit} busy={busy === "save"} onCancel={() => setEdit(null)}
         onSave={async (v) => { if (await run("save", () => api(v.id ? "PUT" : "POST", v.id ? `/api/integrations/email/${v.id}` : "/api/integrations/email", v), "Sender saved")) setEdit(null); }} />}
       <ConfirmDialog open={!!del} title={`Delete ${del?.label}?`} danger confirmLabel="Delete"
@@ -162,3 +173,116 @@ export function SenderPicker({ value, onChange }: { value: string; onChange: (id
 }
 
 export const useSenders = () => useApi<Sender[]>("/api/integrations/email");
+
+interface Domain {
+  id: string;
+  name: string;
+  status: string;
+  records: { record: string; name: string; type: string; value: string; priority?: number; status: string }[];
+}
+
+const DOMAIN_TONE: Record<string, "ok" | "warn" | "crit" | undefined> = { verified: "ok", pending: "warn", not_started: "warn", failed: "crit", temporary_failure: "warn" };
+
+/** Your own address (noreply@yourdomain.com), through Resend: the domain verified by DNS. */
+function DomainForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { toast } = useStore();
+  const [f, setF] = useState({ address: "", fromName: "", apiKey: "", label: "" });
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ sender: string; domain: Domain; dnsAdded: boolean; note: string } | null>(null);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ sender: string; domain: Domain; dnsAdded: boolean; note: string }>("POST", "/api/integrations/email/domain", f);
+      setRes(r);
+      onDone();
+      toast(r.domain.status === "verified" ? "Your domain is ready" : "Sender added: the domain is being verified");
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <SectionTitle icon={<Globe size={15} />} title="Send from your own domain" sub="Like noreply-status@yourdomain.com. Fleetwatch sets it up with Resend (free for 3,000 emails a month): the domain is added there, its DNS records go into Cloudflare by themselves when one of your accounts holds the domain, and Resend verifies them." />
+      {!res ? (
+        <div className="space-y-4">
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+            <li>Make a free account at <a href="https://resend.com/signup" target="_blank" rel="noreferrer" className="underline">resend.com</a>.</li>
+            <li>In Resend: <b className="text-fg">API Keys → Create API key</b> (full access, so Fleetwatch can add your domain), and paste it below.</li>
+          </ol>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Address to send from" hint="Any name before the @; the domain must be yours.">
+              <Input value={f.address} placeholder="noreply-status@yourdomain.com" onChange={(e) => setF({ ...f, address: e.target.value.trim() })} />
+            </Field>
+            <Field label="Sender name" hint="What people see as the sender.">
+              <Input value={f.fromName} placeholder="Acme Status" onChange={(e) => setF({ ...f, fromName: e.target.value })} />
+            </Field>
+            <Field label="Resend API key" className="sm:col-span-2">
+              <Input type="password" autoComplete="off" value={f.apiKey} placeholder="re_…" onChange={(e) => setF({ ...f, apiKey: e.target.value.trim() })} />
+            </Field>
+          </div>
+          <div className="flex gap-2 border-t border-line pt-4">
+            <Button disabled={busy || !f.address.includes("@") || !f.apiKey} onClick={go}>{busy ? <Spinner size={14} /> : <Check size={14} />} Set it up</Button>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className={res.dnsAdded ? "text-sm text-ok" : "text-sm"}>{res.note}</p>
+          <DomainRecords d={res.domain} />
+          <div className="flex gap-2"><DomainCheckButton senderId={res.sender} onChecked={(d) => setRes({ ...res, domain: d })} /><Button variant="ghost" onClick={onClose}>Done</Button></div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function DomainRecords({ d }: { d: Domain }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-sm"><b>{d.name}</b> <Badge tone={DOMAIN_TONE[d.status]}>{d.status.replace("_", " ")}</Badge></div>
+      <div className="overflow-x-auto rounded-xl border border-line">
+        <table className="w-full text-xs">
+          <thead className="text-left text-muted"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">Value</th><th className="px-3 py-2">Priority</th><th className="px-3 py-2">State</th></tr></thead>
+          <tbody className="divide-y divide-line">
+            {d.records.map((r, i) => (
+              <tr key={i}>
+                <td className="px-3 py-2 font-mono">{r.type}</td>
+                <td className="px-3 py-2 font-mono">{r.name}.{d.name}</td>
+                <td className="max-w-[320px] px-3 py-2"><span className="flex items-center gap-1"><span className="truncate font-mono" title={r.value}>{r.value}</span><button aria-label="Copy" onClick={() => navigator.clipboard.writeText(r.value)}><Copy size={11} /></button></span></td>
+                <td className="px-3 py-2">{r.priority ?? ""}</td>
+                <td className="px-3 py-2"><Badge tone={DOMAIN_TONE[r.status]}>{r.status.replace("_", " ")}</Badge></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DomainCheckButton({ senderId, onChecked }: { senderId: string; onChecked: (d: Domain) => void }) {
+  const { toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button size="sm" variant="secondary" disabled={busy} onClick={async () => {
+      setBusy(true);
+      try {
+        const d = await api<Domain>("GET", `/api/integrations/email/${senderId}/domain`);
+        onChecked(d);
+        toast(d.status === "verified" ? "Verified: emails go out from your domain" : "Not verified yet: DNS changes can take a few minutes");
+      } catch (e) {
+        toast((e as ApiError).message, "err");
+      }
+      setBusy(false);
+    }}>{busy ? <Spinner size={13} /> : <RefreshCw size={13} />} Check again</Button>
+  );
+}
+
+/** A domain sender's records and state, checked when opened. */
+function DomainStatus({ senderId }: { senderId: string }) {
+  const d = useApi<Domain>(`/api/integrations/email/${senderId}/domain`);
+  if (d.error) return <p className="text-xs text-crit">{d.error}</p>;
+  if (!d.data) return <Spinner />;
+  return <div className="space-y-2 pt-2"><DomainRecords d={d.data} /><DomainCheckButton senderId={senderId} onChecked={d.setData} /></div>;
+}
