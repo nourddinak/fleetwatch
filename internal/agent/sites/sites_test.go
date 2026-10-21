@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"fleetwatch/internal/proto"
 )
@@ -142,5 +143,62 @@ func TestStripPrefix(t *testing.T) {
 	}
 	if again := stripPrefix(got, "a"); again != got {
 		t.Fatal("added twice")
+	}
+}
+
+func TestDockerDeploy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sites are published on Linux servers (symlinks)")
+	}
+	root := t.TempDir()
+	WWW, Caddyfile, CaddyDir = filepath.Join(root, "www"), filepath.Join(root, "Caddyfile"), filepath.Join(root, "sites")
+	os.MkdirAll(WWW, 0o755)
+	os.WriteFile(Caddyfile, []byte(""), 0o644)
+	validate = func() ([]byte, error) { return nil, nil }
+	reload = func() ([]byte, error) { return nil, nil }
+	var calls []string
+	dockerCmd = func(_ context.Context, dir string, _ time.Duration, log *bytes.Buffer, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	snap := tarball(t, map[string]string{"me-api-abc/Dockerfile": "FROM nginx\nEXPOSE 80", "me-api-abc/compose.yaml": "services: {}", "me-api-abc/Caddyfile": "kept"})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(snap) }))
+	defer srv.Close()
+	client = srv.Client()
+
+	req := proto.SiteDeploy{RunID: "r1", Name: "api", Archive: srv.URL + "/t", Domains: []string{"api.example.com"},
+		Docker: &proto.SiteDocker{Port: 80, HostPort: 20001, Env: "SECRET=1\n"}}
+	res := Deploy(context.Background(), req)
+	if !res.OK {
+		t.Fatalf("%+v", res)
+	}
+	all := strings.Join(calls, "\n")
+	if !strings.Contains(all, "build -t fw-api:") || !strings.Contains(all, "-p 127.0.0.1:20001:80") || !strings.Contains(all, "--env-file") {
+		t.Fatal(all)
+	}
+	env := filepath.Join(WWW, "api", ".env")
+	if st, err := os.Stat(env); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatal(".env", err)
+	}
+	if _, err := os.Stat(filepath.Join(WWW, "api", "Caddyfile")); err != nil {
+		t.Fatal("a Docker app's own files are left alone")
+	}
+	site, _ := os.ReadFile(filepath.Join(CaddyDir, "api.caddy"))
+	if !strings.Contains(string(site), "api.example.com {") || !strings.Contains(string(site), "reverse_proxy 127.0.0.1:20001") {
+		t.Fatalf("%s", site)
+	}
+
+	// Compose: up --build in the snapshot; no port, no web address.
+	calls = nil
+	req.Docker = &proto.SiteDocker{Compose: "compose.yaml"}
+	if res := Deploy(context.Background(), req); !res.OK || !strings.Contains(strings.Join(calls, "\n"), "compose -p fw-api -f compose.yaml up -d --build --remove-orphans") {
+		t.Fatalf("%+v %v", res, calls)
+	}
+	if _, err := os.Stat(filepath.Join(CaddyDir, "api.caddy")); err == nil {
+		t.Fatal("the Caddy site stayed without a port")
+	}
+	req.Docker.Compose = "../evil.yml"
+	if res := Deploy(context.Background(), req); res.OK {
+		t.Fatal("a compose file outside the snapshot")
 	}
 }

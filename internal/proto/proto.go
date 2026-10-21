@@ -649,6 +649,19 @@ type SiteDeploy struct {
 	// CaddyConfig set in the dashboard replaces the generated site and the repository's
 	// Caddyfile (agent 0.9.72+).
 	CaddyConfig string `json:"caddyConfig,omitempty"`
+	// Docker: the snapshot is a Docker app, built and run on the server (agent 0.9.154+).
+	Docker *SiteDocker `json:"docker,omitempty"`
+}
+
+// SiteDocker is how a Docker app runs. With Compose, `docker compose up --build` in the
+// snapshot (project fw-<name>); else its Dockerfile is built and run as container
+// fw-<name>, its Port published on 127.0.0.1:HostPort. Caddy sends the domains to
+// 127.0.0.1:HostPort (for Compose: the host port its compose file publishes).
+type SiteDocker struct {
+	Compose  string `json:"compose,omitempty"` // compose file name, "" = Dockerfile
+	Port     int    `json:"port,omitempty"`    // the app's port in the container (Dockerfile)
+	HostPort int    `json:"hostPort,omitempty"`
+	Env      string `json:"env,omitempty"` // .env, written next to the code (0600)
 }
 
 // Certificates renewed on demand (agent 0.9.132+): Caddy gets a fresh one now.

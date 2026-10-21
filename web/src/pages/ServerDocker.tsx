@@ -57,10 +57,15 @@ interface DockerState {
 }
 
 const STATE_TONE: Record<string, Tone> = { running: "ok", exited: "neutral", paused: "warn", restarting: "warn", created: "neutral", dead: "crit" };
-const VERB: Record<string, string> = { start: "Starting", stop: "Stopping", restart: "Restarting", update: "Updating", remove: "Removing", prune: "Cleaning up" };
+const VERB: Record<string, string> = { start: "Starting", stop: "Stopping", restart: "Restarting", update: "Updating", remove: "Removing", prune: "Cleaning up",
+  delete: "Deleting", down: "Taking down", install: "Installing Docker", uninstall: "Uninstalling Docker", purge: "Uninstalling Docker" };
+const DESTRUCTIVE = ["remove", "prune", "delete", "down", "install", "uninstall", "purge"];
 
-export function ServerDocker() {
-  const { id = "" } = useParams();
+/** A server's Docker: its containers (all of them, however they were started), compose
+ * stacks, images and volumes, and installing or removing Docker itself. */
+export function ServerDocker({ serverId }: { serverId?: string } = {}) {
+  const params = useParams();
+  const id = serverId ?? params.id ?? "";
   const { me, toast, subscribeLive, getServer } = useStore();
   const owner = !me || me.role === "owner";
   const canAct = owner || me?.role === "operator";
@@ -92,8 +97,9 @@ export function ServerDocker() {
       }),
     [subscribeLive, setData, id, toast],
   );
+  const [uninstall, setUninstall] = useState(false);
   const act = async (kind: string, target: string, action: string) => {
-    const destructive = action === "remove" || action === "prune";
+    const destructive = DESTRUCTIVE.includes(action);
     try {
       await api("POST", `/api/servers/${id}/docker/${destructive ? "delete" : "action"}`, { kind, target, action });
     } catch (e) {
@@ -112,8 +118,15 @@ export function ServerDocker() {
   if (st.error) return <ErrorState message={st.error} onRetry={st.reload} />;
   const rep = st.data?.report;
   if (!rep) return st.data && !st.data.loading ? <EmptyState icon={<Container size={20} />} title="No Docker information yet" desc="The agent answers in a few seconds; Docker needs agent v0.9.38 or newer." action={<Button onClick={refresh}>Ask again</Button>} /> : <LoadingState label="Asking the agent about Docker…" />;
-  if (!rep.available) return <EmptyState icon={<Container size={20} />} title="Docker is not installed" desc={`No docker command on ${getServer(id)?.name ?? "this server"}.`} />;
   const busy = (kind: string, target: string) => st.data!.running.find((a) => a.kind === kind && a.target === target);
+  const engine = st.data!.running.find((a) => a.kind === "engine");
+  if (engine) return <LoadingState label={`${VERB[engine.action]} on ${getServer(id)?.name ?? "the server"}: this takes a few minutes…`} />;
+  if (!rep.available) {
+    return (
+      <EmptyState icon={<Container size={20} />} title="Docker is not installed" desc={`No docker command on ${getServer(id)?.name ?? "this server"}. Fleetwatch can install it with Docker's own install script (Docker Engine and Compose).`}
+        action={owner ? <Button onClick={() => act("engine", "", "install")}><Download size={15} /> Install Docker</Button> : undefined} />
+    );
+  }
   const running = rep.containers.filter((c) => c.state === "running").length;
   const updates = rep.containers.filter((c) => c.update === "available").length;
   const dangling = rep.images.filter((i) => i.dangling);
@@ -146,6 +159,7 @@ export function ServerDocker() {
           <span className="text-xs text-muted">Docker {rep.version} · updated {relTime(rep.at)}</span>
         </div>
         <div className="flex gap-2">
+          {owner && <Button size="sm" variant="ghost" onClick={() => setUninstall(true)} title="Remove Docker from this server"><Trash2 size={14} /> Uninstall</Button>}
           <Button size="sm" variant="ghost" onClick={checkUpdates} title="Ask Docker Hub, GHCR and the other registries whether the images have newer versions"><ArrowUpCircle size={14} /> Check for updates</Button>
           <Button size="sm" variant="secondary" onClick={refresh} disabled={st.data?.loading}>{st.data?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />} Refresh</Button>
         </div>
@@ -187,6 +201,7 @@ export function ServerDocker() {
                       <>
                         <Button size="sm" variant="ghost" title="Logs" onClick={() => showLogs(c)}><FileText size={14} /></Button>
                         {owner && c.state !== "running" && <Button size="sm" variant="ghost" title="Remove" onClick={() => setConfirm({ kind: "container", target: c.name, action: "remove", title: `Remove ${c.name}?`, message: "The stopped container is deleted. Its named volumes stay." })}><Trash2 size={14} /></Button>}
+                        {owner && c.state === "running" && <Button size="sm" variant="ghost" title="Stop and delete" onClick={() => setConfirm({ kind: "container", target: c.name, action: "delete", title: `Stop and delete ${c.name}?`, message: `It stops and is deleted. Its named volumes stay.${c.project ? ` It belongs to the compose stack ${c.project}: docker compose up would make it again.` : ""}` })}><Trash2 size={14} /></Button>}
                       </>
                     ))}
                   </Td>
@@ -205,7 +220,9 @@ export function ServerDocker() {
                   <Td className="font-medium">{p.name}</Td>
                   <Td><Badge tone={p.status.startsWith("running") ? "ok" : "neutral"} dot>{p.status}</Badge></Td>
                   <Td className="max-w-[18rem] truncate font-mono text-xs text-muted" title={p.configFiles}>{p.configFiles}</Td>
-                  <Td className="text-right">{actions("project", p.name, p.status.startsWith("running"))}</Td>
+                  <Td className="text-right">{actions("project", p.name, p.status.startsWith("running"), owner ? (
+                    <Button size="sm" variant="ghost" title="Take down" onClick={() => setConfirm({ kind: "project", target: p.name, action: "down", title: `Take ${p.name} down?`, message: "docker compose down: its containers and networks are deleted. Named volumes (its data) and images stay; start it again from its folder with docker compose up." })}><Trash2 size={14} /></Button>
+                  ) : undefined)}</Td>
                 </Tr>
               ))}
             </Table>
@@ -251,7 +268,21 @@ export function ServerDocker() {
           </Table>
         </Card>
       )}
-      <ConfirmDialog open={!!confirm} title={confirm?.title ?? ""} message={confirm?.message ?? ""} confirmLabel={confirm?.action === "remove" ? "Delete" : "Continue"} danger={confirm?.action === "remove"}
+      <Modal open={uninstall} onClose={() => setUninstall(false)} title={`Uninstall Docker from ${getServer(id)?.name ?? "this server"}?`}
+        footer={<Button variant="ghost" onClick={() => setUninstall(false)}>Cancel</Button>}>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted">Every container stops. Choose what happens to their data:</p>
+          <button className="w-full rounded-xl border border-line p-3 text-left hover:bg-surface2" onClick={() => { setUninstall(false); act("engine", "", "uninstall"); }}>
+            <div className="font-medium">Uninstall, keep the data</div>
+            <div className="text-xs text-muted">Docker's packages go; containers, images and volumes stay in /var/lib/docker, back if Docker is installed again.</div>
+          </button>
+          <button className="w-full rounded-xl border border-crit/40 p-3 text-left hover:bg-crit-soft" onClick={() => { setUninstall(false); act("engine", "", "purge"); }}>
+            <div className="font-medium text-crit">Uninstall and delete everything</div>
+            <div className="text-xs text-muted">Also deletes every container, image and volume, with the data in them. This cannot be undone.</div>
+          </button>
+        </div>
+      </Modal>
+      <ConfirmDialog open={!!confirm} title={confirm?.title ?? ""} message={confirm?.message ?? ""} confirmLabel={["remove", "delete", "down"].includes(confirm?.action ?? "") ? "Delete" : "Continue"} danger={["remove", "delete", "down"].includes(confirm?.action ?? "")}
         onConfirm={() => { if (confirm) act(confirm.kind, confirm.target, confirm.action); setConfirm(null); }} onCancel={() => setConfirm(null)} />
       <Modal open={!!logs} onClose={() => setLogs(null)} title={`Logs: ${logs?.name ?? ""}`} wide>
         {logs?.text == null ? <LoadingState label="Reading the last 300 lines…" /> : (

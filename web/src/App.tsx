@@ -74,6 +74,7 @@ const Uptime = page(() => import("./pages/Uptime"), "Uptime");
 const CronJobs = page(() => import("./pages/CronJobs"), "CronJobs");
 const Backups = page(() => import("./pages/Backups"), "Backups");
 const Sites = page(() => import("./pages/Sites"), "Sites");
+const Docker = page(() => import("./pages/Docker"), "Docker");
 const ServerSites = page(() => import("./pages/Sites"), "ServerSites");
 const SitePage = page(() => import("./pages/Sites"), "SitePage");
 const StatusEditor = page(() => import("./pages/StatusEditor"), "StatusEditor");
@@ -155,6 +156,7 @@ export default function App() {
             <Route path="cron" element={<CronJobs />} />
             <Route path="backups" element={<Backups />} />
             <Route path="sites" element={<Sites />} />
+            <Route path="docker" element={<Docker />} />
             <Route path="sites/:id" element={<SitePage />} />
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="oncall" element={<OnCallPage />} />

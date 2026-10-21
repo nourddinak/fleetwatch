@@ -162,7 +162,11 @@ func (s *Service) Files() http.Handler {
 			http.Redirect(w, r, "/sites/"+name+"/", http.StatusMovedPermanently)
 			return
 		}
-		if dir == "" {
+		if dir == "" || site.Plan.Kind == "docker" { // a Docker app's folder holds its code and .env: never served
+			if site.Preview == "" {
+				http.NotFound(w, r)
+				return
+			}
 			relay(w, r, name, site.Preview, file)
 			return
 		}

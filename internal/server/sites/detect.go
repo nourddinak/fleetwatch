@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"fleetwatch/internal/server/github"
 )
 
-// Plan is how a repository becomes a site: published as is, or built on GitHub Actions.
+// Plan is how a repository becomes a site: published as is, built on GitHub Actions,
+// or a Docker app built and run on the server.
 type Plan struct {
-	Kind      string `json:"kind"`      // static | build
+	Kind      string `json:"kind"`      // static | build | docker
 	Framework string `json:"framework"` // what was recognised ("Vite", "Plain HTML"…)
 	Dir       string `json:"dir"`       // static: folder of the repository to publish ("" = all)
 	Install   string `json:"install"`   // build: install command
@@ -22,6 +25,48 @@ type Plan struct {
 	SPA       bool   `json:"spa"`       // unknown paths fall back to /index.html
 	Note      string `json:"note,omitempty"`
 	BasePath  string `json:"basePath,omitempty"` // build: served under this path (<dashboard>/sites/<name>/)
+	// docker: the compose file ("" = the Dockerfile), the port web traffic goes to (the
+	// app's port in the container; with compose, the host port it publishes), and the
+	// host port Fleetwatch picked for a Dockerfile app (127.0.0.1 only).
+	Compose  string `json:"compose,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	HostPort int    `json:"hostPort,omitempty"`
+}
+
+var (
+	composeFiles  = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
+	exposeRe      = regexp.MustCompile(`(?mi)^\s*EXPOSE\s+(\d+)`)
+	composePortRe = regexp.MustCompile(`(?m)^\s*-\s*["']?(?:[\d.]+:)?(\d+):\d+`)
+)
+
+// DetectDocker reads a repository as a Docker app: its compose file, or its Dockerfile.
+func (s *Service) DetectDocker(ctx context.Context, repo, branch string) (Plan, error) {
+	names, err := s.GitHub.List(ctx, repo, "", branch)
+	if err != nil {
+		return Plan{}, err
+	}
+	for _, f := range composeFiles {
+		if slices.Contains(names, f) {
+			p := Plan{Kind: "docker", Framework: "Docker Compose", Compose: f,
+				Note: "Services get the app's .env only through env_file: .env in the compose file. Web traffic goes to the host port below."}
+			if raw, _, _, err := s.GitHub.File(ctx, repo, f, branch); err == nil {
+				if m := composePortRe.FindSubmatch(raw); m != nil {
+					p.Port, _ = strconv.Atoi(string(m[1]))
+				}
+			}
+			return p, nil
+		}
+	}
+	if slices.Contains(names, "Dockerfile") {
+		p := Plan{Kind: "docker", Framework: "Dockerfile", Port: 80}
+		if raw, _, _, err := s.GitHub.File(ctx, repo, "Dockerfile", branch); err == nil {
+			if m := exposeRe.FindSubmatch(raw); m != nil {
+				p.Port, _ = strconv.Atoi(string(m[1]))
+			}
+		}
+		return p, nil
+	}
+	return Plan{}, fmt.Errorf("no Dockerfile or compose file at the top of %s (branch %s)", repo, branch)
 }
 
 // framework: package → name, output folder, single-page app. Earlier rows win.
@@ -143,7 +188,10 @@ func (s *Service) Detect(ctx context.Context, repo, branch string) (Plan, error)
 			return Plan{Kind: "static", Framework: name, Dir: dir}, nil
 		}
 	}
-	return Plan{}, fmt.Errorf("no index.html and no package.json with a build script at the top of %s (branch %s)", repo, branch)
+	if p, err := s.DetectDocker(ctx, repo, branch); err == nil {
+		return p, nil
+	}
+	return Plan{}, fmt.Errorf("no index.html, package.json with a build script, Dockerfile or compose file at the top of %s (branch %s)", repo, branch)
 }
 
 func (s *Service) hasIndex(ctx context.Context, repo, dir, branch string) bool {

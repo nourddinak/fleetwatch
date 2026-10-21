@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -405,5 +406,56 @@ func TestRollback(t *testing.T) {
 	s.Sync(ctx)
 	if len(*sent) != 4 || !strings.HasSuffix((*sent)[3].Archive, "/b3") {
 		t.Fatal("a newer commit deploys again", len(*sent))
+	}
+}
+
+func TestDockerApp(t *testing.T) {
+	s, gh, sent := setup(t)
+	ctx := context.Background()
+	gh.files["me/api"] = map[string]string{"Dockerfile": "FROM node:20\nEXPOSE 3000\n", "package.json": `{"scripts":{"build":"tsc"}}`}
+	gh.files["me/stack"] = map[string]string{"docker-compose.yml": "services:\n  web:\n    ports:\n      - \"8080:80\"\n"}
+	gh.heads["me/api@main"], gh.heads["me/stack@main"] = "a1", "c1"
+	if p, err := s.DetectDocker(ctx, "me/api", "main"); err != nil || p.Kind != "docker" || p.Port != 3000 || p.Compose != "" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if p, _ := s.Detect(ctx, "me/stack", "main"); p.Kind != "docker" || p.Compose != "docker-compose.yml" || p.Port != 8080 {
+		t.Fatalf("%+v", p)
+	}
+	p, _ := s.DetectDocker(ctx, "me/api", "main")
+	s.AgentVersion = func(string) string { return "0.9.153" }
+	if _, err := s.Create(ctx, Input{Repo: "me/api", ServerID: "s1", Plan: &p}, "Nour"); err == nil {
+		t.Fatal("an old agent was asked to run Docker")
+	}
+	s.AgentVersion = func(string) string { return "0.9.154" }
+	api, err := s.Create(ctx, Input{Repo: "me/api", ServerID: "s1", Plan: &p, Env: "TOKEN=x", Domains: []string{"api.example.com"}}, "Nour")
+	if err != nil || api.Plan.HostPort != 20000 || len(api.EnvKeys) != 1 {
+		t.Fatalf("%+v %v", api, err)
+	}
+	waitSent(t, sent, 1)
+	d := (*sent)[0]
+	if d.Docker == nil || d.Docker.Port != 3000 || d.Docker.HostPort != 20000 || d.Docker.Env != "TOKEN=x" {
+		t.Fatalf("%+v", d.Docker)
+	}
+	answer(s, d, true)
+	// A second app gets the next port; a compose app's traffic goes to its own host port.
+	sp, _ := s.DetectDocker(ctx, "me/stack", "main")
+	stack, _ := s.Create(ctx, Input{Repo: "me/stack", ServerID: "s1", Plan: &sp}, "Nour")
+	waitSent(t, sent, 2)
+	if stack.Plan.HostPort != 0 || (*sent)[1].Docker.HostPort != 8080 || (*sent)[1].Docker.Compose != "docker-compose.yml" {
+		t.Fatalf("%+v %+v", stack.Plan, (*sent)[1].Docker)
+	}
+	// The request cannot pick the host port; changing the app's port keeps it.
+	p.Port, p.HostPort = 8000, 22
+	if api, err = s.Update(ctx, api.ID, Change{Plan: &p, AutoDeploy: true, Domains: api.Domains}, "Nour"); err != nil || api.Plan.HostPort != 20000 || api.Plan.Port != 8000 {
+		t.Fatalf("%+v %v", api.Plan, err)
+	}
+	// Its folder (code, .env) is never served under /sites/.
+	rec := httptest.NewRecorder()
+	s.IsLocal = func(string) bool { return true }
+	api.Preview = ""
+	s.save(api)
+	s.Files().ServeHTTP(rec, httptest.NewRequest("GET", "/sites/api/.env", nil))
+	if rec.Code != 404 {
+		t.Fatal(rec.Code)
 	}
 }

@@ -64,7 +64,10 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"site": mark(sess, st), "history": s.Sites.History(st.ID)})
 	}))
 	mux.HandleFunc("POST /api/sites/detect", s.authed(func(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-		var in struct{ Repo, Branch string }
+		var in struct {
+			Repo, Branch string
+			Docker       bool // read it as a Docker app (the Docker page)
+		}
 		if !decode(w, r, &in) || !mayDeploy(w, r, sess, in.Repo) {
 			return
 		}
@@ -77,7 +80,11 @@ func (s *server) siteRoutes(mux *http.ServeMux) {
 			}
 			branch = def
 		}
-		p, err := s.Sites.Detect(r.Context(), in.Repo, branch)
+		detect := s.Sites.Detect
+		if in.Docker {
+			detect = s.Sites.DetectDocker
+		}
+		p, err := detect(r.Context(), in.Repo, branch)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_input", capitalize(err.Error())+".")
 			return

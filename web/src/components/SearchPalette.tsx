@@ -20,6 +20,7 @@ export const PAGES = [
   { to: "/", label: "Overview" },
   { to: "/servers", label: "Servers" },
   { to: "/applications", label: "Applications" },
+  { to: "/docker", label: "Docker" },
   { to: "/logs", label: "Logs" },
   { to: "/cron", label: "Cron jobs" },
   { to: "/backups", label: "Backups" },

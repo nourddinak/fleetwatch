@@ -110,17 +110,19 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 		return err
 	}
 	fmt.Fprintf(log, "Unpacked %d files (%.1f MB)\n", files, float64(size)/1e6)
-	if _, err := os.Stat(filepath.Join(rel, "index.html")); err != nil {
-		fmt.Fprintln(log, "Warning: there is no index.html at the top of the site")
-	}
-	// A Caddyfile in the site is the site's own Caddy configuration: used, never served.
 	var own []byte
-	for _, f := range []string{".fleetwatch.Caddyfile", "Caddyfile"} {
-		if b, err := os.ReadFile(filepath.Join(rel, f)); err == nil {
-			if own == nil {
-				own = b
+	if req.Docker == nil {
+		if _, err := os.Stat(filepath.Join(rel, "index.html")); err != nil {
+			fmt.Fprintln(log, "Warning: there is no index.html at the top of the site")
+		}
+		// A Caddyfile in the site is the site's own Caddy configuration: used, never served.
+		for _, f := range []string{".fleetwatch.Caddyfile", "Caddyfile"} {
+			if b, err := os.ReadFile(filepath.Join(rel, f)); err == nil {
+				if own == nil {
+					own = b
+				}
+				os.Remove(filepath.Join(rel, f))
 			}
-			os.Remove(filepath.Join(rel, f))
 		}
 	}
 
@@ -138,12 +140,32 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	fmt.Fprintf(log, "Live at %s → %s\n", live(req.Name), rel)
 	prune(req.Name, rel)
 
-	// 4. Caddy.
+	// 4. A Docker app is built and started; Caddy proxies to it.
+	upstream := ""
+	if req.Docker != nil {
+		if upstream, err = runDocker(ctx, req, rel, log); err != nil {
+			return err
+		}
+	}
+
+	// 5. Caddy.
 	var site string
 	switch {
 	case req.CaddyConfig != "":
 		site = fmt.Sprintf("# Site %s, set in the Fleetwatch dashboard. Changes here are overwritten.\n%s\n", req.Name, strings.TrimRight(stripPrefix(req.CaddyConfig, req.Name), "\n"))
 		res.Caddy = "custom"
+	case req.Docker != nil && upstream != "" && len(req.Domains) > 0:
+		site = fmt.Sprintf("# Docker app %s, written by Fleetwatch. Changes here are overwritten.\n%s {\n\tencode zstd gzip\n\treverse_proxy %s\n}\n", req.Name, strings.Join(req.Domains, ", "), upstream)
+		res.Caddy = "generated"
+	case req.Docker != nil:
+		fmt.Fprintln(log, "No port to send web traffic to: the app runs without a web address")
+		if _, err := os.Stat(siteFile(req.Name)); err == nil {
+			os.Remove(siteFile(req.Name))
+			if _, err := validate(); err == nil {
+				reload()
+			}
+		}
+		return nil
 	case own != nil:
 		site = fmt.Sprintf("# Site %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, stripPrefix(string(own), req.Name))
 		res.Caddy = "repository"
@@ -356,6 +378,7 @@ func Remove(req proto.SiteRemove) proto.SiteResult {
 		os.Remove(live(req.Name))
 	}
 	os.RemoveAll(releases(req.Name))
+	removeDocker(req.Name) // its containers and images, if it was a Docker app
 	res.OK = true
 	return res
 }

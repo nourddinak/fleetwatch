@@ -279,10 +279,43 @@ func checkPlan(p Plan) error {
 		if p.Node != "" && p.Node != ".nvmrc" && p.Node != ".node-version" {
 			return valid.Error("unknown Node.js version file")
 		}
+	case "docker":
+		if p.Compose != "" && !slices.Contains(composeFiles, p.Compose) {
+			return valid.Error("the compose file is compose.yaml, compose.yml, docker-compose.yml or docker-compose.yaml")
+		}
+		if p.Port < 0 || p.Port > 65535 {
+			return valid.Error("the port is 1-65535 (or empty: no web address)")
+		}
 	default:
-		return valid.Error("a site is static or built")
+		return valid.Error("a site is static, built or a Docker app")
 	}
 	return nil
+}
+
+// DockerAgent is the first agent that runs Docker apps.
+const DockerAgent = "v0.9.154"
+
+// hostPort picks the 127.0.0.1 port a Dockerfile app is published on: its own if it has
+// one, else the first in 20000-29999 no other Docker app on the server uses.
+func (s *Service) hostPort(st Site) int {
+	if st.Plan.Kind != "docker" || st.Plan.Compose != "" || st.Plan.Port == 0 {
+		return 0
+	}
+	if st.Plan.HostPort != 0 {
+		return st.Plan.HostPort
+	}
+	used := map[int]bool{}
+	for _, o := range s.List() {
+		if o.ServerID == st.ServerID && o.ID != st.ID {
+			used[o.Plan.HostPort] = true
+		}
+	}
+	for p := 20000; p < 30000; p++ {
+		if !used[p] {
+			return p
+		}
+	}
+	return 0
 }
 
 func checkDomains(list []string) ([]string, error) {
@@ -390,6 +423,9 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	if err := checkPlan(plan); err != nil {
 		return Site{}, err
 	}
+	if plan.Kind == "docker" && s.AgentVersion != nil && release.Newer(DockerAgent, s.AgentVersion(in.ServerID)) {
+		return Site{}, valid.Error("this server's agent is too old to run Docker apps; update the agent first")
+	}
 	if atPath := s.IsLocal(in.ServerID) || s.preview(name, in.ServerID) != ""; atPath && plan.Kind == "build" {
 		plan = underPath(plan, "/sites/"+name+"/")
 	}
@@ -401,7 +437,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	if err != nil {
 		return Site{}, err
 	}
-	if len(keys) > 0 && plan.Kind != "build" {
+	if len(keys) > 0 && plan.Kind == "static" {
 		return Site{}, valid.Error("a plain HTML site has no build, so a .env would not be used (and must never be served)")
 	}
 	b := make([]byte, 6)
@@ -409,6 +445,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	st := Site{ID: "site_" + hex.EncodeToString(b), Name: name, Repo: in.Repo, Branch: branch, ServerID: in.ServerID, Plan: plan,
 		Domains: domains, Preview: s.preview(name, in.ServerID), AutoDeploy: true, EnvKeys: keys,
 		Status: "waiting", CreatedAt: s.Now().UnixMilli(), CreatedBy: by, OwnerKey: in.Owner, DNSManual: in.DNSManual}
+	st.Plan.HostPort = s.hostPort(st)
 	if err := s.save(st); err != nil {
 		return Site{}, err
 	}
@@ -491,6 +528,14 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 		return st, err
 	}
 	rebuild := false
+	if c.Plan != nil && c.Plan.Kind == "docker" { // Fleetwatch picks the host port, not the request
+		next := st
+		next.Plan = *c.Plan
+		next.Plan.HostPort = st.Plan.HostPort
+		p := *c.Plan
+		p.HostPort = s.hostPort(next)
+		c.Plan = &p
+	}
 	if c.Plan != nil && *c.Plan != st.Plan {
 		if err := checkPlan(*c.Plan); err != nil {
 			return st, err
@@ -532,12 +577,23 @@ func (s *Service) SetEnv(ctx context.Context, id, env string) (Site, error) {
 	if err != nil {
 		return st, err
 	}
-	if st.Plan.Kind != "build" {
+	if st.Plan.Kind == "static" {
 		return st, valid.Error("a plain HTML site has no build, so a .env would not be used")
 	}
 	keys, err := parseEnv(env)
 	if err != nil {
 		return st, err
+	}
+	if st.Plan.Kind == "docker" { // kept here and written next to the app on the server
+		s.db.Exec(`UPDATE sites SET env_enc = ? WHERE id = ?`, s.box.Seal([]byte(env), envAD+st.ID), st.ID)
+		st.EnvKeys = keys
+		if err := s.save(st); err != nil {
+			return st, err
+		}
+		if st.Commit != "" {
+			go s.deployCurrent(st.ID, "")
+		}
+		return st, nil
 	}
 	if err := s.GitHub.SetSecret(ctx, st.Repo, envSecret, env); err != nil {
 		return st, permissionError(fmt.Errorf("could not store the .env on GitHub: %w", err))
@@ -764,8 +820,22 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 	s.mu.Lock()
 	s.running[run] = pending{st.ID, sha, message, by}
 	s.mu.Unlock()
-	if err := s.Send(st.ServerID, proto.TypeSiteDeploy, proto.SiteDeploy{RunID: run, Name: st.Name, Archive: s.GitHub.Tarball(st.Repo, sha), Token: tok,
-		Dir: dir, Domains: domains, SPA: st.Plan.SPA, CaddyConfig: st.CaddyCustom}); err != nil {
+	req := proto.SiteDeploy{RunID: run, Name: st.Name, Archive: s.GitHub.Tarball(st.Repo, sha), Token: tok,
+		Dir: dir, Domains: domains, SPA: st.Plan.SPA, CaddyConfig: st.CaddyCustom}
+	if st.Plan.Kind == "docker" {
+		if s.AgentVersion != nil && release.Newer(DockerAgent, s.AgentVersion(st.ServerID)) {
+			s.mu.Lock()
+			delete(s.running, run)
+			s.mu.Unlock()
+			return valid.Error("this server's agent is too old to run Docker apps; update the agent first")
+		}
+		env, _ := s.Env(st.ID)
+		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, Port: st.Plan.Port, HostPort: st.Plan.HostPort, Env: env}
+		if st.Plan.Compose != "" {
+			req.Docker.HostPort = st.Plan.Port // the host port its compose file publishes
+		}
+	}
+	if err := s.Send(st.ServerID, proto.TypeSiteDeploy, req); err != nil {
 		s.mu.Lock()
 		delete(s.running, run)
 		s.mu.Unlock()

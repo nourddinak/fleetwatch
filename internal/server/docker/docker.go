@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -113,15 +114,16 @@ func (s *Service) Refresh(serverID string) error {
 }
 
 var actions = map[string][]string{
-	"container": {"start", "stop", "restart", "remove", "logs", "update"},
-	"project":   {"start", "stop", "restart", "update"},
+	"container": {"start", "stop", "restart", "remove", "delete", "logs", "update"},
+	"project":   {"start", "stop", "restart", "update", "down"},
+	"engine":    {"install", "uninstall", "purge"}, // Docker itself (agent 0.9.154+)
 	"image":     {"remove", "prune"},
 	"volume":    {"remove"},
 }
 
 // Destructive reports whether an action deletes something (only the owner may).
 func Destructive(kind, action string) bool {
-	return action == "remove" || action == "prune"
+	return slices.Contains([]string{"remove", "prune", "delete", "down", "install", "uninstall", "purge"}, action)
 }
 
 // Act sends an action to the agent and returns its run ID; the result arrives on the
@@ -134,7 +136,7 @@ func (s *Service) Act(serverID string, a proto.DockerAction) (string, error) {
 	for _, x := range actions[a.Kind] {
 		ok = ok || x == a.Action
 	}
-	if !ok || (a.Target == "" && a.Action != "prune") || len(a.Target) > 255 {
+	if !ok || (a.Target == "" && a.Action != "prune" && a.Kind != "engine") || len(a.Target) > 255 {
 		return "", valid.Error("unknown docker action")
 	}
 	b := make([]byte, 8)
@@ -234,4 +236,7 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 	s.mu.Unlock()
 	s.publish(serverID, cp)
 	s.Bus.Publish("docker.result", map[string]any{"serverId": serverID, "result": res})
+	if res.Kind == "engine" || res.Action == "delete" || res.Action == "down" {
+		s.Refresh(serverID) // Docker appeared or went away, or containers did
+	}
 }

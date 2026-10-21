@@ -13,18 +13,20 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"fleetwatch/internal/agent/sysexec"
 	"fleetwatch/internal/proto"
 )
 
-// cli is the docker binary, or "" when Docker is not installed.
-var cli = sync.OnceValue(func() string {
+// cli is the docker binary, or "" when Docker is not installed (looked up each time:
+// Docker can be installed or removed from the dashboard).
+func cli() string {
 	p, _ := exec.LookPath("docker")
 	return p
-})
+}
+
+var errUnknown = errors.New("unknown docker action")
 
 // Available reports whether the docker CLI is installed.
 func Available() bool { return cli() != "" }
@@ -249,6 +251,9 @@ func Act(ctx context.Context, a proto.DockerAction) proto.DockerResult {
 }
 
 func act(ctx context.Context, a proto.DockerAction) (string, error) {
+	if a.Kind == "engine" {
+		return engine(ctx, a.Action)
+	}
 	if !Available() {
 		return "", errors.New("Docker is not installed on this server")
 	}
@@ -265,6 +270,8 @@ func act(ctx context.Context, a proto.DockerAction) (string, error) {
 			return run(ctx, short, "stop", "-t", "30", a.Target)
 		case "remove":
 			return run(ctx, short, "rm", a.Target) // refuses a running container
+		case "delete":
+			return run(ctx, short, "rm", "-f", a.Target) // stops it first
 		case "logs":
 			return logs(ctx, a.Target)
 		case "update":
@@ -292,6 +299,8 @@ func act(ctx context.Context, a proto.DockerAction) (string, error) {
 			return compose(ctx, a.Target, long, "up", "-d")
 		case "stop", "restart":
 			return compose(ctx, a.Target, short, a.Action)
+		case "down": // its containers and networks go; named volumes stay
+			return compose(ctx, a.Target, long, "down", "--remove-orphans")
 		case "update":
 			out, err := compose(ctx, a.Target, long, "pull")
 			if err != nil {
