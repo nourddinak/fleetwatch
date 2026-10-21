@@ -23,6 +23,7 @@ import (
 	"fleetwatch/internal/agent/backup"
 	"fleetwatch/internal/agent/caddy"
 	"fleetwatch/internal/agent/config"
+	"fleetwatch/internal/agent/dbtool"
 	"fleetwatch/internal/agent/docker"
 	"fleetwatch/internal/agent/envfile"
 	agentexec "fleetwatch/internal/agent/exec"
@@ -234,6 +235,11 @@ func (r *Runner) session(ctx context.Context) error {
 							r.sendCurrent(proto.TypeDockerReport, docker.Report(rootCtx))
 						}
 					}()
+				}
+			case proto.TypeDBRequest:
+				var req proto.DBRequest
+				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {
+					go func() { r.sendCurrent(proto.TypeDBResult, dbtool.Handle(rootCtx, req)) }()
 				}
 			case proto.TypeBackupScan:
 				go func() { r.sendCurrent(proto.TypeBackupFound, backup.Find(rootCtx)) }()

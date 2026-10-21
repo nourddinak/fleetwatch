@@ -37,6 +37,7 @@ import (
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/cron"
 	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/dbtool"
 	"fleetwatch/internal/server/disk"
 	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
@@ -546,6 +547,7 @@ func serve() error {
 	hub.Handlers[proto.TypeDiskReport] = diskSvc.OnReport
 	hub.Handlers[proto.TypeDiskCleaned] = diskSvc.OnCleaned
 	dockerSvc := docker.New(bus)
+	dockerSvc.Registries = docker.NewRegistries(d, box)
 	dockerSvc.Send, dockerSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
 	hub.Handlers[proto.TypeDockerReport] = dockerSvc.OnReport
 	hub.Handlers[proto.TypeDockerResult] = dockerSvc.OnResult
@@ -605,6 +607,7 @@ func serve() error {
 	ghSvc := github.New(d, box, bus)
 	siteSvc := sites.New(d, box, bus, ghSvc)
 	siteSvc.Send, siteSvc.AgentVersion, siteSvc.Notify = hub.Send, diskSvc.AgentVersion, admin.Notify
+	siteSvc.RegistryAuths = dockerSvc.Registries.Auths
 	siteSvc.PublicIP = func(id string) string {
 		if rec, err := hub.Reg.Get(id); err == nil {
 			return rec.PublicIP
@@ -712,6 +715,9 @@ func serve() error {
 	hub.Handlers[proto.TypeCronReport] = cronSvc.OnReport
 	hub.Handlers[proto.TypeCronResult] = cronSvc.OnResult
 	cronSvc.Send, cronSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
+	dbSvc := dbtool.New()
+	dbSvc.Send, dbSvc.AgentVersion = hub.Send, diskSvc.AgentVersion
+	hub.Handlers[proto.TypeDBResult] = dbSvc.OnResult
 	backupSvc := backups.New(d, box, incStore, bus)
 	backupSvc.Name, backupSvc.Send, backupSvc.AgentVersion = serverName, hub.Send, diskSvc.AgentVersion
 	hub.Handlers[proto.TypeBackupFound] = backupSvc.OnFound
@@ -833,7 +839,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Databases: dbSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

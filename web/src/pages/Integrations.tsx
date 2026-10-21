@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeft, ChevronRight, Globe, Mail, ShieldAlert, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, Container, ChevronRight, Globe, Mail, ShieldAlert, ExternalLink, FolderGit2, GitBranch, GitCommitHorizontal, Lock, RefreshCw, TriangleAlert, Users, Webhook } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
@@ -10,6 +10,7 @@ import { goGitHub } from "./Sites";
 import { AISetup } from "../components/AISetup";
 import { MobileCard } from "../components/MobileCard";
 import { CHANNEL_FIELDS, ChannelCard, type Channel } from "./Settings";
+import { DockerRegistries } from "../components/DockerRegistries";
 import { EmailSenders, useSenders } from "../components/EmailSenders";
 import { TokenSettings } from "./Tokens";
 import { WidgetCard } from "./StatusEditorTabs";
@@ -215,6 +216,7 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
   const tokens = useApi<unknown[]>("/api/tokens");
   const pages = useApi<StatusSummary[]>("/api/status-pages").data ?? [];
   const vulns = useApi<VulnSummary>("/api/integrations/vulns");
+  const registries = useApi<unknown[]>("/api/integrations/docker-registries");
   const alert = (p: "telegram" | "discord" | "webhook", logo: ReactNode, desc: string) => {
     const c = ch(p);
     return { key: p, logo, name: CHANNEL_FIELDS[p].title, on: !!c?.enabled && !!c.configured, desc,
@@ -248,6 +250,9 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
     { key: "vulns", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#dc2626]/10 text-[#dc2626]"><ShieldAlert size={22} /></span>, name: "Vulnerability database", on: !!vulns.data?.enabled,
       desc: "Your apps' packages checked every day against OSV.dev (npm, PyPI, Go, crates, Packagist…); serious findings alert you.",
       status: vulns.data ? (vulns.data.enabled ? `${vulns.data.apps} apps · ${vulns.data.deps} packages` : "Turned off") : "" },
+    { key: "registries", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#1D63ED]/10 text-[#1D63ED]"><Container size={22} /></span>, name: "Docker registries", on: (registries.data?.length ?? 0) > 0,
+      desc: "Logins for private images on GHCR, Docker Hub, GitLab or any registry: Docker apps build with them, updates pull with them.",
+      status: registries.data?.length ? `${registries.data.length} login${registries.data.length === 1 ? "" : "s"}` : "Public images need none" },
     alert("telegram", <Telegram size={30} />, "Alerts in a Telegram chat or group, through your own bot."),
     alert("discord", <Discord size={30} />, "Alerts in a Discord channel, through a channel webhook."),
     alert("webhook", <Webhook size={28} color="#C73A63" strokeWidth={2.2} />, "Alerts as JSON to your own URL: n8n, Zapier, Slack workflows, Home Assistant, your code."),
@@ -520,7 +525,7 @@ function Repos() {
   );
 }
 
-const ALERT_TABS = ["telegram", "discord", "webhook", "phone", "email", "api", "widget", "vulns"];
+const ALERT_TABS = ["telegram", "discord", "webhook", "phone", "email", "api", "widget", "vulns", "registries"];
 
 /** One place alerts can go: its settings, opened from its card. */
 function AlertChannel({ tab }: { tab: string }) {
@@ -530,6 +535,7 @@ function AlertChannel({ tab }: { tab: string }) {
   if (tab === "api") return <TokenSettings />;
   if (tab === "widget") return <Widgets />;
   if (tab === "vulns") return <VulnDatabase />;
+  if (tab === "registries") return <DockerRegistries />;
   if (chans.error) return <ErrorState message={chans.error} onRetry={chans.reload} />;
   const ch = chans.data?.find((c) => c.provider === tab);
   if (!ch) return <LoadingState />;

@@ -31,23 +31,31 @@ export function Docker() {
             <EmptyState icon={<ServerIcon size={20} />} title="No servers yet" desc="Add a server first." />
           ) : (
             <Card>
-              <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-line pb-4">
-                {servers.length <= 8 ? servers.map((s) => (
-                  <button key={s.id} onClick={() => set("server", s.id)}
-                    className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm", s.id === picked.id ? "border-accent bg-accent/10 font-medium" : "border-line text-muted hover:text-fg")}>
-                    <span className={cn("h-2 w-2 rounded-full", s.status === "disconnected" ? "bg-crit" : "bg-ok")} />{s.name}
-                  </button>
-                )) : (
-                  <Select aria-label="Server" className="max-w-xs" value={picked.id} onChange={(e) => set("server", e.target.value)}>
-                    {servers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.status === "disconnected" ? " (offline)" : ""}</option>)}
-                  </Select>
-                )}
-              </div>
+              <ServerTabs value={picked.id} onChange={(id) => set("server", id)} />
               <ServerDocker key={picked.id} serverId={picked.id} />
             </Card>
           ))}
         </div>
       </Gate>
     </>
+  );
+}
+
+/** Picks one server: a row of names with online dots, or a list when there are many. */
+export function ServerTabs({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const { servers } = useStore();
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-line pb-4">
+      {servers.length <= 8 ? servers.map((s) => (
+        <button key={s.id} onClick={() => onChange(s.id)}
+          className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm", s.id === value ? "border-accent bg-accent/10 font-medium" : "border-line text-muted hover:text-fg")}>
+          <span className={cn("h-2 w-2 rounded-full", s.status === "disconnected" ? "bg-crit" : "bg-ok")} />{s.name}
+        </button>
+      )) : (
+        <Select aria-label="Server" className="max-w-xs" value={value} onChange={(e) => onChange(e.target.value)}>
+          {servers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.status === "disconnected" ? " (offline)" : ""}</option>)}
+        </Select>
+      )}
+    </div>
   );
 }

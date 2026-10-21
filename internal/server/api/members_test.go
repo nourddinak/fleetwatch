@@ -35,13 +35,16 @@ func TestTeamMembers(t *testing.T) {
 		t.Fatalf("a limited member sees: %v", list)
 	}
 	for path, want := range map[string]int{
-		"/api/servers/" + serverA: 200,
-		"/api/servers/" + serverB: 403,
-		"/api/members":            403,
-		"/api/tokens":             403,
-		"/api/settings/security":  403,
-		"/api/status-pages":       403,
-		"/api/metrics?range=1h":   403, // fleet-wide
+		"/api/servers/" + serverA:         200,
+		"/api/servers/" + serverB:         403,
+		"/api/members":                    403,
+		"/api/tokens":                     403,
+		"/api/settings/security":          403,
+		"/api/status-pages":               403,
+		"/api/metrics?range=1h":           403, // fleet-wide
+		"/api/servers/" + serverA + "/db": 403, // databases: owner only, even on its own server
+		"/api/servers/" + serverA + "/db/tables?engine=sqlite&db=/x": 403,
+		"/api/integrations/docker-registries":                        403,
 	} {
 		if st, _ := ops.do("GET", path, nil); st != want {
 			t.Errorf("operator GET %s: %d, want %d", path, st, want)

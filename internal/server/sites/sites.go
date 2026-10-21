@@ -130,6 +130,8 @@ type Service struct {
 	Notify       func(title, body, severity string)
 	// DNS points the sites' domains at their server through their owner's DNS accounts.
 	DNS *dns.Service
+	// RegistryAuths are the private Docker registry logins, for Docker apps' builds.
+	RegistryAuths func() []proto.RegistryAuth
 	// IsLocal reports whether a server is the dashboard's own machine: its sites are
 	// served at <dashboard>/sites/<name>/ instead of a preview address.
 	IsLocal func(serverID string) bool
@@ -831,6 +833,9 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 		}
 		env, _ := s.Env(st.ID)
 		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, Port: st.Plan.Port, HostPort: st.Plan.HostPort, Env: env}
+		if s.RegistryAuths != nil {
+			req.Docker.Auths = s.RegistryAuths()
+		}
 		if st.Plan.Compose != "" {
 			req.Docker.HostPort = st.Plan.Port // the host port its compose file publishes
 		}

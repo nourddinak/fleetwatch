@@ -41,6 +41,7 @@ var (
 	commandPath  = regexp.MustCompile(`^/api/commands/([^/]+)`)
 	runPath      = regexp.MustCompile(`^/api/runs/([^/]+)`)
 	sitePath     = regexp.MustCompile(`^/api/sites/([^/]+)`)
+	dbPath       = regexp.MustCompile(`^/api/servers/[^/]+/db(/|$)`) // the database tool: data and logins
 	appEnvPath   = regexp.MustCompile(`^/api/(apps/[^/]+/env|servers/[^/]+/web)(/history)?$`)
 )
 
@@ -144,7 +145,7 @@ func (s *server) allowed(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			return deny("Only the owner can do this.")
 		}
 	}
-	if appEnvPath.MatchString(p) { // an app's secrets
+	if appEnvPath.MatchString(p) || dbPath.MatchString(p) { // an app's secrets, the databases
 		return deny("Only the owner can do this.")
 	}
 	key := r.Method + " " + p

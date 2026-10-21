@@ -19,6 +19,35 @@ func (s *server) dockerRoutes(mux *http.ServeMux) {
 		}
 		fail(w, err)
 	}
+	// Private registry logins (owner only: under /api/integrations).
+	mux.HandleFunc("GET /api/integrations/docker-registries", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		writeJSON(w, http.StatusOK, s.Docker.Registries.List())
+	}))
+	mux.HandleFunc("POST /api/integrations/docker-registries", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in docker.Registry
+		if !decode(w, r, &in) {
+			return
+		}
+		out, err := s.Docker.Registries.Save(in)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "docker.registry_save", out.Host, out.Username)
+		writeJSON(w, http.StatusOK, out)
+	}))
+	mux.HandleFunc("DELETE /api/integrations/docker-registries/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if err := s.Docker.Registries.Delete(r.PathValue("id")); err != nil {
+			if errors.Is(err, docker.ErrNoRegistry) {
+				writeError(w, http.StatusNotFound, "not_found", "Registry login not found.")
+				return
+			}
+			fail(w, err)
+			return
+		}
+		s.audit(r, "docker.registry_delete", r.PathValue("id"), "")
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	mux.HandleFunc("GET /api/servers/{id}/docker", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		writeJSON(w, http.StatusOK, s.Docker.State(r.PathValue("id")))
 	}))

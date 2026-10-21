@@ -398,6 +398,41 @@ const (
 	TypeBackupRestored = "backup.restored" // agent → server: BackupRestored
 )
 
+// Databases on a server (agent 0.9.156+): list them, their tables, run a read-only query,
+// or create a database with its own user.
+const (
+	TypeDBRequest = "db.request" // server → agent: DBRequest
+	TypeDBResult  = "db.result"  // agent → server: DBResult
+)
+
+type DBRequest struct {
+	RunID    string `json:"runId"`
+	Op       string `json:"op"`     // list | tables | query | create
+	Engine   string `json:"engine"` // postgres | mysql | sqlite
+	Database string `json:"database,omitempty"`
+	Query    string `json:"query,omitempty"`
+	User     string `json:"user,omitempty"`     // create
+	Password string `json:"password,omitempty"` // create
+}
+
+type DBTable struct {
+	Name string `json:"name"`
+	Rows int64  `json:"rows"` // estimated for PostgreSQL and MySQL
+	Size int64  `json:"size,omitempty"`
+}
+
+type DBResult struct {
+	RunID     string       `json:"runId"`
+	Error     string       `json:"error,omitempty"`
+	Databases []BackupItem `json:"databases,omitempty"`
+	Engines   []string     `json:"engines,omitempty"` // servers that can create databases: postgres, mysql
+	Tables    []DBTable    `json:"tables,omitempty"`
+	Columns   []string     `json:"columns,omitempty"`
+	Rows      [][]*string  `json:"rows,omitempty"` // NULL is null
+	Truncated bool         `json:"truncated,omitempty"`
+	TookMs    int64        `json:"tookMs"`
+}
+
 // BackupItem is one thing to back up: a database or a folder.
 type BackupItem struct {
 	Kind string `json:"kind"` // postgres | mysql | sqlite | folder
@@ -662,6 +697,8 @@ type SiteDocker struct {
 	Port     int    `json:"port,omitempty"`    // the app's port in the container (Dockerfile)
 	HostPort int    `json:"hostPort,omitempty"`
 	Env      string `json:"env,omitempty"` // .env, written next to the code (0600)
+	// Auths are private registry logins, for FROM and image: lines (agent 0.9.156+).
+	Auths []RegistryAuth `json:"auths,omitempty"`
 }
 
 // Certificates renewed on demand (agent 0.9.132+): Caddy gets a fresh one now.
@@ -791,10 +828,18 @@ type DockerReport struct {
 // DockerAction: Kind container (start | stop | restart | remove | logs | update),
 // project (start | stop | restart | update), image (remove | prune) or volume (remove).
 type DockerAction struct {
-	RunID  string `json:"runId"`
-	Kind   string `json:"kind"`
-	Target string `json:"target"`
-	Action string `json:"action"`
+	RunID  string         `json:"runId"`
+	Kind   string         `json:"kind"`
+	Target string         `json:"target"`
+	Action string         `json:"action"`
+	Auths  []RegistryAuth `json:"auths,omitempty"` // private registry logins for pulls (agent 0.9.156+)
+}
+
+// RegistryAuth is a login to a private image registry (docker.io, ghcr.io…).
+type RegistryAuth struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type DockerResult struct {

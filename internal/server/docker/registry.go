@@ -61,7 +61,7 @@ var manifestTypes = strings.Join([]string{
 }, ", ")
 
 // latestDigest asks the registry which digest ref's tag points to now.
-func latestDigest(ctx context.Context, client *http.Client, ref string) (string, error) {
+func latestDigest(ctx context.Context, client *http.Client, ref string, cred func(registry string) (user, pass string)) (string, error) {
 	registry, repo, tag, ok := parseRef(ref)
 	if !ok {
 		return "", errors.New("nothing to check")
@@ -84,7 +84,11 @@ func latestDigest(ctx context.Context, client *http.Client, ref string) (string,
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized { // the usual: an anonymous token first
-		token, err := registryToken(ctx, client, resp.Header.Get("WWW-Authenticate"))
+		user, pass := "", ""
+		if cred != nil {
+			user, pass = cred(registry)
+		}
+		token, err := registryToken(ctx, client, resp.Header.Get("WWW-Authenticate"), user, pass)
 		if err != nil {
 			return "", err
 		}
@@ -104,7 +108,8 @@ func latestDigest(ctx context.Context, client *http.Client, ref string) (string,
 }
 
 // registryToken gets an anonymous pull token from the realm a registry names.
-func registryToken(ctx context.Context, client *http.Client, challenge string) (string, error) {
+// With a saved login (user, pass) the token covers private images too.
+func registryToken(ctx context.Context, client *http.Client, challenge, user, pass string) (string, error) {
 	if !strings.HasPrefix(strings.ToLower(challenge), "bearer ") {
 		return "", errors.New("the registry wants a password (a private image?)")
 	}
@@ -124,6 +129,9 @@ func registryToken(ctx context.Context, client *http.Client, challenge string) (
 	}
 	realm.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, realm.String(), nil)
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -190,7 +198,7 @@ func (s *Service) CheckUpdates(ctx context.Context, force bool) {
 		go func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			d, err := latestDigest(ctx, s.Client, ref)
+			d, err := latestDigest(ctx, s.Client, ref, s.Registries.cred)
 			l := latest{digest: d, at: s.Now()}
 			if err != nil {
 				l.err = err.Error()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/json"
@@ -23,6 +24,8 @@ import (
 	"fleetwatch/internal/server/auth"
 	"fleetwatch/internal/server/commands"
 	"fleetwatch/internal/server/db"
+	"fleetwatch/internal/server/dbtool"
+	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -73,7 +76,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	detector := incidents.NewDetector(incStore, d, hub.Connected, func(string) string { return "" })
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Status: testStatus(d, incStore, hub, appSvc), Maint: maint, OnCall: testOnCall(d, incStore, svc), Mobile: testPhones(d, svc)}))
+		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Status: testStatus(d, incStore, hub, appSvc), Maint: maint, OnCall: testOnCall(d, incStore, svc), Mobile: testPhones(d, svc),
+		Databases: dbtool.New(), Docker: testDocker(d, box, bus)}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }
@@ -333,4 +337,10 @@ func TestClientIP(t *testing.T) {
 			t.Errorf("%s + XFF %q + CF %q: got %s want %s", x.remote, x.xff, x.cf, got, x.want)
 		}
 	}
+}
+
+func testDocker(d *sql.DB, box *secret.Box, bus *live.Bus) *docker.Service {
+	s := docker.New(bus)
+	s.Registries = docker.NewRegistries(d, box)
+	return s
 }

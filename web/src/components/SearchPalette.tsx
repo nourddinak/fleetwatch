@@ -21,6 +21,7 @@ export const PAGES = [
   { to: "/servers", label: "Servers" },
   { to: "/applications", label: "Applications" },
   { to: "/docker", label: "Docker" },
+  { to: "/databases", label: "Databases" },
   { to: "/logs", label: "Logs" },
   { to: "/cron", label: "Cron jobs" },
   { to: "/backups", label: "Backups" },

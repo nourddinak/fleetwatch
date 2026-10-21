@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"fleetwatch/internal/proto"
+	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/live"
+	"fleetwatch/internal/server/secret"
 )
 
 func TestParseRef(t *testing.T) {
@@ -77,5 +80,61 @@ func TestImageUpdates(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "available,current," {
 		t.Fatal(got)
+	}
+}
+
+func TestRegistryLogins(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	box, _ := secret.New(make([]byte, 32))
+	r := NewRegistries(d, box)
+	if _, err := r.Save(Registry{Host: "ghcr.io", Username: "me"}); err == nil {
+		t.Fatal("saved without a password")
+	}
+	r.Save(Registry{Host: "https://GHCR.io/", Username: "me", Password: "old"})
+	r.Save(Registry{Host: "ghcr.io", Username: "me", Password: "ghp_new"}) // same login: replaced
+	r.Save(Registry{Host: "index.docker.io", Username: "hub", Password: "dckr"})
+	list := r.List()
+	if len(list) != 2 || list[0].Password != "" || !list[0].HasPassword || list[1].Host != "docker.io" {
+		t.Fatalf("%+v", list)
+	}
+	if u, p := r.cred("ghcr.io"); u != "me" || p != "ghp_new" {
+		t.Fatal(u, p)
+	}
+	if u, _ := r.cred("registry-1.docker.io"); u != "hub" {
+		t.Fatal("Docker Hub login not found by the update check's host")
+	}
+
+	// A private image: the token comes only with the login.
+	var host string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/token":
+			if u, p, ok := req.BasicAuth(); !ok || u != "me" || p != "ghp_new" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"token":"t2"}`))
+		case req.Header.Get("Authorization") != "Bearer t2":
+			w.Header().Set("WWW-Authenticate", `Bearer realm="https://`+host+`/token",service="reg",scope="repository:me/private:pull"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.Header().Set("Docker-Content-Digest", "sha256:p")
+		}
+	}))
+	defer srv.Close()
+	host = strings.TrimPrefix(srv.URL, "https://")
+	cred := func(string) (string, string) { return r.cred("ghcr.io") }
+	if dg, err := latestDigest(context.Background(), srv.Client(), host+"/me/private:v1", cred); err != nil || dg != "sha256:p" {
+		t.Fatal(dg, err)
+	}
+	if _, err := latestDigest(context.Background(), srv.Client(), host+"/me/private:v1", nil); err == nil {
+		t.Fatal("a private image answered without a login")
+	}
+	if r.Delete(list[0].ID) != nil || len(r.List()) != 1 {
+		t.Fatal("delete")
 	}
 }

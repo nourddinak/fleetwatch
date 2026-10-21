@@ -37,7 +37,11 @@ var (
 )
 
 func run(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
-	out, err := sysexec.Run(ctx, sysexec.Opts{Timeout: timeout, MaxOut: 8 << 20}, cli(), args...)
+	o := sysexec.Opts{Timeout: timeout, MaxOut: 8 << 20}
+	if env := ConfigEnv(ctx); env != nil {
+		o.Env = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "HOME=/root"}, env...)
+	}
+	out, err := sysexec.Run(ctx, o, cli(), args...)
 	return string(out), err
 }
 
@@ -251,6 +255,8 @@ func Act(ctx context.Context, a proto.DockerAction) proto.DockerResult {
 }
 
 func act(ctx context.Context, a proto.DockerAction) (string, error) {
+	ctx, done := WithAuth(ctx, a.Auths)
+	defer done()
 	if a.Kind == "engine" {
 		return engine(ctx, a.Action)
 	}

@@ -38,6 +38,7 @@ type Service struct {
 	Bus          *live.Bus
 	Now          func() time.Time
 	Client       *http.Client // to the image registries
+	Registries   *Registries  // private registry logins, for pulls and the update check
 
 	mu      sync.Mutex
 	latest  map[string]latest // image reference → what its tag points to
@@ -142,6 +143,9 @@ func (s *Service) Act(serverID string, a proto.DockerAction) (string, error) {
 	b := make([]byte, 8)
 	rand.Read(b)
 	a.RunID = hex.EncodeToString(b)
+	if a.Action == "update" || a.Action == "start" {
+		a.Auths = s.Registries.Auths() // a pull of a private image needs its login
+	}
 	if err := s.Send(serverID, proto.TypeDockerAction, a); err != nil {
 		return "", err
 	}

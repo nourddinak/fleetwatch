@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"fleetwatch/internal/agent/docker"
 	"fleetwatch/internal/proto"
 )
 
@@ -32,7 +33,7 @@ var dockerCmd = func(ctx context.Context, dir string, timeout time.Duration, log
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8", "DOCKER_BUILDKIT=1"}
+	cmd.Env = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8", "DOCKER_BUILDKIT=1"}, docker.ConfigEnv(ctx)...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
@@ -53,6 +54,8 @@ var dockerCmd = func(ctx context.Context, dir string, timeout time.Duration, log
 // runDocker builds and starts a release; it returns the address Caddy proxies to.
 func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes.Buffer) (string, error) {
 	d := req.Docker
+	ctx, done := docker.WithAuth(ctx, d.Auths) // private images in FROM and image: lines
+	defer done()
 	project := "fw-" + req.Name
 	if strings.TrimSpace(d.Env) != "" || d.Compose != "" {
 		if err := os.WriteFile(filepath.Join(rel, ".env"), []byte(d.Env), 0o600); err != nil {
