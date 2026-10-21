@@ -84,6 +84,7 @@ export function ServerDetail() {
           { to: `${base}/sites`, label: "Sites", icon: <Rocket size={14} />, badge: siteCount !== undefined ? <Badge>{siteCount}</Badge> : undefined },
           ...(s.capabilities.includes("Docker") ? [{ to: `${base}/docker`, label: "Docker", icon: <Container size={14} /> }] : []),
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: c.incidents ? <Badge tone="crit">{c.incidents}</Badge> : undefined },
+          { to: `${base}/timeline`, label: "Timeline", icon: <History size={14} /> },
           { to: `${base}/agent`, label: "Agent", icon: <Bot size={14} /> },
           { to: `${base}/settings`, label: "Settings", icon: <Settings size={14} /> },
         ]}

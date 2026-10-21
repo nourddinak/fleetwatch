@@ -59,6 +59,8 @@ const AppEnv = page(() => import("./pages/AppTabs"), "AppEnv");
 const AppWeb = page(() => import("./pages/AppTabs"), "AppWeb");
 const ServerWeb = page(() => import("./pages/ServerDetail"), "ServerWeb");
 const AppHealth = page(() => import("./pages/AppTabs"), "AppHealth");
+const AppTimeline = page(() => import("./components/Timeline"), "AppTimeline");
+const ServerTimeline = page(() => import("./components/Timeline"), "ServerTimeline");
 const AppIncidents = page(() => import("./pages/AppTabs"), "AppIncidents");
 const AppLogs = page(() => import("./pages/AppTabs"), "AppLogs");
 const AppMetrics = page(() => import("./pages/AppTabs"), "AppMetrics");
@@ -129,6 +131,7 @@ export default function App() {
               <Route path="docker" element={<ServerDocker />} />
               <Route path="firewall" element={<ServerFirewall />} />
               <Route path="incidents" element={<ServerIncidents />} />
+              <Route path="timeline" element={<ServerTimeline />} />
               <Route path="agent" element={<ServerAgent />} />
               <Route path="sites" element={<ServerSites />} />
               <Route path="web" element={<ServerWeb />} />
@@ -141,6 +144,7 @@ export default function App() {
               <Route path="metrics" element={<AppMetrics />} />
               <Route path="commands" element={<AppCommands />} />
               <Route path="incidents" element={<AppIncidents />} />
+              <Route path="timeline" element={<AppTimeline />} />
               <Route path="health" element={<AppHealth />} />
               <Route path="storage" element={<AppStorage />} />
               <Route path="git" element={<AppGit />} />

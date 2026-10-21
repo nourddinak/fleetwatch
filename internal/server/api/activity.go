@@ -137,6 +137,13 @@ func (s *server) activityOf(r audit.Row) Activity {
 	case verb == "site":
 		a.Text = map[string]string{"create": "added the site", "delete": "removed the site", "redeploy": "redeployed the site",
 			"env": "changed the .env of the site", "update": "changed the site"}[rest] + " " + r.Detail + " on " + srv(r.Target)
+	case verb == "db":
+		what, q, _ := strings.Cut(r.Detail, ": ")
+		a.Text = map[string]string{"unlock": "opened the databases", "query": "ran a query on " + what + " of " + srv(r.Target) + ": " + q,
+			"create": "created the database " + r.Detail + " on " + srv(r.Target)}[rest]
+	case verb == "cron":
+		a.Text = map[string]string{"add": "added a cron job", "update": "changed a cron job", "delete": "deleted a cron job", "pause": "paused a cron job",
+			"resume": "resumed a cron job", "run": "ran a cron job"}[rest] + " on " + srv(r.Target) + ": " + r.Detail
 	case r.Action == "runbook.save":
 		a.Text = "updated the runbook for " + incidents.Labels[r.Target]
 	case r.Action == "postmortem.save":

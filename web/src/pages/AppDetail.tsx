@@ -1,6 +1,6 @@
 import { Link, Outlet, useParams } from "react-router-dom";
 import { MaintenanceControl } from "../components/Maintenance";
-import { Activity, AlertOctagon, Cog, FileCode2, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, KeyRound, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
+import { Activity, AlertOctagon, Cog, FileCode2, FileText, Folder, GitBranch, Globe, HardDrive, HeartPulse, History, KeyRound, Layers, LayoutGrid, RotateCw, ScrollText, Server as ServerIcon, Settings, SquareTerminal } from "lucide-react";
 import { AppIcon } from "../components/AppsTable";
 import { webServers } from "../utils/web";
 import { useStore } from "../store/store";
@@ -54,6 +54,7 @@ export function AppDetail() {
           { to: `${base}/metrics`, label: "Metrics", icon: <Activity size={14} /> },
           { to: `${base}/commands`, label: "Commands", icon: <SquareTerminal size={14} /> },
           { to: `${base}/incidents`, label: "Incidents", icon: <AlertOctagon size={14} />, badge: active ? <Badge tone="crit">{active}</Badge> : undefined },
+          { to: `${base}/timeline`, label: "Timeline", icon: <History size={14} /> },
           { to: `${base}/health`, label: "Health", icon: <HeartPulse size={14} /> },
           { to: `${base}/storage`, label: "Storage", icon: <HardDrive size={14} /> },
           { to: `${base}/git`, label: "Git", icon: <GitBranch size={14} /> },

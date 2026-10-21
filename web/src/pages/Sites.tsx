@@ -4,6 +4,7 @@ import { AlertTriangle, BarChart3, Container, Check, CheckCircle2, Clock, Extern
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { MetricChart } from "../components/MetricChart";
+import { Timeline } from "../components/Timeline";
 import { fmtBytes } from "../components/DiskRescue";
 import { providerName } from "../components/DnsAccounts";
 import { relTime } from "../mock/util";
@@ -950,6 +951,7 @@ export function SitePage() {
     { value: "overview", label: "Overview", icon: LayoutDashboard },
     ...(owner ? [{ value: "domains", label: "Domains & DNS", icon: Globe }, { value: "deploy", label: site.plan.kind === "build" ? "Build & deploy" : "Deploy", icon: Hammer }] : []),
     { value: "caddy", label: "Caddy", icon: FileCode2 },
+    { value: "timeline", label: "Timeline", icon: History },
   ];
   const current = tabs.some((t) => t.value === tab) ? tab : "overview";
   return (
@@ -1080,6 +1082,7 @@ export function SitePage() {
         )}
           </div>
         )}
+        {current === "timeline" && <div className="max-w-4xl"><Timeline query={`site=${site.id}`} /></div>}
         {current === "caddy" && <div className="max-w-4xl"><SiteCaddy site={site} editing={caddyText} setEditing={setCaddyText}
           onSaved={(st) => { data.setData({ ...data.data!, site: st }); setCaddyText(null); }} /></div>}
       </div>
