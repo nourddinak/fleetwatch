@@ -36,6 +36,9 @@ func (s *Service) Ask(ctx context.Context, serverID string, req proto.DBRequest)
 	if s.AgentVersion != nil && release.Newer(Agent, s.AgentVersion(serverID)) {
 		return proto.DBResult{}, valid.Error("this server's agent is too old for the database tool; update the agent first")
 	}
+	if s.Send == nil {
+		return proto.DBResult{}, valid.Error("the server is not connected")
+	}
 	b := make([]byte, 8)
 	rand.Read(b)
 	req.RunID = hex.EncodeToString(b)

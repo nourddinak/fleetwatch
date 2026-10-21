@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Database, Play, Plus, Server as ServerIcon, Table2 } from "lucide-react";
+import { Database, Lock, Play, Plus, Server as ServerIcon, Table2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, Select, Spinner, Textarea } from "../components/ui";
@@ -31,14 +31,17 @@ export function Databases() {
   const { servers } = useStore();
   const [params, setParams] = useSearchParams();
   const picked = servers.find((s) => s.id === params.get("server")) ?? servers[0];
+  const [unlocked, setUnlocked] = useState(false);
   return (
     <>
       <PageHeader title="Databases" sub="Your servers' PostgreSQL, MySQL and SQLite databases: see their tables, run read-only queries, and create a database with its own user." />
       <Gate>
-        {!picked ? <EmptyState icon={<ServerIcon size={20} />} title="No servers yet" desc="Add a server first." /> : (
+        {!picked ? <EmptyState icon={<ServerIcon size={20} />} title="No servers yet" desc="Add a server first." /> : !unlocked ? (
+          <Unlock onUnlocked={() => setUnlocked(true)} />
+        ) : (
           <Card>
             <ServerTabs value={picked.id} onChange={(id) => { params.set("server", id); setParams(params, { replace: true }); }} />
-            <ServerDatabases key={picked.id} serverId={picked.id} />
+            <ServerDatabases key={picked.id} serverId={picked.id} relock={() => setUnlocked(false)} />
           </Card>
         )}
       </Gate>
@@ -51,9 +54,48 @@ function quote(engine: Engine, name: string) {
   return parts.map((p) => (engine === "mysql" ? "`" + p.replace(/`/g, "``") + "`" : '"' + p.replace(/"/g, '""') + '"')).join(".");
 }
 
-function ServerDatabases({ serverId }: { serverId: string }) {
+const locked = (msg?: string | null) => !!msg?.startsWith("Enter your password");
+
+/** The databases open only after the password is entered again (15 minutes without use). */
+function Unlock({ onUnlocked }: { onUnlocked: () => void }) {
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const go = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api("POST", "/api/db/unlock", { password: pw });
+      onUnlocked();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+    setBusy(false);
+  };
+  return (
+    <Card className="mx-auto max-w-md">
+      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); go(); }}>
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-surface2"><Lock size={18} /></span>
+          <div>
+            <div className="font-medium">Enter your password</div>
+            <div className="text-xs text-muted">Databases hold your apps' data, so they open only after your password. They lock again after 15 minutes without use.</div>
+          </div>
+        </div>
+        <Input type="password" autoFocus autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Your dashboard password" />
+        {err && <p className="text-sm text-crit">{err}</p>}
+        <Button type="submit" disabled={busy || !pw} className="w-full">{busy ? <Spinner size={14} /> : <Lock size={14} />} Open databases</Button>
+      </form>
+    </Card>
+  );
+}
+
+function ServerDatabases({ serverId, relock }: { serverId: string; relock: () => void }) {
   const { toast } = useStore();
   const list = useApi<Result>(`/api/servers/${serverId}/db`);
+  useEffect(() => {
+    if (locked(list.error)) relock();
+  }, [list.error, relock]);
   const [db, setDb] = useState<DB | null>(null);
   const [creating, setCreating] = useState(false);
   const dbs = (list.data?.databases ?? []).filter((d) => d.kind !== "folder") as (DB & { kind: Engine })[];
@@ -82,14 +124,17 @@ function ServerDatabases({ serverId }: { serverId: string }) {
           </ul>
         )}
       </div>
-      {db ? <DatabaseView key={db.kind + db.name} serverId={serverId} db={db as DB & { kind: Engine }} /> : <div />}
+      {db ? <DatabaseView key={db.kind + db.name} serverId={serverId} db={db as DB & { kind: Engine }} relock={relock} /> : <div />}
       {creating && <NewDatabase serverId={serverId} engines={list.data.engines ?? []} onClose={() => setCreating(false)} onDone={() => { list.reload(); toast("Database created"); }} />}
     </div>
   );
 }
 
-function DatabaseView({ serverId, db }: { serverId: string; db: DB & { kind: Engine } }) {
+function DatabaseView({ serverId, db, relock }: { serverId: string; db: DB & { kind: Engine }; relock: () => void }) {
   const tables = useApi<Result>(`/api/servers/${serverId}/db/tables?engine=${db.kind}&db=${encodeURIComponent(db.name)}`);
+  useEffect(() => {
+    if (locked(tables.error)) relock();
+  }, [tables.error, relock]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<Result | null>(null);
@@ -100,6 +145,7 @@ function DatabaseView({ serverId, db }: { serverId: string; db: DB & { kind: Eng
     try {
       setRes(await api<Result>("POST", `/api/servers/${serverId}/db/query`, { engine: db.kind, database: db.name, query }));
     } catch (e) {
+      if ((e as ApiError).code === "password_required") return relock();
       setRes(null);
       setErr((e as ApiError).message);
     }

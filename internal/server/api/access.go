@@ -41,7 +41,7 @@ var (
 	commandPath  = regexp.MustCompile(`^/api/commands/([^/]+)`)
 	runPath      = regexp.MustCompile(`^/api/runs/([^/]+)`)
 	sitePath     = regexp.MustCompile(`^/api/sites/([^/]+)`)
-	dbPath       = regexp.MustCompile(`^/api/servers/[^/]+/db(/|$)`) // the database tool: data and logins
+	dbPath       = regexp.MustCompile(`^/api/(servers/[^/]+/)?db(/|$)`) // the database tool: data and logins
 	appEnvPath   = regexp.MustCompile(`^/api/(apps/[^/]+/env|servers/[^/]+/web)(/history)?$`)
 )
 
