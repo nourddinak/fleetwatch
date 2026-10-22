@@ -3,6 +3,7 @@ package sites
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,11 +19,41 @@ import (
 	"fleetwatch/internal/proto"
 )
 
-// Docker apps: the snapshot is built and run with Docker on this server. Each
-// release keeps its own image tag (fw-<name>:<release>), so a rollback deploys an
-// older snapshot the same way.
+// Docker apps: images are built by GitHub Actions and pulled onto this server.
+// Older images stay tagged so a rollback deploys the previous snapshot.
 
 var composeRe = regexp.MustCompile(`^(docker-)?compose(\.[a-z0-9-]+)?\.ya?ml$`)
+var imageBaseRe = regexp.MustCompile(`^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$`)
+var imageTagRe = regexp.MustCompile(`^[a-f0-9]{7,64}$`)
+var composeServiceRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// composeBuildServices returns the services with build sections in a compose file.
+// Compose's normalized JSON is used so we don't try to parse YAML ourselves.
+var composeBuildServices = func(ctx context.Context, dir, file string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", file, "config", "--format", "json")
+	cmd.Dir = dir
+	cmd.Env = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8", "DOCKER_BUILDKIT=1"}, docker.ConfigEnv(ctx)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker compose config failed: %w", err)
+	}
+	var config struct {
+		Services map[string]struct {
+			Build json.RawMessage `json:"build"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &config); err != nil {
+		return nil, fmt.Errorf("docker compose returned invalid JSON: %w", err)
+	}
+	var services []string
+	for name, service := range config.Services {
+		if len(service.Build) > 0 && string(service.Build) != "null" {
+			services = append(services, name)
+		}
+	}
+	slices.Sort(services)
+	return services, nil
+}
 
 // dockerCmd runs docker (tests replace it).
 var dockerCmd = func(ctx context.Context, dir string, timeout time.Duration, log *bytes.Buffer, args ...string) error {
@@ -69,8 +100,51 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 		if _, err := os.Stat(filepath.Join(rel, d.Compose)); err != nil {
 			return "", fmt.Errorf("%s is not in the repository", d.Compose)
 		}
-		fmt.Fprintf(log, "$ docker compose -p %s -f %s up -d --build --remove-orphans\n", project, d.Compose)
-		if err := dockerCmd(ctx, rel, 30*time.Minute, log, "compose", "-p", project, "-f", d.Compose, "up", "-d", "--build", "--remove-orphans"); err != nil {
+		args := []string{"compose", "-p", project, "-f", d.Compose}
+		if d.ImageBase != "" {
+			if !imageBaseRe.MatchString(d.ImageBase) || !imageTagRe.MatchString(d.ImageTag) {
+				return "", errors.New("invalid remote Docker image reference")
+			}
+			services, err := composeBuildServices(ctx, rel, d.Compose)
+			if err != nil {
+				return "", err
+			}
+			images := map[string]map[string]any{}
+			for _, service := range services {
+				if !composeServiceRe.MatchString(service) {
+					return "", fmt.Errorf("invalid compose service name %q", service)
+				}
+				images[service] = map[string]any{
+					"image": d.ImageBase + ":" + d.ImageTag + "-" + service,
+					"build": nil,
+				}
+			}
+			if len(images) > 0 {
+				override, err := os.CreateTemp(rel, ".fleetwatch-compose-*.json")
+				if err != nil {
+					return "", err
+				}
+				overridePath := override.Name()
+				defer os.Remove(overridePath)
+				if err := json.NewEncoder(override).Encode(map[string]any{"services": images}); err != nil {
+					override.Close()
+					return "", err
+				}
+				if err := override.Close(); err != nil {
+					return "", err
+				}
+				args = append(args, "-f", filepath.Base(overridePath))
+			}
+			fmt.Fprintf(log, "$ docker %s pull\n", strings.Join(args, " "))
+			if err := dockerCmd(ctx, rel, 30*time.Minute, log, append(args, "pull")...); err != nil {
+				return "", err
+			}
+			args = append(args, "up", "-d", "--remove-orphans", "--no-build")
+		} else {
+			args = append(args, "up", "-d", "--build", "--remove-orphans")
+		}
+		fmt.Fprintf(log, "$ docker %s\n", strings.Join(args, " "))
+		if err := dockerCmd(ctx, rel, 30*time.Minute, log, args...); err != nil {
 			return "", err
 		}
 	} else {
@@ -78,9 +152,22 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 			return "", errors.New("there is no Dockerfile at the top of the repository")
 		}
 		image := project + ":" + filepath.Base(rel)
-		fmt.Fprintf(log, "$ docker build -t %s .\n", image)
-		if err := dockerCmd(ctx, rel, 30*time.Minute, log, "build", "-t", image, "--label", "fleetwatch.site="+req.Name, "."); err != nil {
-			return "", err
+		imageRepo := project
+		if d.ImageBase != "" {
+			if !imageBaseRe.MatchString(d.ImageBase) || !imageTagRe.MatchString(d.ImageTag) {
+				return "", errors.New("invalid remote Docker image reference")
+			}
+			image = d.ImageBase + ":" + d.ImageTag
+			imageRepo = d.ImageBase
+			fmt.Fprintf(log, "$ docker pull %s\n", image)
+			if err := dockerCmd(ctx, rel, 30*time.Minute, log, "pull", image); err != nil {
+				return "", err
+			}
+		} else {
+			fmt.Fprintf(log, "$ docker build -t %s .\n", image)
+			if err := dockerCmd(ctx, rel, 30*time.Minute, log, "build", "-t", image, "--label", "fleetwatch.site="+req.Name, "."); err != nil {
+				return "", err
+			}
 		}
 		dockerCmd(ctx, rel, time.Minute, &bytes.Buffer{}, "rm", "-f", project) // the previous release's container
 		args := []string{"run", "-d", "--name", project, "--restart", "unless-stopped", "--label", "fleetwatch.site=" + req.Name}
@@ -94,7 +181,7 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 		if err := dockerCmd(ctx, rel, 2*time.Minute, log, append(args, image)...); err != nil {
 			return "", err
 		}
-		pruneImages(ctx, project, image, log)
+		pruneImages(ctx, imageRepo, image, log)
 	}
 	if d.HostPort <= 0 {
 		return "", nil
@@ -118,7 +205,7 @@ func pruneImages(ctx context.Context, repo, keep string, log *bytes.Buffer) {
 }
 
 // removeDocker takes a Docker app's containers and images away (Remove).
-func removeDocker(name string) {
+func removeDocker(name, imageBase string) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return
 	}
@@ -131,6 +218,13 @@ func removeDocker(name string) {
 	if out, err := exec.CommandContext(ctx, "docker", "images", project, "--format", "{{.Repository}}:{{.Tag}}").Output(); err == nil {
 		for _, t := range strings.Fields(string(out)) {
 			dockerCmd(ctx, "", time.Minute, &log, "rmi", t)
+		}
+	}
+	if imageBaseRe.MatchString(imageBase) {
+		if out, err := exec.CommandContext(ctx, "docker", "images", imageBase, "--format", "{{.Repository}}:{{.Tag}}").Output(); err == nil {
+			for _, t := range strings.Fields(string(out)) {
+				dockerCmd(ctx, "", time.Minute, &log, "rmi", t)
+			}
 		}
 	}
 }

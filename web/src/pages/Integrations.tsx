@@ -251,7 +251,7 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
       desc: "Your apps' packages checked every day against OSV.dev (npm, PyPI, Go, crates, Packagist…); serious findings alert you.",
       status: vulns.data ? (vulns.data.enabled ? `${vulns.data.apps} apps · ${vulns.data.deps} packages` : "Turned off") : "" },
     { key: "registries", logo: <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#1D63ED]/10 text-[#1D63ED]"><Container size={22} /></span>, name: "Docker registries", on: (registries.data?.length ?? 0) > 0,
-      desc: "Logins for private images on GHCR, Docker Hub, GitLab or any registry: Docker apps build with them, updates pull with them.",
+      desc: "Logins for private images on GHCR, Docker Hub, GitLab or any registry: Docker apps and updates pull images with them.",
       status: registries.data?.length ? `${registries.data.length} login${registries.data.length === 1 ? "" : "s"}` : "Public images need none" },
     alert("telegram", <Telegram size={30} />, "Alerts in a Telegram chat or group, through your own bot."),
     alert("discord", <Discord size={30} />, "Alerts in a Discord channel, through a channel webhook."),

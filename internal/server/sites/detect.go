@@ -13,7 +13,7 @@ import (
 )
 
 // Plan is how a repository becomes a site: published as is, built on GitHub Actions,
-// or a Docker app built and run on the server.
+// or a Docker app built on GitHub Actions and run on the server.
 type Plan struct {
 	Kind      string `json:"kind"`      // static | build | docker
 	Framework string `json:"framework"` // what was recognised ("Vite", "Plain HTML"…)
@@ -202,6 +202,13 @@ func (s *Service) hasIndex(ctx context.Context, repo, dir, branch string) bool {
 // workflowFile is where the build workflow lives in the repository.
 const workflowFile = "fleetwatch.yml"
 
+// dockerWorkflowFile isolates each app's build and deploy status within a repository.
+func dockerWorkflowFile(name string) string { return "fleetwatch-docker-" + name + ".yml" }
+
+func dockerImageBase(repo, name string) string {
+	return "ghcr.io/" + strings.ToLower(repo) + "-fleetwatch-" + name
+}
+
 // BuildBranch receives each build's files; servers deploy from it.
 const BuildBranch = github.BuildBranchName
 
@@ -258,6 +265,72 @@ jobs:
           git commit -qm "Build of ${GITHUB_SHA}"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ` + BuildBranch + `
 `
+}
+
+// dockerWorkflow builds Dockerfile apps or Compose build services on GitHub Actions,
+// publishing immutable commit-tagged images to GHCR for the server to pull.
+func dockerWorkflow(p Plan, branch, name string) string {
+	build := `      - name: Build and push image
+        env:
+          IMAGE_BASE: ghcr.io/${{ github.repository }}-fleetwatch-` + name + `
+        run: |
+          set -euo pipefail
+          IMAGE_BASE="$(printf '%s' "$IMAGE_BASE" | tr '[:upper:]' '[:lower:]')"
+          docker buildx build --platform linux/amd64,linux/arm64 --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" --push --tag "$IMAGE_BASE:$GITHUB_SHA" .
+`
+	if p.Compose != "" {
+		build = `      - name: Build and push Compose images
+        env:
+          COMPOSE_FILE: ` + yamlQuote(p.Compose) + `
+          IMAGE_BASE: ghcr.io/${{ github.repository }}-fleetwatch-` + name + `
+        run: |
+          set -euo pipefail
+          IMAGE_BASE="$(printf '%s' "$IMAGE_BASE" | tr '[:upper:]' '[:lower:]')"
+          docker compose -f "$COMPOSE_FILE" config --format json > /tmp/fleetwatch-compose.json
+          python3 - <<'PY'
+          import json, os
+          import subprocess
+
+          with open("/tmp/fleetwatch-compose.json", encoding="utf-8") as f:
+              config = json.load(f)
+          images = {}
+          for name, service in config.get("services", {}).items():
+              if service.get("build") is not None:
+                  images[name] = f'{os.environ["IMAGE_BASE"]}:{os.environ["GITHUB_SHA"]}-{name}'
+          if images:
+              with open("/tmp/fleetwatch-images.json", "w", encoding="utf-8") as f:
+                  json.dump({"services": {name: {"image": image, "build": {"platforms": ["linux/amd64", "linux/arm64"], "labels": {"org.opencontainers.image.source": "https://github.com/" + os.environ["GITHUB_REPOSITORY"]}}} for name, image in images.items()}}, f)
+              subprocess.run(["docker", "compose", "-f", os.environ["COMPOSE_FILE"], "-f", "/tmp/fleetwatch-images.json", "build", "--push", *images.keys()], check=True)
+          PY
+`
+	}
+	return `# Added by Fleetwatch: builds Docker images on every push to ` + branch + `
+# and publishes commit-tagged images to GHCR. Delete this file (and the app in
+# Fleetwatch) to stop.
+name: Fleetwatch Docker build
+on:
+  push:
+    branches: [` + yamlQuote(branch) + `]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: fleetwatch-docker-` + name + `
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+` + build + ``
 }
 
 // baseEnv tells every framework the base path through the environment (for configs that

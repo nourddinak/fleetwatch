@@ -684,19 +684,23 @@ type SiteDeploy struct {
 	// CaddyConfig set in the dashboard replaces the generated site and the repository's
 	// Caddyfile (agent 0.9.72+).
 	CaddyConfig string `json:"caddyConfig,omitempty"`
-	// Docker: the snapshot is a Docker app, built and run on the server (agent 0.9.154+).
+	// Docker: the snapshot is a Docker app, run on the server (agent 0.9.157+).
 	Docker *SiteDocker `json:"docker,omitempty"`
 }
 
-// SiteDocker is how a Docker app runs. With Compose, `docker compose up --build` in the
-// snapshot (project fw-<name>); else its Dockerfile is built and run as container
+// SiteDocker is how a Docker app runs. Images are built by GitHub Actions and pulled
+// from GHCR. With Compose, each service with a build section gets an image override;
+// else the Dockerfile image runs as container
 // fw-<name>, its Port published on 127.0.0.1:HostPort. Caddy sends the domains to
-// 127.0.0.1:HostPort (for Compose: the host port its compose file publishes).
+// 127.0.0.1:HostPort (for Compose: the host port its compose file publishes). A
+// repository Caddyfile is used for the app's site when present.
 type SiteDocker struct {
-	Compose  string `json:"compose,omitempty"` // compose file name, "" = Dockerfile
-	Port     int    `json:"port,omitempty"`    // the app's port in the container (Dockerfile)
-	HostPort int    `json:"hostPort,omitempty"`
-	Env      string `json:"env,omitempty"` // .env, written next to the code (0600)
+	Compose   string `json:"compose,omitempty"`   // compose file name, "" = Dockerfile
+	ImageBase string `json:"imageBase,omitempty"` // GHCR image path without a tag
+	ImageTag  string `json:"imageTag,omitempty"`  // source commit; Compose services add -<service>
+	Port      int    `json:"port,omitempty"`      // the app's port in the container (Dockerfile)
+	HostPort  int    `json:"hostPort,omitempty"`
+	Env       string `json:"env,omitempty"` // .env, written next to the code (0600)
 	// Auths are private registry logins, for FROM and image: lines (agent 0.9.156+).
 	Auths []RegistryAuth `json:"auths,omitempty"`
 }
@@ -723,8 +727,9 @@ type CertRenewed struct {
 }
 
 type SiteRemove struct {
-	RunID string `json:"runId"`
-	Name  string `json:"name"`
+	RunID     string `json:"runId"`
+	Name      string `json:"name"`
+	ImageBase string `json:"imageBase,omitempty"` // GHCR image namespace for Docker apps
 }
 
 type SiteResult struct {

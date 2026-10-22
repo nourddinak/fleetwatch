@@ -426,22 +426,44 @@ func TestDockerApp(t *testing.T) {
 	if _, err := s.Create(ctx, Input{Repo: "me/api", ServerID: "s1", Plan: &p}, "Nour"); err == nil {
 		t.Fatal("an old agent was asked to run Docker")
 	}
-	s.AgentVersion = func(string) string { return "0.9.154" }
+	s.AgentVersion = func(string) string { return "0.9.157" }
 	api, err := s.Create(ctx, Input{Repo: "me/api", ServerID: "s1", Plan: &p, Env: "TOKEN=x", Domains: []string{"api.example.com"}}, "Nour")
 	if err != nil || api.Plan.HostPort != 20000 || len(api.EnvKeys) != 1 {
 		t.Fatalf("%+v %v", api, err)
 	}
+	wf := gh.files["me/api"][".github/workflows/"+dockerWorkflowFile(dockerKey(api))]
+	if !strings.Contains(wf, "packages: write") || !strings.Contains(wf, "docker buildx build") ||
+		!strings.Contains(wf, "ghcr.io/${{ github.repository }}-fleetwatch-api-") {
+		t.Fatalf("Docker workflow missing GHCR build/push steps:\n%s", wf)
+	}
+	gh.run = &github.Run{ID: 4, Status: "completed", Conclusion: "success", HeadSHA: "old"}
+	s.Sync(ctx)
+	if len(*sent) != 0 {
+		t.Fatal("deployed before the current commit's image was built")
+	}
+	gh.run = &github.Run{Status: "completed", Conclusion: "success", HeadSHA: "a1", HTMLURL: "https://github.com/me/api/actions/runs/1"}
+	gh.run.ID = 5
+	s.Sync(ctx)
 	waitSent(t, sent, 1)
 	d := (*sent)[0]
-	if d.Docker == nil || d.Docker.Port != 3000 || d.Docker.HostPort != 20000 || d.Docker.Env != "TOKEN=x" {
+	if d.Docker == nil || d.Docker.Port != 3000 || d.Docker.HostPort != 20000 || d.Docker.Env != "TOKEN=x" ||
+		d.Docker.ImageBase != dockerImageBase("me/api", dockerKey(api)) || d.Docker.ImageTag != "a1" {
 		t.Fatalf("%+v", d.Docker)
 	}
 	answer(s, d, true)
 	// A second app gets the next port; a compose app's traffic goes to its own host port.
 	sp, _ := s.DetectDocker(ctx, "me/stack", "main")
 	stack, _ := s.Create(ctx, Input{Repo: "me/stack", ServerID: "s1", Plan: &sp}, "Nour")
+	composeWorkflow := gh.files["me/stack"][".github/workflows/"+dockerWorkflowFile(dockerKey(stack))]
+	if !strings.Contains(composeWorkflow, "config --format json") ||
+		!strings.Contains(composeWorkflow, `"linux/arm64"`) || !strings.Contains(composeWorkflow, `"--push"`) {
+		t.Fatalf("Compose workflow missing remote build steps:\n%s", composeWorkflow)
+	}
+	gh.run = &github.Run{ID: 6, Status: "completed", Conclusion: "success", HeadSHA: "c1"}
+	s.Sync(ctx)
 	waitSent(t, sent, 2)
-	if stack.Plan.HostPort != 0 || (*sent)[1].Docker.HostPort != 8080 || (*sent)[1].Docker.Compose != "docker-compose.yml" {
+	if stack.Plan.HostPort != 0 || (*sent)[1].Docker.HostPort != 8080 || (*sent)[1].Docker.Compose != "docker-compose.yml" ||
+		(*sent)[1].Docker.ImageBase != dockerImageBase("me/stack", dockerKey(stack)) || (*sent)[1].Docker.ImageTag != "c1" {
 		t.Fatalf("%+v %+v", stack.Plan, (*sent)[1].Docker)
 	}
 	// The request cannot pick the host port; changing the app's port keeps it.
@@ -457,5 +479,27 @@ func TestDockerApp(t *testing.T) {
 	s.Files().ServeHTTP(rec, httptest.NewRequest("GET", "/sites/api/.env", nil))
 	if rec.Code != 404 {
 		t.Fatal(rec.Code)
+	}
+	var removed proto.SiteRemove
+	s.Send = func(_, _ string, v any) error {
+		if req, ok := v.(proto.SiteRemove); ok {
+			removed = req
+		}
+		return nil
+	}
+	if _, err := s.Delete(api.ID); err != nil {
+		t.Fatal(err)
+	}
+	if removed.ImageBase != dockerImageBase("me/api", dockerKey(api)) {
+		t.Fatalf("Docker removal did not include its GHCR image namespace: %+v", removed)
+	}
+	if _, ok := gh.files["me/api"][".github/workflows/"+dockerWorkflowFile(dockerKey(api))]; ok {
+		t.Fatal("Docker workflow was not removed with its app")
+	}
+	if _, err := s.Delete(stack.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gh.files["me/stack"][".github/workflows/"+dockerWorkflowFile(dockerKey(stack))]; ok {
+		t.Fatal("Compose workflow was not removed with its app")
 	}
 }

@@ -20,7 +20,7 @@ const PRESETS = [
 ];
 
 /** Integrations → Docker registries: logins for private images, used when servers pull
- * or build them (Docker apps, updates) and to check private images for updates. */
+ * them (Docker apps, updates) and to check private images for updates. */
 export function DockerRegistries() {
   const { toast } = useStore();
   const list = useApi<Registry[]>("/api/integrations/docker-registries");
@@ -43,7 +43,7 @@ export function DockerRegistries() {
   return (
     <Card>
       <SectionTitle icon={<Container size={15} />} title="Docker registries"
-        sub="Logins for private images (GHCR, Docker Hub, GitLab, any registry). Servers get them only while pulling or building, in a Docker config deleted right after; the update check uses them for private images too. Stored encrypted."
+        sub="Logins for private images (GHCR, Docker Hub, GitLab, any registry). Servers receive them only while pulling, in a Docker config deleted right after; the update check uses them for private images too. Stored encrypted."
         action={!f && <Button size="sm" onClick={() => setF({ host: "ghcr.io", username: "", password: "" })}><Plus size={14} /> Add a login</Button>} />
       {f && (
         <div className="mb-4 space-y-3 rounded-2xl bg-surface2 p-4">

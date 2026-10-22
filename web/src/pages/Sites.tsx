@@ -142,7 +142,7 @@ export function Sites({ serverId, docker }: { serverId?: string; docker?: boolea
   return (
     <>
       {docker ? (
-        <SectionTitle icon={<Container size={15} />} title="Apps from GitHub" sub="Repositories with a Dockerfile or a compose file, built and run with Docker on the server you pick. Every push deploys again; Caddy puts your domains in front with HTTPS."
+        <SectionTitle icon={<Container size={15} />} title="Apps from GitHub" sub="GitHub Actions builds Docker images and publishes them to GHCR; your server pulls and runs them. Every push deploys again, and Caddy puts your domains in front with HTTPS."
           action={<div className="flex flex-wrap items-center gap-2">{ghChip}{canAdd && <Button size="sm" onClick={() => setAdding(true)}><Plus size={13} /> Deploy from GitHub</Button>}</div>} />
       ) : serverId ? (
         <SectionTitle icon={<Rocket size={15} />} title="Sites on this server" sub="Static sites deployed here from GitHub, in /var/www."
@@ -159,7 +159,7 @@ export function Sites({ serverId, docker }: { serverId?: string; docker?: boolea
             <EmptyState icon={<Github size={20} />} title="GitHub is not set up yet" desc="The owner connects it once in Integrations (sidebar). Then you link your own GitHub account here and deploy your sites." />
           )
         ) : list.data.length === 0 ? (
-          <EmptyState icon={docker ? <Container size={20} /> : <Rocket size={20} />} title={docker ? "No apps from GitHub yet" : "No sites yet"} desc={docker ? "Pick a repository with a Dockerfile or docker-compose.yml and a server: Fleetwatch builds it there, runs it, and puts your domain in front." : serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={canAdd ? <Button onClick={() => setAdding(true)}><Plus size={15} /> {docker ? "Deploy from GitHub" : "New site"}</Button> : g?.canDeploy && !linked ? <Button onClick={() => goGitHub("connect", toast)}><Github size={15} /> Connect your GitHub</Button> : undefined} />
+          <EmptyState icon={docker ? <Container size={20} /> : <Rocket size={20} />} title={docker ? "No apps from GitHub yet" : "No sites yet"} desc={docker ? "Pick a repository with a Dockerfile or docker-compose.yml and a server: GitHub Actions builds it, then Fleetwatch pulls and runs the image." : serverId ? "Deploy a GitHub repository to this server: it is online in a minute." : "Pick a repository and a server: the site is online in a minute, at an address of its own."} action={canAdd ? <Button onClick={() => setAdding(true)}><Plus size={15} /> {docker ? "Deploy from GitHub" : "New site"}</Button> : g?.canDeploy && !linked ? <Button onClick={() => goGitHub("connect", toast)}><Github size={15} /> Connect your GitHub</Button> : undefined} />
         ) : (
           <div className="space-y-4">
             {g && g.connected && g.canDeploy && !linked && (
@@ -199,7 +199,7 @@ const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 async function redeploySite(site: Site, toast: (msg: string, kind?: "ok" | "err") => void) {
   try {
     await api("POST", `/api/sites/${site.id}/redeploy`);
-    toast(site.plan.kind === "build" ? "Building again on GitHub" : "Deploying");
+    toast(site.plan.kind !== "static" ? "Building again on GitHub" : "Deploying");
   } catch (e) {
     toast((e as ApiError).message, "err");
   }
@@ -291,7 +291,7 @@ function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
           </span>
         ) : <span className="inline-flex items-center gap-1.5"><Clock size={12} /> Not deployed yet</span>}
         <span className="inline-flex items-center gap-1.5">{site.plan.kind === "build" ? <Workflow size={12} /> : <FileCode2 size={12} />}{site.plan.framework}</span>
-        {site.buildUrl && site.plan.kind === "build" && <a className="inline-flex items-center gap-1.5 hover:text-fg" href={site.buildUrl} target="_blank" rel="noreferrer"><Terminal size={12} /> Last build</a>}
+        {site.buildUrl && site.plan.kind !== "static" && <a className="inline-flex items-center gap-1.5 hover:text-fg" href={site.buildUrl} target="_blank" rel="noreferrer"><Terminal size={12} /> Last build</a>}
         {!site.autoDeploy && <span className="inline-flex items-center gap-1.5"><PauseCircle size={12} /> Auto deploy off</span>}
       </div>
     </Card>
@@ -388,7 +388,7 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos, docker }: {
     try {
       const s = await api<Site>("POST", "/api/sites", { repo: f.repo, serverId: f.serverId, branch: f.branch, name: f.name, plan,
         domains: f.domains.split(/[\s,]+/).filter(Boolean), env: plan?.kind !== "static" ? f.env : "", dnsManual: f.dnsManual });
-      toast(s.plan.kind === "build" ? "Site added: GitHub Actions is building it" : s.plan.kind === "docker" ? "App added: building it on the server" : "Site added: deploying");
+      toast(s.plan.kind !== "static" ? "GitHub Actions is building it" : "Site added: deploying");
       onCreated(s);
     } catch (e) {
       toast((e as ApiError).message, "err");
@@ -506,7 +506,7 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos, docker }: {
                   <span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-surface text-fg">{plan.kind === "docker" ? <Container size={16} /> : plan.kind === "build" ? <Workflow size={16} /> : <FileCode2 size={16} />}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-medium">{plan.framework} <Badge tone={plan.kind === "static" ? "ok" : "info"}>{plan.kind === "docker" ? "Docker" : plan.kind === "build" ? "Build" : "Static"}</Badge></div>
-                    <p className="text-xs text-muted">{plan.kind === "docker" ? (plan.compose ? `docker compose up --build on the server, every push (${plan.compose}).` : "docker build and docker run on the server, every push.") : plan.kind === "build" ? "GitHub Actions builds every push, then the output goes live." : "The files are published as they are on every push."}</p>
+                    <p className="text-xs text-muted">{plan.kind === "docker" ? (plan.compose ? `GitHub Actions builds and pushes services with build: to GHCR; the server pulls them (${plan.compose}).` : "GitHub Actions builds and pushes a multi-architecture image to GHCR; the server pulls and runs it.") : plan.kind === "build" ? "GitHub Actions builds every push, then the output goes live." : "The files are published as they are on every push."}</p>
                   </div>
                 </div>
                 {plan.note && <p className="flex gap-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn"><Info size={14} className="mt-px shrink-0" />{plan.note}</p>}
@@ -537,7 +537,8 @@ function NewSite({ onClose, onCreated, serverId, owner, onMoreRepos, docker }: {
             <IconInput icon={<Globe size={14} />} value={f.domains} onChange={(e) => setF({ ...f, domains: e.target.value })} placeholder="example.com, www.example.com" />
           </Field>
           {f.domains.trim() && <DnsMode manual={f.dnsManual} onChange={(m) => setF({ ...f, dnsManual: m })} connected={(cloudflare.data?.accounts?.length ?? 0) > 0} />}
-          {plan?.kind !== "docker" && <p className="flex items-center gap-2 text-[11px] text-muted"><FileCode2 size={12} className="shrink-0" />A Caddyfile at the top of the repository is used for the site instead of the generated one.</p>}
+          <p className="flex items-center gap-2 text-[11px] text-muted"><FileCode2 size={12} className="shrink-0" />A Caddyfile at the top of the repository is used for the site instead of the generated one.</p>
+          {plan?.kind === "docker" && <p className="text-[11px] text-muted">Private GHCR images need a registry login on the server. Add a GHCR token in <Link to="/integrations?tab=registries" className="underline">Integrations → Registries</Link>.</p>}
         </Step>
       </div>
     </Modal>
@@ -957,10 +958,10 @@ export function SitePage() {
         back={{ to: "/sites", label: "All sites" }}
         title={<span className="flex min-w-0 items-center gap-3"><SiteIcon site={site} size={40} /><span className="truncate">{site.name}</span></span>}
         badge={<Badge tone={tone} dot pulse={site.status === "building" || site.status === "deploying"}>{label}</Badge>}
-        sub={`${site.plan.framework} · ${site.plan.kind === "build" ? "built by GitHub Actions" : "published as is"} · ${site.repo}`}
+        sub={`${site.plan.framework} · ${site.plan.kind !== "static" ? "built by GitHub Actions" : "published as is"} · ${site.repo}`}
         actions={
           <>
-            {site.buildUrl && site.plan.kind === "build" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={14} /> Last build</Button></a>}
+            {site.buildUrl && site.plan.kind !== "static" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={14} /> Last build</Button></a>}
             {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={14} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
             {me?.role !== "viewer" && data.data!.history.filter((d) => d.ok).length > 1 && <Button size="sm" variant="secondary" onClick={() => rollback(0)} disabled={site.status === "deploying"} title="Deploy the previous working version again"><Undo2 size={14} /> Roll back</Button>}
             {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary"><ExternalLink size={14} /> Open site</Button></a>}
@@ -1030,7 +1031,7 @@ export function SitePage() {
               </Panel>
               {owner && (
           <Panel icon={<Trash2 size={15} />} title="Remove site" danger
-            sub={`Deletes its files and Caddy site from the server${site.plan.kind === "build" ? ", and the build workflow, build branch and .env secret from the repository" : ""}.`}>
+            sub={`Deletes its files and Caddy site from the server${site.plan.kind === "build" ? ", and the build workflow, build branch and .env secret from the repository" : site.plan.kind === "docker" ? ", and its Docker build workflow from the repository" : ""}.`}>
             <div className="flex justify-end"><Button variant="danger" size="sm" onClick={() => setDel(true)}><Trash2 size={13} /> Remove {site.name}</Button></div>
           </Panel>
         )}

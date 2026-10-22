@@ -115,12 +115,14 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 		if _, err := os.Stat(filepath.Join(rel, "index.html")); err != nil {
 			fmt.Fprintln(log, "Warning: there is no index.html at the top of the site")
 		}
-		// A Caddyfile in the site is the site's own Caddy configuration: used, never served.
-		for _, f := range []string{".fleetwatch.Caddyfile", "Caddyfile"} {
-			if b, err := os.ReadFile(filepath.Join(rel, f)); err == nil {
-				if own == nil {
-					own = b
-				}
+	}
+	// A repository Caddyfile configures the site, but remains in Docker build contexts.
+	for _, f := range []string{".fleetwatch.Caddyfile", "Caddyfile"} {
+		if b, err := os.ReadFile(filepath.Join(rel, f)); err == nil {
+			if own == nil {
+				own = b
+			}
+			if req.Docker == nil {
 				os.Remove(filepath.Join(rel, f))
 			}
 		}
@@ -154,6 +156,9 @@ func deploy(ctx context.Context, req proto.SiteDeploy, log *bytes.Buffer, res *p
 	case req.CaddyConfig != "":
 		site = fmt.Sprintf("# Site %s, set in the Fleetwatch dashboard. Changes here are overwritten.\n%s\n", req.Name, strings.TrimRight(stripPrefix(req.CaddyConfig, req.Name), "\n"))
 		res.Caddy = "custom"
+	case req.Docker != nil && own != nil:
+		site = fmt.Sprintf("# Docker app %s, from the Caddyfile in its repository (via Fleetwatch).\n%s\n", req.Name, strings.TrimRight(string(own), "\n"))
+		res.Caddy = "repository"
 	case req.Docker != nil && upstream != "" && len(req.Domains) > 0:
 		site = fmt.Sprintf("# Docker app %s, written by Fleetwatch. Changes here are overwritten.\n%s {\n\tencode zstd gzip\n\treverse_proxy %s\n}\n", req.Name, strings.Join(req.Domains, ", "), upstream)
 		res.Caddy = "generated"
@@ -378,7 +383,7 @@ func Remove(req proto.SiteRemove) proto.SiteResult {
 		os.Remove(live(req.Name))
 	}
 	os.RemoveAll(releases(req.Name))
-	removeDocker(req.Name) // its containers and images, if it was a Docker app
+	removeDocker(req.Name, req.ImageBase) // its containers and images, if it was a Docker app
 	res.OK = true
 	return res
 }

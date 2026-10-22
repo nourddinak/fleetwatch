@@ -157,42 +157,59 @@ func TestDockerDeploy(t *testing.T) {
 	validate = func() ([]byte, error) { return nil, nil }
 	reload = func() ([]byte, error) { return nil, nil }
 	var calls []string
+	var composeImageOverride string
 	dockerCmd = func(_ context.Context, dir string, _ time.Duration, log *bytes.Buffer, args ...string) error {
 		calls = append(calls, strings.Join(args, " "))
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-f" && strings.HasPrefix(filepath.Base(args[i+1]), ".fleetwatch-compose-") {
+				if b, err := os.ReadFile(filepath.Join(dir, args[i+1])); err == nil {
+					composeImageOverride = string(b)
+				}
+			}
+		}
 		return nil
 	}
-	snap := tarball(t, map[string]string{"me-api-abc/Dockerfile": "FROM nginx\nEXPOSE 80", "me-api-abc/compose.yaml": "services: {}", "me-api-abc/Caddyfile": "kept"})
+	snap := tarball(t, map[string]string{"me-api-abc/Dockerfile": "FROM nginx\nEXPOSE 80", "me-api-abc/compose.yaml": "services: {}"})
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(snap) }))
 	defer srv.Close()
 	client = srv.Client()
 
 	req := proto.SiteDeploy{RunID: "r1", Name: "api", Archive: srv.URL + "/t", Domains: []string{"api.example.com"},
-		Docker: &proto.SiteDocker{Port: 80, HostPort: 20001, Env: "SECRET=1\n"}}
+		Docker: &proto.SiteDocker{Port: 80, HostPort: 20001, Env: "SECRET=1\n", ImageBase: "ghcr.io/me/api", ImageTag: strings.Repeat("a", 40)}}
 	res := Deploy(context.Background(), req)
 	if !res.OK {
 		t.Fatalf("%+v", res)
 	}
 	all := strings.Join(calls, "\n")
-	if !strings.Contains(all, "build -t fw-api:") || !strings.Contains(all, "-p 127.0.0.1:20001:80") || !strings.Contains(all, "--env-file") {
+	if !strings.Contains(all, "pull ghcr.io/me/api:"+strings.Repeat("a", 40)) ||
+		strings.Contains(all, "build -t fw-api:") ||
+		!strings.Contains(all, "-p 127.0.0.1:20001:80") || !strings.Contains(all, "--env-file") {
 		t.Fatal(all)
 	}
 	env := filepath.Join(WWW, "api", ".env")
 	if st, err := os.Stat(env); err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatal(".env", err)
 	}
-	if _, err := os.Stat(filepath.Join(WWW, "api", "Caddyfile")); err != nil {
-		t.Fatal("a Docker app's own files are left alone")
-	}
 	site, _ := os.ReadFile(filepath.Join(CaddyDir, "api.caddy"))
 	if !strings.Contains(string(site), "api.example.com {") || !strings.Contains(string(site), "reverse_proxy 127.0.0.1:20001") {
 		t.Fatalf("%s", site)
 	}
 
-	// Compose: up --build in the snapshot; no port, no web address.
+	// Compose services built by Actions are pulled with their immutable commit tags.
 	calls = nil
-	req.Docker = &proto.SiteDocker{Compose: "compose.yaml"}
-	if res := Deploy(context.Background(), req); !res.OK || !strings.Contains(strings.Join(calls, "\n"), "compose -p fw-api -f compose.yaml up -d --build --remove-orphans") {
+	oldComposeBuildServices := composeBuildServices
+	composeBuildServices = func(context.Context, string, string) ([]string, error) { return []string{"web"}, nil }
+	t.Cleanup(func() { composeBuildServices = oldComposeBuildServices })
+	req.Docker = &proto.SiteDocker{Compose: "compose.yaml", ImageBase: "ghcr.io/me/api", ImageTag: strings.Repeat("b", 40)}
+	if res := Deploy(context.Background(), req); !res.OK ||
+		!strings.Contains(strings.Join(calls, "\n"), "compose -p fw-api -f compose.yaml -f .fleetwatch-compose-") ||
+		!strings.Contains(strings.Join(calls, "\n"), "pull") ||
+		!strings.Contains(strings.Join(calls, "\n"), "up -d --remove-orphans --no-build") {
 		t.Fatalf("%+v %v", res, calls)
+	}
+	if !strings.Contains(composeImageOverride, `"image":"ghcr.io/me/api:`+strings.Repeat("b", 40)+`-web"`) ||
+		!strings.Contains(composeImageOverride, `"build":null`) {
+		t.Fatalf("Compose image override: %s", composeImageOverride)
 	}
 	if _, err := os.Stat(filepath.Join(CaddyDir, "api.caddy")); err == nil {
 		t.Fatal("the Caddy site stayed without a port")
@@ -200,5 +217,26 @@ func TestDockerDeploy(t *testing.T) {
 	req.Docker.Compose = "../evil.yml"
 	if res := Deploy(context.Background(), req); res.OK {
 		t.Fatal("a compose file outside the snapshot")
+	}
+
+	// A Docker app's repository Caddyfile takes precedence over generated proxy config
+	// and stays in the Docker build context.
+	snap = tarball(t, map[string]string{
+		"me-api-def/Dockerfile": "FROM nginx\nEXPOSE 80",
+		"me-api-def/Caddyfile":  "api.example.com {\n\treverse_proxy 127.0.0.1:20001\n}",
+	})
+	req.Docker = &proto.SiteDocker{Port: 80, HostPort: 20001}
+	res = Deploy(context.Background(), req)
+	if !res.OK || res.Caddy != "repository" {
+		t.Fatalf("%+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(WWW, "api", "Caddyfile")); err != nil {
+		t.Fatal("a Docker app's Caddyfile must stay in its build context")
+	}
+	site, _ = os.ReadFile(filepath.Join(CaddyDir, "api.caddy"))
+	if !strings.Contains(string(site), "from the Caddyfile in its repository") ||
+		!strings.Contains(string(site), "reverse_proxy 127.0.0.1:20001") ||
+		strings.Contains(string(site), "uri strip_prefix") {
+		t.Fatalf("repository Caddyfile was not used as-is: %s", site)
 	}
 }

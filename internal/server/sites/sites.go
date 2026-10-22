@@ -76,6 +76,7 @@ type Site struct {
 	DeployedAt int64  `json:"deployedAt"`
 	Error      string `json:"error,omitempty"`
 	BuildURL   string `json:"buildUrl,omitempty"` // the GitHub Actions run
+	BuildRunID int64  `json:"buildRunId,omitempty"`
 	// Pinned, after a rollback, is the deploy branch's head then: automatic deploys wait
 	// for a newer commit instead of undoing the rollback.
 	Pinned    string `json:"pinned,omitempty"`
@@ -130,7 +131,7 @@ type Service struct {
 	Notify       func(title, body, severity string)
 	// DNS points the sites' domains at their server through their owner's DNS accounts.
 	DNS *dns.Service
-	// RegistryAuths are the private Docker registry logins, for Docker apps' builds.
+	// RegistryAuths are the private Docker registry logins, for Docker apps' image pulls.
 	RegistryAuths func() []proto.RegistryAuth
 	// IsLocal reports whether a server is the dashboard's own machine: its sites are
 	// served at <dashboard>/sites/<name>/ instead of a preview address.
@@ -188,6 +189,10 @@ func (s *Service) List() []Site {
 		}
 	}
 	return out
+}
+
+func dockerKey(st Site) string {
+	return st.Name + "-" + strings.TrimPrefix(st.ID, "site_")
 }
 
 func (s *Service) save(st Site) error {
@@ -294,8 +299,8 @@ func checkPlan(p Plan) error {
 	return nil
 }
 
-// DockerAgent is the first agent that runs Docker apps.
-const DockerAgent = "v0.9.154"
+// DockerAgent is the first agent that pulls Docker images built by GitHub Actions.
+const DockerAgent = "v0.9.157"
 
 // hostPort picks the 127.0.0.1 port a Dockerfile app is published on: its own if it has
 // one, else the first in 20000-29999 no other Docker app on the server uses.
@@ -468,6 +473,17 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 		go s.SyncSoon()
 		return st, nil
 	}
+	if plan.Kind == "docker" {
+		if err := s.setupDocker(ctx, &st); err != nil {
+			st.Status, st.Error = "failed", err.Error()
+			s.save(st)
+			return st, nil
+		}
+		st.Status = "building"
+		s.save(st)
+		go s.SyncSoon()
+		return st, nil
+	}
 	go s.Redeploy(context.Background(), st.ID, by)
 	return st, nil
 }
@@ -512,6 +528,35 @@ func (s *Service) setupBuildOnce(ctx context.Context, st Site, env string) error
 	return nil
 }
 
+// setupDocker adds the repository workflow that builds and pushes commit-tagged images.
+func (s *Service) setupDocker(ctx context.Context, st *Site) error {
+	key := dockerKey(*st)
+	file := dockerWorkflowFile(key)
+	if run, err := s.GitHub.LastRun(ctx, st.Repo, file); err != nil {
+		return permissionError(fmt.Errorf("could not check the Docker image workflow: %w", err))
+	} else if run != nil {
+		st.BuildRunID = run.ID
+	} else {
+		st.BuildRunID = 0
+	}
+	_, err := s.GitHub.PutFile(ctx, st.Repo, ".github/workflows/"+file, st.Branch,
+		[]byte(dockerWorkflow(st.Plan, st.Branch, key)), "Build Docker images with Fleetwatch")
+	if err != nil {
+		return permissionError(fmt.Errorf("could not add the Docker image workflow to the repository: %w", err))
+	}
+	st.Status, st.Error = "building", ""
+	if err := s.save(*st); err != nil {
+		return err
+	}
+	if err := s.GitHub.Dispatch(ctx, st.Repo, file, st.Branch); err != nil {
+		if run, e := s.GitHub.LastRun(ctx, st.Repo, file); e == nil && run != nil && run.Status != "completed" {
+			return nil
+		}
+		return permissionError(err)
+	}
+	return nil
+}
+
 // Change edits a site's addresses, plan or automatic deploys.
 type Change struct {
 	Domains    []string `json:"domains"`
@@ -545,7 +590,7 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 		if c.Plan.Kind != st.Plan.Kind {
 			return st, valid.Error("a site cannot change between plain HTML and built: add a new site")
 		}
-		st.Plan, rebuild = *c.Plan, c.Plan.Kind == "build"
+		st.Plan, rebuild = *c.Plan, c.Plan.Kind == "build" || c.Plan.Kind == "docker"
 	}
 	redeploy := !slices.Equal(domains, st.Domains) || (c.Plan != nil && !rebuild)
 	old, sync := st.Domains, !slices.Equal(domains, st.Domains)
@@ -562,7 +607,13 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 	}
 	switch {
 	case rebuild:
-		if err := s.setupBuild(ctx, st, ""); err != nil {
+		var err error
+		if st.Plan.Kind == "docker" {
+			err = s.setupDocker(ctx, &st)
+		} else {
+			err = s.setupBuild(ctx, st, "")
+		}
+		if err != nil {
 			return st, err
 		}
 		st.Status = "building"
@@ -645,7 +696,11 @@ func (s *Service) Delete(id string) (Site, error) {
 		return st, err
 	}
 	if s.Send != nil {
-		s.Send(st.ServerID, proto.TypeSiteRemove, proto.SiteRemove{RunID: "rm-" + st.ID, Name: st.Name})
+		remove := proto.SiteRemove{RunID: "rm-" + st.ID, Name: st.Name}
+		if st.Plan.Kind == "docker" {
+			remove.ImageBase = dockerImageBase(st.Repo, dockerKey(st))
+		}
+		s.Send(st.ServerID, proto.TypeSiteRemove, remove)
 	}
 	if _, err := s.db.Exec(`DELETE FROM sites WHERE id = ?`, id); err != nil {
 		return st, err
@@ -669,6 +724,13 @@ func (s *Service) Delete(id string) (Site, error) {
 			s.GitHub.DeleteSecret(ctx, st.Repo, envSecret),
 		); err != nil {
 			slog.Warn("site removal on GitHub", "site", st.Name, "err", err)
+		}
+	}
+	if st.Plan.Kind == "docker" && !slices.ContainsFunc(s.List(), func(o Site) bool { return o.Repo == st.Repo && o.Plan.Kind == "docker" }) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.GitHub.DeleteFile(ctx, st.Repo, ".github/workflows/"+dockerWorkflowFile(dockerKey(st)), st.Branch, "Remove the Fleetwatch Docker build"); err != nil {
+			slog.Warn("Docker workflow removal", "site", st.Name, "err", err)
 		}
 	}
 	return st, nil
@@ -697,6 +759,16 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 			s.save(st)
 			return err
 		}
+		st.Status, st.Error = "building", ""
+		return s.save(st)
+	}
+	if st.Plan.Kind == "docker" {
+		if err := s.setupDocker(ctx, &st); err != nil {
+			st.Status, st.Error = "failed", err.Error()
+			s.save(st)
+			return err
+		}
+		st.tried = ""
 		st.Status, st.Error = "building", ""
 		return s.save(st)
 	}
@@ -832,7 +904,8 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 			return valid.Error("this server's agent is too old to run Docker apps; update the agent first")
 		}
 		env, _ := s.Env(st.ID)
-		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, Port: st.Plan.Port, HostPort: st.Plan.HostPort, Env: env}
+		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, ImageBase: dockerImageBase(st.Repo, dockerKey(st)),
+			ImageTag: sha, Port: st.Plan.Port, HostPort: st.Plan.HostPort, Env: env}
 		if s.RegistryAuths != nil {
 			req.Docker.Auths = s.RegistryAuths()
 		}
@@ -881,9 +954,11 @@ func (s *Service) OnResult(serverID string, data json.RawMessage) {
 			}(DNSOwner(st), slices.Clone(st.Domains))
 		}
 		st.Status, st.Commit, st.Message, st.DeployedAt, st.Error = "live", commit, msg, s.Now().UnixMilli(), ""
+		st.BuildRunID = 0
 		st.CaddyConfig, st.CaddySource = res.CaddyConfig, res.Caddy
 	} else {
 		st.Status, st.Error = "failed", res.Error
+		st.BuildRunID = 0
 		s.Notify("Site "+st.Name+" failed to deploy", res.Error, "warning")
 	}
 	s.save(st)
@@ -926,8 +1001,25 @@ func (s *Service) Sync(ctx context.Context) {
 			s.save(st)
 			continue
 		}
-		if !st.AutoDeploy || st.Status == "deploying" {
+		if (!st.AutoDeploy && st.Status != "building") || st.Status == "deploying" {
 			continue
+		}
+		if st.Plan.Kind == "docker" {
+			key := dockerKey(st)
+			file := dockerWorkflowFile(key)
+			content, _, exists, err := s.GitHub.File(ctx, st.Repo, ".github/workflows/"+file, st.Branch)
+			if err != nil {
+				slog.Warn("check Docker workflow", "site", st.Name, "err", err)
+				continue
+			}
+			if !exists || string(content) != dockerWorkflow(st.Plan, st.Branch, key) {
+				if err := s.setupDocker(ctx, &st); err != nil {
+					st.Status, st.Error = "failed", err.Error()
+					s.save(st)
+					slog.Warn("setup Docker workflow", "site", st.Name, "err", err)
+				}
+				continue
+			}
 		}
 		if st.Plan.Kind == "build" {
 			if run, err := s.GitHub.LastRun(ctx, st.Repo, workflowFile); err == nil && run != nil {
@@ -944,7 +1036,34 @@ func (s *Service) Sync(ctx context.Context) {
 			}
 		}
 		sha, msg, err := s.GitHub.Head(ctx, st.Repo, s.deployBranch(st))
-		if err != nil || sha == "" || sha == st.tried || sha == st.Pinned {
+		if err != nil || sha == "" || sha == st.Pinned {
+			continue
+		}
+		if st.Plan.Kind == "docker" {
+			run, err := s.GitHub.LastRun(ctx, st.Repo, dockerWorkflowFile(dockerKey(st)))
+			switch {
+			case err != nil || run == nil:
+				st.Status, st.Error = "building", ""
+				s.save(st)
+				continue
+			case run.ID <= st.BuildRunID || run.HeadSHA != sha || run.Status != "completed":
+				st.BuildURL = run.HTMLURL
+				st.Status, st.Error = "building", ""
+				s.save(st)
+				continue
+			case run.Conclusion != "success":
+				st.BuildURL = run.HTMLURL
+				if st.Status != "failed" || st.Error == "" {
+					st.Status, st.Error = "failed", "The Docker image build failed on GitHub Actions: open the run for its log"
+					s.save(st)
+					s.Notify("Site "+st.Name+" Docker build failed", "GitHub Actions: "+run.HTMLURL, "warning")
+				}
+				continue
+			default:
+				st.BuildURL = run.HTMLURL
+			}
+		}
+		if sha == st.tried {
 			continue
 		}
 		st.Pinned = "" // a newer commit than the rolled-back one: deploys resume
