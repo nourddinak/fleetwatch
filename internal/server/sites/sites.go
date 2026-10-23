@@ -913,14 +913,23 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 			req.Docker.HostPort = st.Plan.Port // the host port its compose file publishes
 		}
 	}
-	if err := s.Send(st.ServerID, proto.TypeSiteDeploy, req); err != nil {
+	prevStatus, prevErr, prevTried := st.Status, st.Error, st.tried
+	st.Status, st.Error, st.tried = "deploying", "", sha
+	if err := s.save(st); err != nil {
 		s.mu.Lock()
 		delete(s.running, run)
 		s.mu.Unlock()
 		return err
 	}
-	st.Status, st.Error, st.tried = "deploying", "", sha
-	return s.save(st)
+	if err := s.Send(st.ServerID, proto.TypeSiteDeploy, req); err != nil {
+		s.mu.Lock()
+		delete(s.running, run)
+		s.mu.Unlock()
+		st.Status, st.Error, st.tried = prevStatus, prevErr, prevTried
+		s.save(st)
+		return err
+	}
+	return nil
 }
 
 // OnResult takes the agent's answer to a deploy.
