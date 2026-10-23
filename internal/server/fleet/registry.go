@@ -344,6 +344,11 @@ func (r *Registry) RecordSample(id string, m proto.Metrics) error {
 	return err
 }
 
+func (r *Registry) TouchSeen(id string) error {
+	_, err := r.db.Exec(`UPDATE servers SET last_seen_at = ? WHERE id = ?`, r.Now().UnixMilli(), id)
+	return err
+}
+
 func (r *Registry) MarkDisconnected(id string) error {
 	_, err := r.db.Exec(`UPDATE servers SET last_seen_at = ?, connected_since = NULL WHERE id = ?`, r.Now().UnixMilli(), id)
 	return err

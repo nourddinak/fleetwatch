@@ -351,7 +351,7 @@ func (s *Service) Ingest(location string, results []proto.HealthResult) {
 
 func (s *Service) store(checkID, location string, r proto.HealthResult) {
 	now := s.Now().UnixMilli()
-	if r.TS <= 0 || r.TS > now+60_000 {
+	if r.TS <= 0 || r.TS > now+60_000 || r.TS < now-60_000 {
 		r.TS = now
 	}
 	if len(r.Error) > 300 {
@@ -416,7 +416,8 @@ func (s *Service) Run(ctx context.Context) {
 
 // states is where each location stands: the newest results within the last few intervals.
 func (s *Service) states(c Check) []State {
-	since := s.Now().Add(-time.Duration(3*c.IntervalSec)*time.Second - time.Duration(c.TimeoutMs)*time.Millisecond).UnixMilli()
+	windowSec := max(4*c.IntervalSec, 180)
+	since := s.Now().Add(-time.Duration(windowSec)*time.Second - time.Duration(c.TimeoutMs)*time.Millisecond).UnixMilli()
 	rows, err := s.db.Query(`SELECT location, ts, ok, status, latency_ms, error FROM uptime_results WHERE check_id = ? AND ts >= ? ORDER BY ts DESC`, c.ID, since)
 	recent := map[string][]Result{}
 	if err == nil {

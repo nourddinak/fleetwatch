@@ -124,7 +124,7 @@ export function ServerOverview() {
         <MetricCard label="Load average" value={s.load[0].toFixed(2)} sub={`5m ${s.load[1]} · 15m ${s.load[2]}`} icon={<Activity size={14} />} />
         <MetricCard label="Network" value={`↓${s.netRx.toFixed(1)}`} unit="Mbps" sub={`↑ ${s.netTx.toFixed(1)} Mbps`} icon={<Network size={14} />} />
         <MetricCard label="Uptime" value={dc ? "—" : fmtDur(s.uptimeSec)} icon={<Timer size={14} />} sub={dc ? "unknown while disconnected" : `booted ${dateTime(Date.now() - s.uptimeSec * 1000)}`} />
-        <MetricCard to={`/servers/${s.id}/agent`} label="Agent health" value={dc ? "Offline" : `${s.latencyMs}ms`} tone={dc ? "crit" : s.latencyMs > 200 ? "warn" : "ok"} icon={<Plug size={14} />} sub={`heartbeat ${seen(s)}`} />
+        <MetricCard to={`/servers/${s.id}/agent`} label="Agent health" value={dc ? "Offline" : `${s.latencyMs}ms`} tone={dc ? "crit" : s.latencyMs > 1000 ? "warn" : "ok"} icon={<Plug size={14} />} sub={`heartbeat ${seen(s)}`} />
         <MetricCard to={`/servers/${s.id}/applications`} label="Applications" value={c.apps} icon={<Boxes size={14} />} sub={`${c.incidents} incidents · ${c.warnings} warnings`} tone={c.incidents ? "warn" : undefined} />
         {(s.gpus ?? []).map((g, i) => (
           <MetricCard key={i} to={`/servers/${s.id}/metrics`} label={(s.gpus!.length > 1 ? `GPU ${i} · ` : "GPU · ") + g.name} value={g.util.toFixed(0)} unit="%" progress={g.util} icon={<Gpu size={14} />}
@@ -375,7 +375,7 @@ export function ServerAgent() {
               {[...s.pings].reverse().map((p) => (
                 <li key={p.ts} className="flex items-center justify-between">
                   <span className="font-mono text-xs">{clock(p.ts)}</span>
-                  <Badge tone={p.ms > 200 ? "warn" : "ok"}>{p.ms} ms</Badge>
+                  <Badge tone={p.ms > 1000 ? "warn" : "ok"}>{p.ms} ms</Badge>
                 </li>
               ))}
             </ul>

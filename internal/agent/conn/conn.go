@@ -117,7 +117,7 @@ func wsURL(serverURL string) string {
 
 func (r *Runner) session(ctx context.Context) error {
 	rootCtx := ctx
-	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	c, resp, err := websocket.Dial(dialCtx, wsURL(r.Cfg.ServerURL), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + r.Cfg.Credential}, "User-Agent": {"ops-agent/" + r.Version}},
 	})
@@ -409,6 +409,7 @@ func (r *Runner) resultLoop(ctx context.Context, c *websocket.Conn) {
 func (r *Runner) logLoop(ctx context.Context, c *websocket.Conn) {
 	t := time.NewTicker(500 * time.Millisecond)
 	defer t.Stop()
+	const batchLimit = 250
 	for {
 		select {
 		case <-ctx.Done():
@@ -416,7 +417,7 @@ func (r *Runner) logLoop(ctx context.Context, c *websocket.Conn) {
 		case <-t.C:
 		}
 		for {
-			batch, notice := r.logs.Buf.Peek(1000)
+			batch, notice := r.logs.Buf.Peek(batchLimit)
 			if len(batch) == 0 {
 				break
 			}
@@ -428,8 +429,13 @@ func (r *Runner) logLoop(ctx context.Context, c *websocket.Conn) {
 				n--
 			}
 			r.logs.Buf.Commit(n, notice)
-			if n < 1000 {
+			if n < batchLimit {
 				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(25 * time.Millisecond):
 			}
 		}
 	}
@@ -440,10 +446,13 @@ func (r *Runner) send(ctx context.Context, c *websocket.Conn, typ string, v any)
 	if err != nil {
 		return err
 	}
-	wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	return c.Write(wctx, websocket.MessageText, frame)
 }
 

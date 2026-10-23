@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	helloTimeout = 10 * time.Second
-	idleTimeout  = 45 * time.Second // no frame for this long = agent gone
-	pingEvery    = 15 * time.Second
-	keepPings    = 8
+	helloTimeout   = 30 * time.Second
+	idleTimeout    = 3 * time.Minute // no frame for this long = agent gone (metrics interval can be up to 60s)
+	pingEvery      = 15 * time.Second
+	pingTimeout    = 30 * time.Second
+	writeTimeout   = 30 * time.Second
+	maxMissedPings = 3
+	keepPings      = 8
 )
 
 type Ping struct {
@@ -235,28 +238,40 @@ func readHello(ctx context.Context, ws *websocket.Conn) (proto.Hello, error) {
 func (h *Hub) pinger(ctx context.Context, serverID string, c *agentConn) {
 	t := time.NewTicker(pingEvery)
 	defer t.Stop()
+	missed := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		pctx, cancel := context.WithTimeout(ctx, pingTimeout)
 		start := time.Now()
-		c.writeMu.Lock()
+		// Do not hold c.writeMu across Ping: coder/websocket serializes control frame
+		// writes internally, while Ping blocks waiting for the remote Pong read by Serve.
 		err := c.ws.Ping(pctx)
-		c.writeMu.Unlock()
 		cancel()
 		if err != nil {
-			c.cancel()
-			return
+			if ctx.Err() != nil {
+				return
+			}
+			missed++
+			if missed >= maxMissedPings {
+				c.cancel()
+				return
+			}
+			continue
 		}
+		missed = 0
 		c.mu.Lock()
 		c.pings = append(c.pings, Ping{TS: start.UnixMilli(), MS: time.Since(start).Milliseconds()})
 		if len(c.pings) > keepPings {
 			c.pings = c.pings[len(c.pings)-keepPings:]
 		}
 		c.mu.Unlock()
+		if h.Reg != nil {
+			_ = h.Reg.TouchSeen(serverID)
+		}
 	}
 }
 
@@ -265,10 +280,10 @@ func (h *Hub) sendConfig(ctx context.Context, serverID string, c *agentConn) {
 		return
 	}
 	frame, _ := proto.Encode(proto.TypeConfig, "", h.Config(serverID))
-	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
 	c.ws.Write(wctx, websocket.MessageText, frame)
 }
 
@@ -281,7 +296,7 @@ func (h *Hub) BroadcastConfig() {
 	}
 	h.mu.Unlock()
 	for _, id := range ids {
-		h.SendConfig(id)
+		go h.SendConfig(id)
 	}
 }
 
@@ -304,10 +319,10 @@ func (h *Hub) Send(serverID, typ string, v any) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
 	return c.ws.Write(ctx, websocket.MessageText, frame)
 }
 

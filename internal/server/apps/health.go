@@ -155,8 +155,9 @@ func (s *Service) IngestHealth(serverID string, results []proto.HealthResult) {
 		if !ok {
 			continue // not this server's app
 		}
-		if r.TS <= 0 || r.TS > s.Now().UnixMilli()+60_000 {
-			r.TS = s.Now().UnixMilli()
+		now := s.Now().UnixMilli()
+		if r.TS <= 0 || r.TS > now+60_000 || r.TS < now-60_000 {
+			r.TS = now
 		}
 		if len(r.Error) > 500 {
 			r.Error = r.Error[:500]
