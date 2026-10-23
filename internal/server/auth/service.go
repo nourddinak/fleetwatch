@@ -838,3 +838,8 @@ func (s *Service) ConfirmAction(c Client, member, secret, action string) error {
 func (s *Service) ConfirmPassword(c Client, password, action string) error {
 	return s.checkPassword(c, password, action)
 }
+
+// ConfirmAccountPassword re-checks the password of the owner (memberID == "") or a member.
+func (s *Service) ConfirmAccountPassword(c Client, memberID, password, action string) error {
+	return s.confirmAccountPassword(c, memberID, password, action)
+}

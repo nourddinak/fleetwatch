@@ -34,6 +34,7 @@ type agentConn struct {
 	transport string
 	mu        sync.Mutex
 	pings     []Ping
+	writeMu   sync.Mutex
 }
 
 // Hub tracks live agent connections and turns their frames into stored state.
@@ -153,7 +154,7 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, serverID, remoteIP,
 		log.Info("agent disconnected")
 	}()
 
-	h.sendConfig(ctx, serverID, ws)
+	h.sendConfig(ctx, serverID, c)
 	h.Publish(serverID)
 	h.stateChanged(serverID)
 	go h.pinger(ctx, serverID, c)
@@ -242,7 +243,9 @@ func (h *Hub) pinger(ctx context.Context, serverID string, c *agentConn) {
 		}
 		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		start := time.Now()
+		c.writeMu.Lock()
 		err := c.ws.Ping(pctx)
+		c.writeMu.Unlock()
 		cancel()
 		if err != nil {
 			c.cancel()
@@ -257,11 +260,16 @@ func (h *Hub) pinger(ctx context.Context, serverID string, c *agentConn) {
 	}
 }
 
-func (h *Hub) sendConfig(ctx context.Context, serverID string, ws *websocket.Conn) {
+func (h *Hub) sendConfig(ctx context.Context, serverID string, c *agentConn) {
+	if c == nil {
+		return
+	}
 	frame, _ := proto.Encode(proto.TypeConfig, "", h.Config(serverID))
 	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	ws.Write(wctx, websocket.MessageText, frame)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	c.ws.Write(wctx, websocket.MessageText, frame)
 }
 
 // BroadcastConfig pushes the current config to every connected agent.
@@ -280,7 +288,7 @@ func (h *Hub) BroadcastConfig() {
 // SendConfig pushes the current config to one server's agent, if connected.
 func (h *Hub) SendConfig(serverID string) {
 	if c := h.conn(serverID); c != nil {
-		h.sendConfig(context.Background(), serverID, c.ws)
+		h.sendConfig(context.Background(), serverID, c)
 	}
 }
 
@@ -298,6 +306,8 @@ func (h *Hub) Send(serverID, typ string, v any) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.ws.Write(ctx, websocket.MessageText, frame)
 }
 

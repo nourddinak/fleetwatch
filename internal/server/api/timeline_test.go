@@ -1,7 +1,10 @@
 package api
 
 import (
+	"cmp"
+	"math"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,5 +41,19 @@ func TestTimelinePieces(t *testing.T) {
 	// Paging back: only what came before.
 	if older := s.momentsEvents(`server_id = ?`, 150, "s1"); len(older) != 1 || older[0].TS != 100 {
 		t.Fatalf("%+v", older)
+	}
+}
+
+func TestTimelineSortOverflow(t *testing.T) {
+	// Two moments more than math.MaxInt32 milliseconds apart (~24.85 days).
+	// On 32-bit platforms, subtracting int64 timestamps and casting to int overflows.
+	mOld := Moment{TS: 1000, Kind: "backup", Text: "30 days ago"}
+	mNew := Moment{TS: 1000 + int64(math.MaxInt32) + 100_000, Kind: "deploy", Text: "now"}
+
+	items := []Moment{mOld, mNew}
+	slices.SortStableFunc(items, func(a, b Moment) int { return cmp.Compare(b.TS, a.TS) })
+
+	if items[0].TS != mNew.TS || items[1].TS != mOld.TS {
+		t.Fatalf("expected newest first, got %+v", items)
 	}
 }

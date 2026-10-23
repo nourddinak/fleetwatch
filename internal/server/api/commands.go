@@ -129,7 +129,7 @@ func (s *server) deleteCommand(w http.ResponseWriter, r *http.Request, _ auth.Se
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *server) runCommand(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *server) runCommand(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var in struct{ Password string }
 	if r.ContentLength > 0 && !decode(w, r, &in) {
 		return
@@ -139,13 +139,13 @@ func (s *server) runCommand(w http.ResponseWriter, r *http.Request, _ auth.Sessi
 			writeError(w, http.StatusForbidden, "password_required", "Enter your password to run commands.")
 			return
 		}
-		if err := s.Auth.ConfirmPassword(client(r), in.Password, "command.run"); err != nil {
+		if err := s.Auth.ConfirmAccountPassword(client(r), sess.MemberID, in.Password, "command.run"); err != nil {
 			fail(w, err)
 			return
 		}
 	}
-	p, _ := s.Auth.Profile()
-	run, err := s.Commands.Start(r.PathValue("id"), r.PathValue("cmd"), p.Username+" from "+clientIP(r))
+	who := s.actor(r)
+	run, err := s.Commands.Start(r.PathValue("id"), r.PathValue("cmd"), who+" from "+clientIP(r))
 	if err != nil {
 		fail(w, err)
 		return

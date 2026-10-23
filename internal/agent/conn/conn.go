@@ -64,6 +64,7 @@ type Runner struct {
 	loginsSince atomic.Int64                   // newest SSH login sent (unix ms)
 	blocks      atomic.Pointer[string]         // the block list last applied ("" = none yet)
 	blockMu     sync.Mutex
+	writeMu     sync.Mutex
 }
 
 // Run connects and reconnects until ctx ends or the server requests a restart.
@@ -131,7 +132,7 @@ func (r *Runner) session(ctx context.Context) error {
 	ctx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 
-	if err := send(ctx, c, proto.TypeHello, host.Hello(r.Version)); err != nil {
+	if err := r.send(ctx, c, proto.TypeHello, host.Hello(r.Version)); err != nil {
 		return err
 	}
 	slog.Info("connected to server", "url", r.Cfg.ServerURL)
@@ -212,7 +213,7 @@ func (r *Runner) session(ctx context.Context) error {
 					}
 					if err != nil {
 						slog.Error("update failed", "err", err)
-						send(ctx, c, proto.TypeUpdateResult, err.Error())
+						r.send(ctx, c, proto.TypeUpdateResult, err.Error())
 						return
 					}
 					slog.Info("agent binary updated; restarting", "version", u.Version)
@@ -330,7 +331,7 @@ func (r *Runner) session(ctx context.Context) error {
 	}()
 
 	for {
-		if err := send(ctx, c, proto.TypeMetrics, r.sampler.Sample()); err != nil {
+		if err := r.send(ctx, c, proto.TypeMetrics, r.sampler.Sample()); err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return cause
 			}
@@ -352,7 +353,7 @@ func (r *Runner) inventoryLoop(ctx context.Context, c *websocket.Conn, scanNow <
 		if ctx.Err() != nil {
 			return
 		}
-		if err := send(ctx, c, proto.TypeInventory, inv); err != nil {
+		if err := r.send(ctx, c, proto.TypeInventory, inv); err != nil {
 			return
 		}
 		select {
@@ -377,7 +378,7 @@ func (r *Runner) sendCurrent(typ string, v any) error {
 	if c == nil {
 		return errors.New("not connected")
 	}
-	return send(context.Background(), c, typ, v)
+	return r.send(context.Background(), c, typ, v)
 }
 
 // resultLoop forwards health results and finished storage scans every second.
@@ -391,12 +392,12 @@ func (r *Runner) resultLoop(ctx context.Context, c *websocket.Conn) {
 		case <-t.C:
 		}
 		if res := r.health.Take(); len(res) > 0 {
-			if send(ctx, c, proto.TypeHealth, res) != nil {
+			if r.send(ctx, c, proto.TypeHealth, res) != nil {
 				return
 			}
 		}
 		for _, res := range r.storage.Take() {
-			if send(ctx, c, proto.TypeStorageResult, res) != nil {
+			if r.send(ctx, c, proto.TypeStorageResult, res) != nil {
 				return
 			}
 		}
@@ -419,7 +420,7 @@ func (r *Runner) logLoop(ctx context.Context, c *websocket.Conn) {
 			if len(batch) == 0 {
 				break
 			}
-			if err := send(ctx, c, proto.TypeLogs, batch); err != nil {
+			if err := r.send(ctx, c, proto.TypeLogs, batch); err != nil {
 				return
 			}
 			n := len(batch)
@@ -434,13 +435,15 @@ func (r *Runner) logLoop(ctx context.Context, c *websocket.Conn) {
 	}
 }
 
-func send(ctx context.Context, c *websocket.Conn, typ string, v any) error {
+func (r *Runner) send(ctx context.Context, c *websocket.Conn, typ string, v any) error {
 	frame, err := proto.Encode(typ, "", v)
 	if err != nil {
 		return err
 	}
 	wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	return c.Write(wctx, websocket.MessageText, frame)
 }
 

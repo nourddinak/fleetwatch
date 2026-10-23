@@ -57,4 +57,15 @@ func TestOnCallRoutes(t *testing.T) {
 	if res.StatusCode != 400 {
 		t.Fatalf("forged acknowledge: %d", res.StatusCode)
 	}
+
+	// CSRF exemption: mail forms without an Origin header must also reach the token validation handler.
+	reqNoOrigin, _ := http.NewRequest("POST", srv.URL+"/api/public/ack?i=x&p=owner&s=forged", nil)
+	resNoOrigin, err := srv.Client().Do(reqNoOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resNoOrigin.Body.Close()
+	if resNoOrigin.StatusCode != 400 {
+		t.Fatalf("forged acknowledge without Origin returned %d, want 400", resNoOrigin.StatusCode)
+	}
 }

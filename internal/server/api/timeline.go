@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"net/http"
 	"slices"
 	"strconv"
@@ -103,7 +104,7 @@ func (s *server) timelineRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusBadRequest, "invalid_input", "Which app, site or server?")
 			return
 		}
-		slices.SortStableFunc(out, func(a, b Moment) int { return int(b.TS - a.TS) })
+		slices.SortStableFunc(out, func(a, b Moment) int { return cmp.Compare(b.TS, a.TS) })
 		more := len(out) > timelinePage
 		if more {
 			out = out[:timelinePage]
