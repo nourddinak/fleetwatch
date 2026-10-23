@@ -1,16 +1,43 @@
 name: Release
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Next version
+        id: ver
+        run: |
+          git fetch --tags --force
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+            if [[ -z "$tag" ]]; then
+              last="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+              if [[ "$last" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+              else
+                tag="v0.1.0"
+              fi
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -31,11 +58,17 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build
         shell: pwsh
-        run: ./scripts/build.ps1 -Version ("${{ github.ref_name }}".TrimStart("v")) -Release
+        run: ./scripts/build.ps1 -Version "${{ steps.ver.outputs.version }}" -Release
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" bin/ops-server-linux-amd64 bin/ops-server-linux-arm64 bin/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            exit 0
+          fi
+          gh release create "$TAG" bin/ops-server-linux-amd64 bin/ops-server-linux-arm64 bin/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --generate-notes
       # Keep the release list short: only the newest 5 releases stay (their git tags remain).
       - name: Prune old releases
         env:
