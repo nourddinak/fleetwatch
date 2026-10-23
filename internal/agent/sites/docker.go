@@ -100,7 +100,9 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 		if _, err := os.Stat(filepath.Join(rel, d.Compose)); err != nil {
 			return "", fmt.Errorf("%s is not in the repository", d.Compose)
 		}
-		args := []string{"compose", "-p", project, "-f", d.Compose}
+		baseArgs := []string{"compose", "-p", project, "-f", d.Compose}
+		args := slices.Clone(baseArgs)
+		pulled := false
 		if d.ImageBase != "" {
 			if !imageBaseRe.MatchString(d.ImageBase) || !imageTagRe.MatchString(d.ImageTag) {
 				return "", errors.New("invalid remote Docker image reference")
@@ -136,12 +138,16 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 				args = append(args, "-f", filepath.Base(overridePath))
 			}
 			fmt.Fprintf(log, "$ docker %s pull\n", strings.Join(args, " "))
-			if err := dockerCmd(ctx, rel, 30*time.Minute, log, append(args, "pull")...); err != nil {
-				return "", err
+			if err := dockerCmd(ctx, rel, 30*time.Minute, log, append(args, "pull")...); err == nil {
+				pulled = true
+			} else {
+				fmt.Fprintf(log, "Could not pull prebuilt image (%v); building on server instead\n", err)
 			}
+		}
+		if pulled {
 			args = append(args, "up", "-d", "--remove-orphans", "--no-build")
 		} else {
-			args = append(args, "up", "-d", "--build", "--remove-orphans")
+			args = append(baseArgs, "up", "-d", "--build", "--remove-orphans")
 		}
 		fmt.Fprintf(log, "$ docker %s\n", strings.Join(args, " "))
 		if err := dockerCmd(ctx, rel, 30*time.Minute, log, args...); err != nil {
@@ -153,17 +159,22 @@ func runDocker(ctx context.Context, req proto.SiteDeploy, rel string, log *bytes
 		}
 		image := project + ":" + filepath.Base(rel)
 		imageRepo := project
+		pulled := false
 		if d.ImageBase != "" {
 			if !imageBaseRe.MatchString(d.ImageBase) || !imageTagRe.MatchString(d.ImageTag) {
 				return "", errors.New("invalid remote Docker image reference")
 			}
-			image = d.ImageBase + ":" + d.ImageTag
-			imageRepo = d.ImageBase
-			fmt.Fprintf(log, "$ docker pull %s\n", image)
-			if err := dockerCmd(ctx, rel, 30*time.Minute, log, "pull", image); err != nil {
-				return "", err
+			remoteImage := d.ImageBase + ":" + d.ImageTag
+			fmt.Fprintf(log, "$ docker pull %s\n", remoteImage)
+			if err := dockerCmd(ctx, rel, 30*time.Minute, log, "pull", remoteImage); err == nil {
+				image = remoteImage
+				imageRepo = d.ImageBase
+				pulled = true
+			} else {
+				fmt.Fprintf(log, "Could not pull prebuilt image (%v); building on server instead\n", err)
 			}
-		} else {
+		}
+		if !pulled {
 			fmt.Fprintf(log, "$ docker build -t %s .\n", image)
 			if err := dockerCmd(ctx, rel, 30*time.Minute, log, "build", "-t", image, "--label", "fleetwatch.site="+req.Name, "."); err != nil {
 				return "", err

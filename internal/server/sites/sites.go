@@ -473,7 +473,7 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 		go s.SyncSoon()
 		return st, nil
 	}
-	if plan.Kind == "docker" {
+	if plan.Kind == "docker" && s.useGHCR(ctx, in.Repo) {
 		if err := s.setupDocker(ctx, &st); err != nil {
 			st.Status, st.Error = "failed", err.Error()
 			s.save(st)
@@ -486,6 +486,17 @@ func (s *Service) Create(ctx context.Context, in Input, by string) (Site, error)
 	}
 	go s.Redeploy(context.Background(), st.ID, by)
 	return st, nil
+}
+
+// useGHCR reports whether the server can pull GHCR images built by GitHub Actions for repo:
+// public repositories publish public GHCR packages, whereas private repositories require a
+// ghcr.io login in Integrations → Registries.
+func (s *Service) useGHCR(ctx context.Context, repo string) bool {
+	if s.RegistryAuths != nil && slices.ContainsFunc(s.RegistryAuths(), func(a proto.RegistryAuth) bool { return a.Host == "ghcr.io" }) {
+		return true
+	}
+	_, private, err := s.GitHub.RepoInfo(ctx, repo)
+	return err == nil && !private
 }
 
 // ErrPermissions: the GitHub app was created without the permissions sites need (apps
@@ -615,6 +626,8 @@ func (s *Service) Update(ctx context.Context, id string, c Change, by string) (S
 		return st, err
 	}
 	switch {
+	case rebuild && st.Plan.Kind == "docker" && !s.useGHCR(ctx, st.Repo):
+		go s.Redeploy(context.Background(), st.ID, by)
 	case rebuild:
 		var err error
 		if st.Plan.Kind == "docker" {
@@ -771,7 +784,7 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 		st.Status, st.Error = "building", ""
 		return s.save(st)
 	}
-	if st.Plan.Kind == "docker" {
+	if st.Plan.Kind == "docker" && s.useGHCR(ctx, st.Repo) {
 		key := dockerKey(st)
 		file := dockerWorkflowFile(key)
 		if content, _, exists, err := s.GitHub.File(ctx, st.Repo, ".github/workflows/"+file, st.Branch); err == nil &&
@@ -930,7 +943,11 @@ func (s *Service) deploy(ctx context.Context, st Site, sha, message, by string) 
 			return valid.Error("this server's agent is too old to run Docker apps; update the agent first")
 		}
 		env, _ := s.Env(st.ID)
-		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, ImageBase: dockerImageBase(st.Repo, dockerKey(st)),
+		imageBase := ""
+		if s.useGHCR(ctx, st.Repo) {
+			imageBase = dockerImageBase(st.Repo, dockerKey(st))
+		}
+		req.Docker = &proto.SiteDocker{Compose: st.Plan.Compose, ImageBase: imageBase,
 			ImageTag: sha, Port: st.Plan.Port, HostPort: st.Plan.HostPort, Env: env}
 		if s.RegistryAuths != nil {
 			req.Docker.Auths = s.RegistryAuths()
@@ -1039,7 +1056,11 @@ func (s *Service) Sync(ctx context.Context) {
 		if (!st.AutoDeploy && st.Status != "building") || st.Status == "deploying" {
 			continue
 		}
-		if st.Plan.Kind == "docker" {
+		useGHCR := st.Plan.Kind == "docker" && s.useGHCR(ctx, st.Repo)
+		if st.Plan.Kind == "docker" && !useGHCR && st.Status == "failed" && strings.Contains(strings.ToLower(st.Error), "unauthorized") {
+			st.tried = "" // retry on the server when a private GHCR pull previously failed without a registry token
+		}
+		if useGHCR {
 			key := dockerKey(st)
 			file := dockerWorkflowFile(key)
 			content, _, exists, err := s.GitHub.File(ctx, st.Repo, ".github/workflows/"+file, st.Branch)
@@ -1074,7 +1095,7 @@ func (s *Service) Sync(ctx context.Context) {
 		if err != nil || sha == "" || sha == st.Pinned {
 			continue
 		}
-		if st.Plan.Kind == "docker" {
+		if useGHCR {
 			run, err := s.GitHub.LastRun(ctx, st.Repo, dockerWorkflowFile(dockerKey(st)))
 			switch {
 			case err != nil || run == nil:

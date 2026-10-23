@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +213,21 @@ func TestDockerDeploy(t *testing.T) {
 		!strings.Contains(composeImageOverride, `"build":null`) {
 		t.Fatalf("Compose image override: %s", composeImageOverride)
 	}
+	// If pulling a private GHCR image fails (e.g. unauthorized), fall back to building on the server.
+	calls = nil
+	oldDockerCmd := dockerCmd
+	dockerCmd = func(ctx context.Context, dir string, d time.Duration, log *bytes.Buffer, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		if slices.Contains(args, "pull") {
+			return errors.New("docker compose failed: unauthorized")
+		}
+		return nil
+	}
+	if res := Deploy(context.Background(), req); !res.OK ||
+		!strings.Contains(strings.Join(calls, "\n"), "compose -p fw-api -f compose.yaml up -d --build --remove-orphans") {
+		t.Fatalf("fallback build did not run: %+v %v", res, calls)
+	}
+	dockerCmd = oldDockerCmd
 	if _, err := os.Stat(filepath.Join(CaddyDir, "api.caddy")); err == nil {
 		t.Fatal("the Caddy site stayed without a port")
 	}
