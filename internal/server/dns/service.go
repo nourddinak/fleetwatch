@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -334,6 +335,33 @@ func (s *Service) SetProxied(ctx context.Context, owner string, st State, on boo
 	}
 	st.Proxied = on
 	return st, nil
+}
+
+// CountryRule blocks countries at Cloudflare for one zone: mode "block" blocks visitors
+// from them, "allow" blocks everyone else; no countries removes the rule.
+func (s *Service) CountryRule(ctx context.Context, owner, accountID, zone, mode string, countries []string) error {
+	_, cdn, z, err := s.cdn(owner, accountID, zone)
+	if err != nil {
+		return err
+	}
+	expr := ""
+	if len(countries) > 0 {
+		quoted := make([]string, len(countries))
+		for i, c := range countries {
+			quoted[i] = strconv.Quote(c)
+		}
+		expr = "(ip.geoip.country in {" + strings.Join(quoted, " ") + "})"
+		if mode == "allow" {
+			expr = "(not " + expr + ")"
+		}
+	}
+	if err := cdn.CountryRule(ctx, z, expr); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "auth") || strings.Contains(err.Error(), "permission") {
+			return valid.Error("Cloudflare refused the firewall rule: sign in to Cloudflare again (Integrations → Cloudflare) so Fleetwatch may edit firewall rules")
+		}
+		return err
+	}
+	return nil
 }
 
 // UnderAttack reads or switches Cloudflare's "Under attack" mode of a zone (on=nil: read).

@@ -50,6 +50,9 @@ type CDN interface {
 	BlockRules(ctx context.Context, z Zone) (map[string]string, error) // ip → rule ID, Fleetwatch's own
 	Block(ctx context.Context, z Zone, ip string) error
 	DeleteRule(ctx context.Context, z Zone, id string) error
+	// CountryRule sets Fleetwatch's country rule of a zone (a custom firewall rule that
+	// blocks what expr matches); "" removes it.
+	CountryRule(ctx context.Context, z Zone, expr string) error
 }
 
 // Base addresses; tests point them at fakes.
@@ -245,5 +248,47 @@ func (c cloudflare) Block(ctx context.Context, z Zone, ip string) error {
 
 func (c cloudflare) DeleteRule(ctx context.Context, z Zone, id string) error {
 	_, err := c.call(ctx, http.MethodDelete, "/zones/"+z.ID+"/firewall/access_rules/rules/"+id, nil, nil)
+	return err
+}
+
+// geoRuleNote names the custom rule Fleetwatch keeps for countries; no other rule is touched.
+const geoRuleNote = "fleetwatch: countries"
+
+func (c cloudflare) CountryRule(ctx context.Context, z Zone, expr string) error {
+	phase := "/zones/" + z.ID + "/rulesets/phases/http_request_firewall_custom/entrypoint"
+	var rs struct {
+		ID    string `json:"id"`
+		Rules []struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+		} `json:"rules"`
+	}
+	_, err := c.call(ctx, http.MethodGet, phase, nil, &rs)
+	if err != nil {
+		low := strings.ToLower(err.Error())
+		if !strings.Contains(low, "not find") && !strings.Contains(low, "not found") {
+			return err
+		}
+		rs.ID = "" // the zone has no custom rules yet
+	}
+	rule := map[string]any{"action": "block", "expression": expr, "description": geoRuleNote, "enabled": true}
+	ours := ""
+	for _, r := range rs.Rules {
+		if r.Description == geoRuleNote {
+			ours = r.ID
+		}
+	}
+	switch {
+	case expr == "" && ours == "":
+		return nil
+	case expr == "":
+		_, err = c.call(ctx, http.MethodDelete, "/zones/"+z.ID+"/rulesets/"+rs.ID+"/rules/"+ours, nil, nil)
+	case rs.ID == "":
+		_, err = c.call(ctx, http.MethodPut, phase, map[string]any{"rules": []any{rule}}, nil)
+	case ours != "":
+		_, err = c.call(ctx, http.MethodPatch, "/zones/"+z.ID+"/rulesets/"+rs.ID+"/rules/"+ours, rule, nil)
+	default:
+		_, err = c.call(ctx, http.MethodPost, "/zones/"+z.ID+"/rulesets/"+rs.ID+"/rules", rule, nil)
+	}
 	return err
 }

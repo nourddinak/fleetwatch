@@ -28,6 +28,7 @@ import (
 	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/geo"
 	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
@@ -81,6 +82,7 @@ type Deps struct {
 	Cron       *cron.Service
 	Backups    *backups.Service
 	Databases  *dbtool.Service
+	Geo        *geo.Service
 	Docker     *docker.Service
 	Admin      *hostadmin.Service
 	Vulns      *vulns.Service
@@ -196,6 +198,9 @@ func New(d Deps) http.Handler {
 	}
 	if d.Databases != nil {
 		s.databaseRoutes(mux)
+	}
+	if d.Geo != nil {
+		s.geoRoutes(mux)
 	}
 	if d.Docker != nil {
 		s.dockerRoutes(mux)

@@ -1,5 +1,6 @@
 node_modules/
 web/dist/
+*.tsbuildinfo
 /bin/
 data/
 *.db

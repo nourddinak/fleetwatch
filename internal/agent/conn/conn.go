@@ -236,6 +236,11 @@ func (r *Runner) session(ctx context.Context) error {
 						}
 					}()
 				}
+			case proto.TypeGeoApply:
+				var req proto.GeoApply
+				if json.Unmarshal(env.Data, &req) == nil {
+					go func() { r.sendCurrent(proto.TypeGeoStatus, hostcheck.ApplyGeo(rootCtx, req)) }()
+				}
 			case proto.TypeDBRequest:
 				var req proto.DBRequest
 				if json.Unmarshal(env.Data, &req) == nil && req.RunID != "" {

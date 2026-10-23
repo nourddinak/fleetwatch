@@ -1,10 +1,11 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { Component, useEffect, useState, type ButtonHTMLAttributes, type ErrorInfo, type ReactNode, type SelectHTMLAttributes, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, Check, Copy, Inbox, Loader2, Search, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Compass, Copy, Inbox, Loader2, RotateCw, Search, X } from "lucide-react";
 import { cn } from "../utils/cn";
 import type { AppStatusT, HealthStatus, IncidentStatus, Range, ServerStatusT, Severity } from "../mock/types";
 import { RANGES } from "../mock/metrics";
 import { copyText } from "../mock/util";
+import { useStore } from "../store/store";
 
 export type Tone = "ok" | "warn" | "crit" | "info" | "neutral" | "accent";
 
@@ -29,7 +30,7 @@ export const toneText: Record<Tone, string> = { ok: "text-ok", warn: "text-warn"
 /* ---------- layout primitives ---------- */
 export function Card({ className, children, pad = true, onClick }: { className?: string; children: ReactNode; pad?: boolean; onClick?: () => void }) {
   return (
-    <div onClick={onClick} className={cn("rounded-3xl border border-line bg-surface", pad && "p-5", className)}>
+    <div onClick={onClick} className={cn("rounded-3xl border border-line bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)]", pad && "p-5", className)}>
       {children}
     </div>
   );
@@ -74,7 +75,7 @@ export function PageHeader({ title, sub, actions, back, badge }: { title: ReactN
 
 /* ---------- buttons ---------- */
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger"; size?: "sm" | "md" };
-export function Button({ variant = "primary", size = "md", className, ...p }: BtnProps) {
+export function Button({ variant = "primary", size = "md", type = "button", className, ...p }: BtnProps) {
   const v = {
     primary: "bg-accent text-accent-fg hover:opacity-85",
     secondary: "bg-surface2 text-fg border border-line hover:border-fg/30",
@@ -83,14 +84,15 @@ export function Button({ variant = "primary", size = "md", className, ...p }: Bt
   }[variant];
   return (
     <button
+      type={type}
       {...p}
       className={cn("inline-flex items-center justify-center gap-1.5 rounded-full font-medium transition disabled:cursor-not-allowed disabled:opacity-40", size === "sm" ? "px-3.5 py-1.5 text-xs" : "px-5 py-2.5 text-sm", v, className)}
     />
   );
 }
 
-export function IconButton({ className, ...p }: ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...p} className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface text-muted transition hover:text-fg", className)} />;
+export function IconButton({ type = "button", className, ...p }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button type={type} {...p} className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface text-muted transition hover:text-fg disabled:cursor-not-allowed disabled:opacity-40", className)} />;
 }
 
 /* ---------- badges ---------- */
@@ -216,15 +218,70 @@ export function ErrorState({ message = "Could not reach the central server. The 
   );
 }
 
-/** Wraps page content with a short fade-in. */
+/** Wraps page content with a short fade-in once the initial fleet snapshot is loaded. */
 export function Gate({ children }: { children: ReactNode }) {
-  const [boot, setBoot] = useState(true);
-  useEffect(() => {
-    const t = setTimeout(() => setBoot(false), 220);
-    return () => clearTimeout(t);
-  }, []);
-  if (boot) return <LoadingState />;
+  const { serversLoaded } = useStore();
+  if (!serversLoaded) return <LoadingState />;
   return <div className="fade-in">{children}</div>;
+}
+
+/** Catches unexpected render or chunk-loading errors so the dashboard never white-screens. */
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("UI render error:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="mx-auto my-12 max-w-lg">
+          <div className="flex flex-col items-center gap-2 rounded-3xl border border-crit/30 bg-crit-soft/40 px-6 py-12 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-crit-soft text-crit">
+              <AlertTriangle size={20} />
+            </div>
+            <div className="font-semibold">This view encountered an unexpected error</div>
+            <div className="max-w-sm text-sm text-muted">{this.state.error.message || "Try reloading the page or returning to Overview."}</div>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Button variant="secondary" onClick={() => this.setState({ error: null })}>
+                <RotateCw size={14} /> Try again
+              </Button>
+              <Button onClick={() => window.location.reload()}>Reload dashboard</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** 404 Not Found page shown inside the dashboard shell when an unknown route is visited. */
+export function NotFoundPage() {
+  return (
+    <div className="mx-auto my-8 max-w-xl">
+      <EmptyState
+        icon={<Compass size={22} />}
+        title="Page not found (404)"
+        desc="The address you opened does not match any page in Fleetwatch. It may have been moved or removed."
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Link to="/">
+              <Button>Back to Overview</Button>
+            </Link>
+            <Link to="/servers">
+              <Button variant="secondary">Servers</Button>
+            </Link>
+            <Link to="/applications">
+              <Button variant="secondary">Applications</Button>
+            </Link>
+          </div>
+        }
+      />
+    </div>
+  );
 }
 
 /* ---------- overlays ---------- */
@@ -238,10 +295,10 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={onClose}>
-      <div onMouseDown={(e) => e.stopPropagation()} className={cn("fade-in flex max-h-[92vh] w-full flex-col rounded-t-3xl border border-line bg-surface sm:rounded-3xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}>
+      <div role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} onMouseDown={(e) => e.stopPropagation()} className={cn("fade-in flex max-h-[92vh] w-full flex-col rounded-t-3xl border border-line bg-surface shadow-2xl sm:rounded-3xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}>
         <div className="flex items-center justify-between gap-3 border-b border-line px-6 py-4">
           <h3 className="font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-muted hover:text-fg" aria-label="Close">
+          <button type="button" onClick={onClose} className="rounded-full p-1 text-muted transition hover:bg-surface2 hover:text-fg" aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -285,10 +342,10 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[65] bg-black/40 backdrop-blur-sm" onMouseDown={onClose}>
-      <aside onMouseDown={(e) => e.stopPropagation()} className="fade-in absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-line bg-surface">
+      <aside role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} onMouseDown={(e) => e.stopPropagation()} className="fade-in absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-line bg-surface shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-line px-6 py-4">
           <h3 className="min-w-0 truncate font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-muted hover:text-fg" aria-label="Close">
+          <button type="button" onClick={onClose} className="rounded-full p-1 text-muted transition hover:bg-surface2 hover:text-fg" aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -317,9 +374,9 @@ export function LinkTabs({ tabs }: { tabs: { to: string; label: string; end?: bo
 
 export function Segmented<T extends string>({ value, onChange, options, size = "md" }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; size?: "sm" | "md" }) {
   return (
-    <div className="inline-flex max-w-full flex-wrap gap-0.5 rounded-full border border-line bg-surface2 p-0.5">
+    <div role="tablist" className="inline-flex max-w-full flex-wrap gap-0.5 rounded-full border border-line bg-surface2 p-0.5">
       {options.map((o) => (
-        <button key={o.value} onClick={() => onChange(o.value)} className={cn("whitespace-nowrap rounded-full transition", size === "sm" ? "px-3 py-1 text-xs" : "px-3.5 py-1.5 text-xs", value === o.value ? "bg-accent font-medium text-accent-fg" : "text-muted hover:text-fg")}>
+        <button type="button" role="tab" aria-selected={value === o.value} key={o.value} onClick={() => onChange(o.value)} className={cn("whitespace-nowrap rounded-full transition", size === "sm" ? "px-3 py-1 text-xs" : "px-3.5 py-1.5 text-xs", value === o.value ? "bg-accent font-medium text-accent-fg" : "text-muted hover:text-fg")}>
           {o.label}
         </button>
       ))}
@@ -366,7 +423,7 @@ export function SearchInput({ value, onChange, placeholder = "Search…", classN
       <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={cn(fieldCls, "pl-10 pr-9")} />
       {value && (
-        <button onClick={() => onChange("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-fg" aria-label="Clear search">
+        <button type="button" onClick={() => onChange("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-fg" aria-label="Clear search">
           <X size={14} />
         </button>
       )}
@@ -376,7 +433,7 @@ export function SearchInput({ value, onChange, placeholder = "Search…", classN
 
 export function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <button role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={cn("relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40", checked ? "bg-accent" : "bg-neutral-soft border border-line")}>
+    <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={cn("relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40", checked ? "bg-accent" : "bg-neutral-soft border border-line")}>
       <span className={cn("absolute top-0.5 h-5 w-5 rounded-full transition-all", checked ? "left-[22px] bg-accent-fg" : "left-0.5 bg-muted")} />
     </button>
   );
@@ -430,6 +487,7 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
   const [done, setDone] = useState(false);
   return (
     <button
+      type="button"
       onClick={(e) => {
         e.stopPropagation();
         copyText(text);

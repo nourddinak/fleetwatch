@@ -6,7 +6,7 @@ import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
 import { AddAppDialog } from "./AddAppDialog";
-import { LoadingState, Spinner } from "./ui";
+import { ErrorBoundary, LoadingState, Spinner } from "./ui";
 import { useApi } from "../api/client";
 import { UpdateBanner } from "./PlatformUpdate";
 
@@ -179,10 +179,10 @@ function Shell() {
     <div className={cn("flex h-full flex-col gap-5", compact ? "items-center px-3 py-5" : "p-5")}>
       <div className={cn("flex items-center", compact ? "flex-col gap-3" : "justify-between")}>
         <Logo compact={compact} />
-        <button className="text-muted lg:hidden" onClick={() => setMobile(false)} aria-label="Close menu">
+        <button type="button" className="text-muted lg:hidden" onClick={() => setMobile(false)} aria-label="Close menu">
           <X size={20} />
         </button>
-        <button id="fold-sidebar" onClick={fold} title={compact ? "Expand the sidebar (Ctrl B)" : "Collapse the sidebar (Ctrl B)"} aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
+        <button type="button" id="fold-sidebar" onClick={fold} title={compact ? "Expand the sidebar (Ctrl B)" : "Collapse the sidebar (Ctrl B)"} aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
           className="hidden h-8 w-8 items-center justify-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg lg:flex">
           {compact ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
         </button>
@@ -228,10 +228,10 @@ function Shell() {
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 border-b border-line bg-bg/85 backdrop-blur">
           <div ref={menuRef} className="flex items-center gap-2 px-4 py-3 sm:px-8">
-            <button className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface lg:hidden" onClick={() => setMobile(true)} aria-label="Open menu">
+            <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface lg:hidden" onClick={() => setMobile(true)} aria-label="Open menu">
               <Menu size={18} />
             </button>
-            <button onClick={() => setPalette(true)} className="flex h-10 min-w-0 flex-1 items-center gap-3 rounded-full border border-line bg-surface px-4 text-left text-sm text-muted transition hover:border-fg/30 sm:max-w-md">
+            <button type="button" onClick={() => setPalette(true)} className="flex h-10 min-w-0 flex-1 items-center gap-3 rounded-full border border-line bg-surface px-4 text-left text-sm text-muted transition hover:border-fg/30 sm:max-w-md">
               <Search size={16} />
               <span className="flex-1 truncate">Search servers, apps, ports, logs…</span>
               <kbd className="hidden rounded-md border border-line px-1.5 py-0.5 text-[10px] sm:block">Ctrl K</kbd>
@@ -239,15 +239,15 @@ function Shell() {
             <div className="ml-auto flex items-center gap-2">
               <ThemeToggle />
               <div className="relative">
-                <button onClick={() => { setAddMenu(!addMenu); setUserMenu(false); }} className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-accent-fg" aria-label="Add">
+                <button type="button" onClick={() => { setAddMenu(!addMenu); setUserMenu(false); }} className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-accent-fg" aria-label="Add">
                   <Plus size={18} />
                 </button>
                 {addMenu && (
                   <div className="fade-in absolute right-0 top-12 z-40 w-52 rounded-2xl border border-line bg-surface p-1.5 shadow-xl">
-                    <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-surface2" onClick={() => { setAddMenu(false); nav("/servers/new"); }}>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-surface2" onClick={() => { setAddMenu(false); nav("/servers/new"); }}>
                       <Server size={15} /> Add server
                     </button>
-                    <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-surface2" onClick={() => { setAddMenu(false); openAddApp(); }}>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-surface2" onClick={() => { setAddMenu(false); openAddApp(); }}>
                       <Boxes size={15} /> Add application
                     </button>
                   </div>
@@ -258,7 +258,7 @@ function Shell() {
                 {unread > 0 && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-crit" />}
               </Link>
               <div className="relative">
-                <button onClick={() => { setUserMenu(!userMenu); setAddMenu(false); }} className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-fg" aria-label="Account">
+                <button type="button" onClick={() => { setUserMenu(!userMenu); setAddMenu(false); }} className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-fg" aria-label="Account">
                   {(me?.displayName || me?.username || "?").slice(0, 1).toUpperCase()}
                 </button>
                 {userMenu && (
@@ -270,7 +270,7 @@ function Shell() {
                     <Link to="/settings/account" className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-surface2" onClick={() => setUserMenu(false)}>
                       <Settings size={15} /> Account settings
                     </Link>
-                    <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-crit hover:bg-surface2" onClick={logout}>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-crit hover:bg-surface2" onClick={logout}>
                       <LogOut size={15} /> Sign out
                     </button>
                   </div>
@@ -286,10 +286,12 @@ function Shell() {
         </header>
         <main className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-8 sm:py-8">
           <UpdateBanner />
-          <Suspense fallback={<LoadingState />}>
-            <Outlet />
-            <ConfirmPrompt />
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LoadingState />}>
+              <Outlet />
+              <ConfirmPrompt />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Ban, Bug, Clock, Flame, Globe, KeyRound, Lightbulb, PackageCheck, Pencil, RefreshCw, Server as ServerIcon, ShieldAlert, ShieldCheck, Terminal, UserRound, Workflow } from "lucide-react";
+import { AlertTriangle, Ban, Bug, Clock, Flame, Globe, Globe2, KeyRound, Lightbulb, PackageCheck, Pencil, RefreshCw, Server as ServerIcon, ShieldAlert, ShieldCheck, Terminal, UserRound, Workflow } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorState, Field, Gate, Input, LoadingState, Modal, PageHeader, Segmented, Select, Spinner, Table, Td, Toggle, Tr, type Tone } from "../components/ui";
 import { cn } from "../utils/cn";
 import { BlockedIPs, Updates, Vulnerabilities } from "./SecurityAdmin";
+import { Countries } from "../components/Countries";
 import { relTime } from "../mock/util";
 
 interface Finding {
@@ -41,14 +42,16 @@ const SEV: Record<Finding["severity"], Tone> = { critical: "crit", warning: "war
 const flag = (cc: string) => (/^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map((c) => 127397 + c.charCodeAt(0))) : "");
 
 export function Security() {
-  const [tab, setTab] = useState<"findings" | "logins" | "blocked" | "updates" | "vulns">("findings");
+  const { me } = useStore();
+  const owner = !me || me.role === "owner";
+  const [tab, setTab] = useState<"findings" | "logins" | "blocked" | "countries" | "updates" | "vulns">("findings");
   return (
     <>
       <PageHeader title="Security" sub="Checks every server twice a day: SSH settings, waiting security updates, failed logins, open ports, the firewall, readable .env files and sites that leak .git or .env. You get a notification for anything new." />
       <div className="mb-5">
-        <Segmented value={tab} onChange={setTab} options={([["findings", "Findings", ShieldAlert], ["logins", "SSH logins", KeyRound], ["blocked", "Blocked IPs", Ban], ["updates", "Updates", PackageCheck], ["vulns", "Vulnerable packages", Bug]] as const).map(([value, label, Icon]) => ({ value, label: <span className="inline-flex items-center gap-1.5"><Icon size={13} />{label}</span> }))} />
+        <Segmented value={tab} onChange={setTab} options={([["findings", "Findings", ShieldAlert], ["logins", "SSH logins", KeyRound], ["blocked", "Blocked IPs", Ban], ...(owner ? [["countries", "Countries", Globe2] as const] : []), ["updates", "Updates", PackageCheck], ["vulns", "Vulnerable packages", Bug]] as const).map(([value, label, Icon]) => ({ value, label: <span className="inline-flex items-center gap-1.5"><Icon size={13} />{label}</span> }))} />
       </div>
-      <Gate>{tab === "findings" ? <Findings /> : tab === "logins" ? <Logins /> : tab === "blocked" ? <BlockedIPs /> : tab === "updates" ? <Updates /> : <Vulnerabilities />}</Gate>
+      <Gate>{tab === "findings" ? <Findings /> : tab === "logins" ? <Logins /> : tab === "blocked" ? <BlockedIPs /> : tab === "countries" ? <Countries /> : tab === "updates" ? <Updates /> : <Vulnerabilities />}</Gate>
     </>
   );
 }

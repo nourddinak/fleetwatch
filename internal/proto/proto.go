@@ -398,6 +398,33 @@ const (
 	TypeBackupRestored = "backup.restored" // agent → server: BackupRestored
 )
 
+// Country rules on a server's firewall (agent 0.9.158+): nftables, in a table of their own.
+const (
+	TypeGeoApply  = "geo.apply"  // server → agent: GeoApply (no rules: take them away)
+	TypeGeoStatus = "geo.status" // agent → server: GeoStatus
+)
+
+// GeoRule: Mode "block" drops traffic from the countries' addresses; "allow" drops
+// everyone else's. Ports limits it (TCP and UDP); none = every port.
+type GeoRule struct {
+	Mode  string   `json:"mode"`
+	Ports []int    `json:"ports,omitempty"`
+	V4    []string `json:"v4"`
+	V6    []string `json:"v6"`
+}
+
+// GeoApply: Safe addresses (the servers', recent sign-ins, the allow list) always get in.
+type GeoApply struct {
+	Rules []GeoRule `json:"rules"`
+	Safe  []string  `json:"safe"`
+}
+
+type GeoStatus struct {
+	At    int64  `json:"at"`
+	Rules int    `json:"rules"`
+	Error string `json:"error,omitempty"`
+}
+
 // Databases on a server (agent 0.9.156+): list them, their tables, run a read-only query,
 // or create a database with its own user.
 const (

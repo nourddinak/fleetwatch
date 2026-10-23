@@ -49,6 +49,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [logHits, setLogHits] = useState<LogLine[]>([]);
   const [cmdHits, setCmdHits] = useState<CommandHit[]>([]);
 
@@ -132,6 +133,11 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   }, [q, apps, servers, incidents, logHits, cmdHits]);
 
   useEffect(() => setIdx(0), [q]);
+  useEffect(() => {
+    if (!open) return;
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${idx}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [idx, open]);
 
   if (!open) return null;
   const go = (it: Item) => {
@@ -152,13 +158,13 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   let lastGroup = "";
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center bg-black/50 p-4 pt-[10vh] backdrop-blur-sm" onMouseDown={onClose}>
-      <div onMouseDown={(e) => e.stopPropagation()} className="fade-in w-full max-w-2xl overflow-hidden rounded-3xl border border-line bg-surface">
+      <div role="dialog" aria-modal="true" aria-label="Quick search" onMouseDown={(e) => e.stopPropagation()} className="fade-in w-full max-w-2xl overflow-hidden rounded-3xl border border-line bg-surface shadow-2xl">
         <div className="flex items-center gap-3 border-b border-line px-5">
           <Search size={18} className="text-muted" />
-          <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder="Search servers, apps, domains, ports, incidents, logs…" className="h-14 flex-1 bg-transparent text-sm outline-none placeholder:text-muted" />
+          <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder="Search servers, apps, domains, ports, incidents, logs…" className="h-14 flex-1 bg-transparent text-sm outline-none placeholder:text-muted" aria-label="Search servers, apps, domains, ports, incidents, logs" />
           <kbd className="rounded-md border border-line px-1.5 py-0.5 text-[10px] text-muted">ESC</kbd>
         </div>
-        <div className="max-h-[56vh] overflow-y-auto p-2">
+        <div ref={listRef} className="max-h-[56vh] overflow-y-auto p-2">
           {items.length === 0 && (
             <div className="px-4 py-10 text-center text-sm text-muted">
               No results for “{q}”. Search by app or server name, domain, IP or port number.
@@ -170,7 +176,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
             return (
               <div key={it.id}>
                 {head && <div className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted">{it.group}</div>}
-                <button onMouseEnter={() => setIdx(i)} onClick={() => go(it)} className={cn("flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition", i === idx ? "bg-surface2" : "")}>
+                <button type="button" data-idx={i} onMouseEnter={() => setIdx(i)} onClick={() => go(it)} className={cn("flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition", i === idx ? "bg-surface2" : "")}>
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface2 text-muted">{it.icon}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{it.title}</span>

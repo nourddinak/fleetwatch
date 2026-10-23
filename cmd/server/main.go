@@ -45,6 +45,7 @@ import (
 	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
+	"fleetwatch/internal/server/geo"
 	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/hostadmin"
 	"fleetwatch/internal/server/incidents"
@@ -810,8 +811,12 @@ func serve() error {
 		slog.Info("platform updated; updating agents as they reconnect", "version", version)
 	}
 	var asked sync.Map
+	geoSvc := geo.New(d, env("OPS_DATA_DIR", "data"))
+	geoSvc.Send, geoSvc.AgentVersion, geoSvc.ServerIDs, geoSvc.Safe, geoSvc.DNS = hub.Send, diskSvc.AgentVersion, serverIDs, admin.Protected, dnsSvc
+	hub.Handlers[proto.TypeGeoStatus] = geoSvc.OnStatus
 	hub.OnConnect = func(serverID, agentVersion string) {
 		backupSvc.Interrupted(serverID) // a backup it was running ended with the old agent process
+		go geoSvc.Push(serverID)        // country rules: nftables forgets them on a reboot
 		if agentVersion == version || (time.Now().After(agentsUntil) && !fleet.LoadAgentSettings(d).AutoUpdate) {
 			return
 		}
@@ -839,7 +844,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Databases: dbSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Databases: dbSvc, Geo: geoSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

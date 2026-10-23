@@ -2,6 +2,7 @@ import { lazy, type ComponentType } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { StoreProvider } from "./store/store";
 import { RequireAuth } from "./components/Layout";
+import { ErrorBoundary, NotFoundPage } from "./components/ui";
 import { Login, TwoFA } from "./pages/Login";
 import { Setup } from "./pages/Setup";
 
@@ -113,7 +114,8 @@ export default function App() {
   return (
     <StoreProvider>
       <HashRouter>
-        <Routes>
+        <ErrorBoundary>
+          <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/2fa" element={<TwoFA />} />
           <Route path="/setup" element={<Setup />} />
@@ -190,9 +192,10 @@ export default function App() {
               <Route path="integrations" element={<ToIntegrations />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
+        </ErrorBoundary>
       </HashRouter>
     </StoreProvider>
   );
