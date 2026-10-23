@@ -436,6 +436,15 @@ func TestDockerApp(t *testing.T) {
 		!strings.Contains(wf, "ghcr.io/${{ github.repository }}-fleetwatch-api-") {
 		t.Fatalf("Docker workflow missing GHCR build/push steps:\n%s", wf)
 	}
+	if gh.dispatch != 0 {
+		t.Fatalf("setupDocker dispatched %d runs when PutFile already committed the workflow", gh.dispatch)
+	}
+	// A cancelled duplicate run does not mark the Docker build as failed.
+	gh.run = &github.Run{ID: 3, Status: "completed", Conclusion: "cancelled", HeadSHA: "a1"}
+	s.Sync(ctx)
+	if got, _ := s.Get(api.ID); got.Status != "building" || got.Error != "" {
+		t.Fatalf("cancelled run marked site failed: %+v", got)
+	}
 	gh.run = &github.Run{ID: 4, Status: "completed", Conclusion: "success", HeadSHA: "old"}
 	s.Sync(ctx)
 	if len(*sent) != 0 {
@@ -451,6 +460,12 @@ func TestDockerApp(t *testing.T) {
 		t.Fatalf("%+v", d.Docker)
 	}
 	answer(s, d, true)
+	// Redeploy when the current commit's image is already built deploys right away without re-dispatching.
+	if err := s.Redeploy(ctx, api.ID, "Nour"); err != nil {
+		t.Fatal(err)
+	}
+	waitSent(t, sent, 2)
+	answer(s, (*sent)[1], true)
 	// A second app gets the next port; a compose app's traffic goes to its own host port.
 	sp, _ := s.DetectDocker(ctx, "me/stack", "main")
 	stack, _ := s.Create(ctx, Input{Repo: "me/stack", ServerID: "s1", Plan: &sp}, "Nour")
@@ -461,10 +476,10 @@ func TestDockerApp(t *testing.T) {
 	}
 	gh.run = &github.Run{ID: 6, Status: "completed", Conclusion: "success", HeadSHA: "c1"}
 	s.Sync(ctx)
-	waitSent(t, sent, 2)
-	if stack.Plan.HostPort != 0 || (*sent)[1].Docker.HostPort != 8080 || (*sent)[1].Docker.Compose != "docker-compose.yml" ||
-		(*sent)[1].Docker.ImageBase != dockerImageBase("me/stack", dockerKey(stack)) || (*sent)[1].Docker.ImageTag != "c1" {
-		t.Fatalf("%+v %+v", stack.Plan, (*sent)[1].Docker)
+	waitSent(t, sent, 3)
+	if stack.Plan.HostPort != 0 || (*sent)[2].Docker.HostPort != 8080 || (*sent)[2].Docker.Compose != "docker-compose.yml" ||
+		(*sent)[2].Docker.ImageBase != dockerImageBase("me/stack", dockerKey(stack)) || (*sent)[2].Docker.ImageTag != "c1" {
+		t.Fatalf("%+v %+v", stack.Plan, (*sent)[2].Docker)
 	}
 	// The request cannot pick the host port; changing the app's port keeps it.
 	p.Port, p.HostPort = 8000, 22

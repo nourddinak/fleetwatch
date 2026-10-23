@@ -532,27 +532,36 @@ func (s *Service) setupBuildOnce(ctx context.Context, st Site, env string) error
 func (s *Service) setupDocker(ctx context.Context, st *Site) error {
 	key := dockerKey(*st)
 	file := dockerWorkflowFile(key)
-	if run, err := s.GitHub.LastRun(ctx, st.Repo, file); err != nil {
+	run, err := s.GitHub.LastRun(ctx, st.Repo, file)
+	if err != nil {
 		return permissionError(fmt.Errorf("could not check the Docker image workflow: %w", err))
-	} else if run != nil {
-		st.BuildRunID = run.ID
-	} else {
-		st.BuildRunID = 0
 	}
-	_, err := s.GitHub.PutFile(ctx, st.Repo, ".github/workflows/"+file, st.Branch,
+	changed, err := s.GitHub.PutFile(ctx, st.Repo, ".github/workflows/"+file, st.Branch,
 		[]byte(dockerWorkflow(st.Plan, st.Branch, key)), "Build Docker images with Fleetwatch")
 	if err != nil {
 		return permissionError(fmt.Errorf("could not add the Docker image workflow to the repository: %w", err))
+	}
+	if !changed && run != nil && run.Status != "completed" {
+		st.BuildURL = run.HTMLURL
+		st.Status, st.Error = "building", ""
+		return s.save(*st)
+	}
+	if run != nil {
+		st.BuildRunID = run.ID
+	} else {
+		st.BuildRunID = 0
 	}
 	st.Status, st.Error = "building", ""
 	if err := s.save(*st); err != nil {
 		return err
 	}
-	if err := s.GitHub.Dispatch(ctx, st.Repo, file, st.Branch); err != nil {
-		if run, e := s.GitHub.LastRun(ctx, st.Repo, file); e == nil && run != nil && run.Status != "completed" {
-			return nil
+	if !changed { // the commit adding it starts a build by itself; otherwise ask for one
+		if err := s.GitHub.Dispatch(ctx, st.Repo, file, st.Branch); err != nil {
+			if r, e := s.GitHub.LastRun(ctx, st.Repo, file); e == nil && r != nil && r.Status != "completed" {
+				return nil
+			}
+			return permissionError(err)
 		}
-		return permissionError(err)
 	}
 	return nil
 }
@@ -763,6 +772,19 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 		return s.save(st)
 	}
 	if st.Plan.Kind == "docker" {
+		key := dockerKey(st)
+		file := dockerWorkflowFile(key)
+		if content, _, exists, err := s.GitHub.File(ctx, st.Repo, ".github/workflows/"+file, st.Branch); err == nil &&
+			exists && string(content) == dockerWorkflow(st.Plan, st.Branch, key) {
+			if sha, msg, err := s.GitHub.Head(ctx, st.Repo, st.Branch); err == nil && sha != "" {
+				if run, err := s.GitHub.LastRun(ctx, st.Repo, file); err == nil && run != nil &&
+					run.HeadSHA == sha && run.Status == "completed" && run.Conclusion == "success" {
+					st.BuildRunID = 0
+					st.BuildURL = run.HTMLURL
+					return s.deploy(ctx, st, sha, msg, by)
+				}
+			}
+		}
 		if err := s.setupDocker(ctx, &st); err != nil {
 			st.Status, st.Error = "failed", err.Error()
 			s.save(st)
@@ -770,7 +792,11 @@ func (s *Service) Redeploy(ctx context.Context, id, by string) error {
 		}
 		st.tried = ""
 		st.Status, st.Error = "building", ""
-		return s.save(st)
+		if err := s.save(st); err != nil {
+			return err
+		}
+		go s.SyncSoon()
+		return nil
 	}
 	sha, msg, err := s.GitHub.Head(ctx, st.Repo, st.Branch)
 	if err != nil {
@@ -1055,7 +1081,7 @@ func (s *Service) Sync(ctx context.Context) {
 				st.Status, st.Error = "building", ""
 				s.save(st)
 				continue
-			case run.ID <= st.BuildRunID || run.HeadSHA != sha || run.Status != "completed":
+			case run.HeadSHA != sha || run.Status != "completed" || (run.ID <= st.BuildRunID && run.Conclusion != "success") || run.Conclusion == "cancelled":
 				st.BuildURL = run.HTMLURL
 				st.Status, st.Error = "building", ""
 				s.save(st)

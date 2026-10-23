@@ -57,6 +57,11 @@ func fakeGitHub(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 				return
 			}
 			w.WriteHeader(204)
+		case r.URL.Path == "/repos/nourddinak/shop/actions/workflows/fleetwatch-docker-shop.yml/runs":
+			w.Write([]byte(`{"workflow_runs":[
+				{"id":102,"status":"completed","conclusion":"cancelled","head_sha":"abc123","html_url":"https://github.com/nourddinak/shop/actions/runs/102"},
+				{"id":101,"status":"completed","conclusion":"success","head_sha":"abc123","html_url":"https://github.com/nourddinak/shop/actions/runs/101"}
+			]}`))
 		case r.URL.Path == "/app" && checkJWT(r):
 			w.Write([]byte(`{"client_id":"Iv1.abc"}`))
 		case r.Method == "POST" && r.URL.Path == "/login/oauth/access_token":
@@ -141,6 +146,9 @@ func TestConnectFlow(t *testing.T) {
 	s.mu.Unlock()
 	if err := s.Dispatch(ctx, "nourddinak/shop", "fleetwatch.yml", "main"); err != nil {
 		t.Fatal(err)
+	}
+	if run, err := s.LastRun(ctx, "nourddinak/shop", "fleetwatch-docker-shop.yml"); err != nil || run == nil || run.ID != 101 || run.Conclusion != "success" {
+		t.Fatalf("LastRun picked %+v, err=%v; want run 101 (success) over cancelled duplicate 102", run, err)
 	}
 
 	// Webhooks: only signed deliveries count.

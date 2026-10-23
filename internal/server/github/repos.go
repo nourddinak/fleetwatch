@@ -230,11 +230,14 @@ type Run struct {
 }
 
 // LastRun is the newest run of a workflow (nil when it never ran).
+// When duplicate triggers (e.g. push + workflow_dispatch) create multiple runs for the
+// same commit and concurrency cancels one of them, prefer an active or successful run
+// for that commit over a cancelled duplicate.
 func (s *Service) LastRun(ctx context.Context, repo, workflow string) (*Run, error) {
 	var res struct {
 		Runs []Run `json:"workflow_runs"`
 	}
-	err := s.repoCall(ctx, http.MethodGet, repo, "/actions/workflows/"+url.PathEscape(workflow)+"/runs?per_page=1", nil, &res)
+	err := s.repoCall(ctx, http.MethodGet, repo, "/actions/workflows/"+url.PathEscape(workflow)+"/runs?per_page=10", nil, &res)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return nil, nil
@@ -243,6 +246,22 @@ func (s *Service) LastRun(ctx context.Context, repo, workflow string) (*Run, err
 	}
 	if len(res.Runs) == 0 {
 		return nil, nil
+	}
+	head := res.Runs[0].HeadSHA
+	for i := range res.Runs {
+		if res.Runs[i].HeadSHA == head && res.Runs[i].Status != "completed" {
+			return &res.Runs[i], nil
+		}
+	}
+	for i := range res.Runs {
+		if res.Runs[i].HeadSHA == head && res.Runs[i].Conclusion == "success" {
+			return &res.Runs[i], nil
+		}
+	}
+	for i := range res.Runs {
+		if res.Runs[i].HeadSHA == head && res.Runs[i].Conclusion != "cancelled" && res.Runs[i].Conclusion != "skipped" {
+			return &res.Runs[i], nil
+		}
 	}
 	return &res.Runs[0], nil
 }

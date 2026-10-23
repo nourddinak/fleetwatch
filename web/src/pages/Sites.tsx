@@ -229,7 +229,8 @@ function SiteError({ site, onRetry }: { site: Site; onRetry: () => void }) {
         {me?.role !== "viewer" && (
           <div className="flex flex-wrap gap-3 text-xs font-medium">
             {site.error.includes("permissions") && <Link to="/integrations?tab=github" className="inline-flex items-center gap-1 underline"><KeyRound size={12} /> How to grant them</Link>}
-            <button className="inline-flex items-center gap-1 underline" onClick={onRetry}><RefreshCw size={12} /> Retry</button>
+            {site.buildUrl && site.error.includes("GitHub Actions") && <a href={site.buildUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline"><ExternalLink size={12} /> Open run</a>}
+            <button type="button" className="inline-flex items-center gap-1 underline" onClick={onRetry}><RefreshCw size={12} /> Retry</button>
           </div>
         )}
       </div>
@@ -258,9 +259,9 @@ function SiteCard({ site, onOpen }: { site: Site; onOpen: () => void }) {
         </button>
         <div className="flex shrink-0 items-center gap-1">
           {me?.role !== "viewer" && (
-            <button onClick={redeploy} disabled={site.status === "deploying"} title={site.plan.kind === "build" ? "Build and deploy again" : "Deploy again"} aria-label="Deploy again"
+            <button type="button" onClick={redeploy} disabled={site.status === "building" || site.status === "deploying"} title={site.plan.kind === "build" ? "Build and deploy again" : "Deploy again"} aria-label="Deploy again"
               className="grid h-9 w-9 place-items-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg disabled:opacity-40">
-              {site.status === "deploying" ? <Spinner size={15} /> : <RefreshCw size={15} />}
+              {site.status === "building" || site.status === "deploying" ? <Spinner size={15} /> : <RefreshCw size={15} />}
             </button>
           )}
           <button onClick={onOpen} title="Settings and history" aria-label="Settings and history" className="grid h-9 w-9 place-items-center rounded-full text-muted transition hover:bg-surface2 hover:text-fg">
@@ -964,7 +965,7 @@ export function SitePage() {
         actions={
           <>
             {site.buildUrl && site.plan.kind !== "static" && <a href={site.buildUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Terminal size={14} /> Last build</Button></a>}
-            {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "deploying"}><RefreshCw size={14} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
+            {me?.role !== "viewer" && <Button size="sm" variant="secondary" onClick={() => redeploySite(site, toast)} disabled={site.status === "building" || site.status === "deploying"}><RefreshCw size={14} /> {site.plan.kind === "build" ? "Rebuild" : "Redeploy"}</Button>}
             {me?.role !== "viewer" && data.data!.history.filter((d) => d.ok).length > 1 && <Button size="sm" variant="secondary" onClick={() => rollback(0)} disabled={site.status === "deploying"} title="Deploy the previous working version again"><Undo2 size={14} /> Roll back</Button>}
             {urls[0] && <a href={urls[0].href} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary"><ExternalLink size={14} /> Open site</Button></a>}
             {owner && <Button size="sm" disabled={!dirty} onClick={save}><Check size={14} /> Save</Button>}
