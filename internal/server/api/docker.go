@@ -51,6 +51,14 @@ func (s *server) dockerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/servers/{id}/docker", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		writeJSON(w, http.StatusOK, s.Docker.State(r.PathValue("id")))
 	}))
+	// Which domains the server's Caddy (or Nginx) sends to which port: a container's URL.
+	mux.HandleFunc("GET /api/servers/{id}/routes", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		if _, err := s.Fleet.Reg.Get(r.PathValue("id")); err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.Apps.Routes(r.PathValue("id")))
+	}))
 	mux.HandleFunc("POST /api/servers/{id}/docker/refresh", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		if err := s.Docker.Refresh(r.PathValue("id")); err != nil {
 			failD(w, err)

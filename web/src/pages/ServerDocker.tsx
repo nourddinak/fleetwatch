@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { ArrowUpCircle, Check, Container, Download, FileText, HardDrive, Layers, Package, Play, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { ArrowUpCircle, Check, Container, Download, ExternalLink, FileCode2, FileText, Globe, HardDrive, Layers, Lock, Package, Play, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { relTime } from "../mock/util";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, LoadingState, Modal, Segmented, Spinner, Table, Td, Tr, type Tone } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Input, LoadingState, Modal, Segmented, Select, Spinner, Table, Td, Tr, type Tone } from "../components/ui";
 import { fmtBytes } from "../components/DiskRescue";
 import { cn } from "../utils/cn";
+import { parsePorts, type PortMap } from "../utils/ports";
+import { webServers } from "../utils/web";
 
 interface Container {
   id: string;
@@ -50,6 +52,11 @@ interface Action {
   target: string;
   action: string;
 }
+interface Route {
+  host: string;
+  port: number;
+  server?: string; // "" Caddy | "nginx"
+}
 interface DockerState {
   report: { at: number; available: boolean; version?: string; error?: string; containers: Container[]; images: Image[]; volumes: Volume[]; projects: Project[] } | null;
   loading: boolean;
@@ -70,6 +77,10 @@ export function ServerDocker({ serverId }: { serverId?: string } = {}) {
   const owner = !me || me.role === "owner";
   const canAct = owner || me?.role === "operator";
   const st = useApi<DockerState>(`/api/servers/${id}/docker`);
+  const routes = useApi<Route[]>(`/api/servers/${id}/routes`);
+  const [domainFor, setDomainFor] = useState<{ name: string; ports: number[] } | null>(null);
+  const srv = getServer(id);
+  const caddy = !!srv && (webServers(srv)?.includes("Caddy") ?? true); // older agents do not say
   const { setData } = st;
   const [tab, setTab] = useState<"containers" | "stacks" | "images" | "volumes">("containers");
   const [logs, setLogs] = useState<{ name: string; text: string | null } | null>(null);
@@ -174,8 +185,11 @@ export function ServerDocker({ serverId }: { serverId?: string } = {}) {
       {tab === "containers" && (
         <Card pad={false}>
           {rep.containers.length === 0 ? <div className="p-5"><EmptyState title="No containers" /></div> : (
-            <Table head={["Container", "Image", "State", "CPU", "Memory", "Ports", ""]}>
-              {rep.containers.map((c) => (
+            <Table head={["Container", "Image", "State", "CPU", "Memory", "Address and ports", ""]}>
+              {rep.containers.map((c) => {
+                const ports = parsePorts(c.ports);
+                const hostPorts = ports.flatMap((x) => (x.host ? [x.host] : []));
+                return (
                 <Tr key={c.id}>
                   <Td>
                     <div className="font-medium">{c.name}</div>
@@ -195,10 +209,11 @@ export function ServerDocker({ serverId }: { serverId?: string } = {}) {
                   <Td><Badge tone={STATE_TONE[c.state] ?? "neutral"} dot>{c.state}</Badge><div className="mt-0.5 text-[11px] text-muted">{c.status}</div></Td>
                   <Td>{c.state === "running" ? `${c.cpu.toFixed(1)}%` : "—"}</Td>
                   <Td>{c.state === "running" ? <span title={`${c.memPct.toFixed(1)}% of ${fmtBytes(c.memLimit)}`}>{fmtBytes(c.memUsed)}</span> : "—"}</Td>
-                  <Td className="max-w-[12rem] truncate text-xs text-muted" title={c.ports}>{c.ports || "—"}</Td>
+                  <Td className="min-w-[12rem]"><Address ports={ports} raw={c.ports} ip={srv?.ip} routes={(routes.data ?? []).filter((r) => hostPorts.includes(r.port))} /></Td>
                   <Td className="text-right">
                     {actions("container", c.name, c.state === "running", (
                       <>
+                        {owner && caddy && hostPorts.length > 0 && <Button size="sm" variant="ghost" title="Give it a domain with Caddy (HTTPS)" onClick={() => setDomainFor({ name: c.name, ports: [...new Set(hostPorts)] })}><Globe size={14} /></Button>}
                         <Button size="sm" variant="ghost" title="Logs" onClick={() => showLogs(c)}><FileText size={14} /></Button>
                         {owner && c.state !== "running" && <Button size="sm" variant="ghost" title="Remove" onClick={() => setConfirm({ kind: "container", target: c.name, action: "remove", title: `Remove ${c.name}?`, message: "The stopped container is deleted. Its named volumes stay." })}><Trash2 size={14} /></Button>}
                         {owner && c.state === "running" && <Button size="sm" variant="ghost" title="Stop and delete" onClick={() => setConfirm({ kind: "container", target: c.name, action: "delete", title: `Stop and delete ${c.name}?`, message: `It stops and is deleted. Its named volumes stay.${c.project ? ` It belongs to the compose stack ${c.project}: docker compose up would make it again.` : ""}` })}><Trash2 size={14} /></Button>}
@@ -206,11 +221,13 @@ export function ServerDocker({ serverId }: { serverId?: string } = {}) {
                     ))}
                   </Td>
                 </Tr>
-              ))}
+                );
+              })}
             </Table>
           )}
         </Card>
       )}
+      {domainFor && <DomainDialog serverId={id} ip={srv?.ip} container={domainFor.name} ports={domainFor.ports} onClose={() => setDomainFor(null)} onDone={() => setTimeout(routes.reload, 4000)} />}
       {tab === "stacks" && (
         <Card pad={false}>
           {rep.projects.length === 0 ? <div className="p-5"><EmptyState title="No docker compose stacks" /></div> : (
@@ -290,5 +307,92 @@ export function ServerDocker({ serverId }: { serverId?: string } = {}) {
         )}
       </Modal>
     </div>
+  );
+}
+
+/** Where a container is reached: its domains (from Caddy or Nginx), then each port, with
+ * a link for those open on the server's address. */
+function Address({ ports, raw, ip, routes }: { ports: PortMap[]; raw: string; ip?: string; routes: Route[] }) {
+  if (ports.length === 0 && routes.length === 0) return <span className="text-xs text-muted" title={raw || "No port published"}>{raw ? raw : "No port"}</span>;
+  return (
+    <div className="space-y-1 text-xs">
+      {routes.map((r) => (
+        <a key={r.host} href={`https://${r.host}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 font-medium text-fg hover:underline" title={`${r.server === "nginx" ? "Nginx" : "Caddy"} sends ${r.host} to port ${r.port}`}>
+          <Lock size={11} className="shrink-0 text-ok" /><span className="truncate">{r.host}</span><ExternalLink size={10} className="shrink-0 text-muted" />
+        </a>
+      ))}
+      <div className="flex flex-wrap gap-1">
+        {ports.map((x) => {
+          const label = x.host ? `${x.host} → ${x.container}` : x.container;
+          const tip = !x.host ? `Port ${x.container}/${x.proto} only inside Docker (other containers reach it; the server does not publish it)`
+            : x.local ? `Published on the server's 127.0.0.1:${x.host} only: reachable through Caddy or from the server itself, not from outside`
+            : `Open on the server's port ${x.host} to anyone (container port ${x.container}/${x.proto})`;
+          const cls = "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px]";
+          if (x.host && !x.local && ip && x.proto === "tcp") {
+            return <a key={label + x.proto} href={`http://${ip}:${x.host}`} target="_blank" rel="noreferrer" title={tip} className={cn(cls, "bg-warn/10 text-warn hover:underline")}>{label}<ExternalLink size={9} /></a>;
+          }
+          return <span key={label + x.proto} title={tip} className={cn(cls, x.host ? "bg-surface2 text-fg" : "bg-surface2 text-muted")}>{x.local && <Lock size={9} />}{label}{x.proto !== "tcp" && `/${x.proto}`}</span>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+const hostRe = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** Gives a container a domain: a site block added to the server's Caddyfile, which the
+ * agent checks with Caddy before keeping it, then reloads. Caddy gets the HTTPS certificate. */
+function DomainDialog({ serverId, ip, container, ports, onClose, onDone }: { serverId: string; ip?: string; container: string; ports: number[]; onClose: () => void; onDone: () => void }) {
+  const { toast } = useStore();
+  const [domain, setDomain] = useState("");
+  const [port, setPort] = useState(ports[0]);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const host = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const block = `${host || "app.example.com"} {\n\tencode zstd gzip\n\treverse_proxy localhost:${port}\n}`;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const cur = await api<{ content: string; error?: string }>("POST", `/api/servers/${serverId}/web`, { password, web: "caddy" });
+      if (cur.error) throw new Error(cur.error);
+      if (cur.content.split("\n").some((l) => l.trim().replace(/[{,]+$/, "").split(/[\s,]+/).includes(host))) throw new Error(`${host} is in the Caddyfile already: change it there.`);
+      const content = `${cur.content.replace(/\s*$/, "")}\n\n# ${container} (Docker), added by Fleetwatch\n${block}\n`;
+      const res = await api<{ error?: string }>("PUT", `/api/servers/${serverId}/web`, { password, web: "caddy", content });
+      if (res.error) throw new Error(res.error);
+      api("POST", "/api/discoveries/scan", { serverId }).catch(() => {});
+      toast(`Caddy now serves https://${host}`);
+      onDone();
+      onClose();
+    } catch (e) {
+      toast((e as ApiError).message ?? String(e), "err");
+    }
+    setBusy(false);
+  };
+  return (
+    <Modal open onClose={onClose} title={`A domain for ${container}`}
+      footer={<>
+        <Link to={`/servers/${serverId}/web`} className="mr-auto"><Button variant="ghost"><FileCode2 size={14} /> Whole Caddyfile</Button></Link>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={busy || !hostRe.test(host) || !password} onClick={save}>{busy ? <Spinner size={14} /> : <Globe size={14} />} Add to Caddy</Button>
+      </>}>
+      <div className="space-y-4">
+        <Field label="Domain" hint={<>First point its DNS (an A record) at this server{ip ? <>: <b className="font-mono">{ip}</b></> : ""}. Caddy then gets the HTTPS certificate by itself.</>}>
+          <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="app.example.com" autoFocus />
+        </Field>
+        {ports.length > 1 && (
+          <Field label="Port on the server">
+            <Select value={port} onChange={(e) => setPort(Number(e.target.value))}>{ports.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
+          </Field>
+        )}
+        <div>
+          <div className="mb-1 text-xs font-medium text-muted">Added to /etc/caddy/Caddyfile</div>
+          <pre className="rounded-xl bg-surface2 p-3 font-mono text-xs">{block}</pre>
+          <p className="mt-1 text-[11px] text-muted">Caddy checks the new file before it is kept; if it refuses, nothing changes.</p>
+        </div>
+        <Field label="Your password" hint="Changing the server's Caddyfile asks for it.">
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        </Field>
+      </div>
+    </Modal>
   );
 }

@@ -74,6 +74,15 @@ func newID(prefix string) string {
 
 // inventory returns the latest inventory for a server, loading the persisted copy
 // after a restart.
+// Routes are the domains a server's web server (Caddy or Nginx) sends somewhere, from
+// its last inventory.
+func (s *Service) Routes(serverID string) []proto.Route {
+	if inv := s.inventory(serverID); inv != nil && inv.Routes != nil {
+		return inv.Routes
+	}
+	return []proto.Route{}
+}
+
 func (s *Service) inventory(serverID string) *proto.Inventory {
 	s.mu.Lock()
 	inv, ok := s.inv[serverID]
