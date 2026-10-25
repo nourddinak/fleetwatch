@@ -33,6 +33,19 @@ func (s *server) whatsAppRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/integrations/whatsapp", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": s.WhatsApp.Status(), "people": people(), "languages": whatsapp.Languages, "options": s.WhatsApp.Options(), "canSpeak": whatsapp.CanSpeak(), "voice": s.WhatsApp.VoiceSetup(), "group": s.WhatsApp.Group()})
 	}))
+	// Pause: linked still, but nothing is sent, called or answered until it is back on.
+	mux.HandleFunc("PUT /api/integrations/whatsapp/paused", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+		var in struct{ Paused bool }
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.WhatsApp.SetPaused(in.Paused); err != nil {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "whatsapp.pause", "", map[bool]string{true: "paused", false: "on again"}[in.Paused])
+		writeJSON(w, http.StatusOK, s.WhatsApp.Status())
+	}))
 	mux.HandleFunc("PUT /api/integrations/whatsapp/options", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 		var in whatsapp.Options
 		if !decode(w, r, &in) {

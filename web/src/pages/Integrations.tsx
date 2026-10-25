@@ -208,7 +208,17 @@ function MemberIntegrations() {
 function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { clientId: string }; open: (tab: string) => void }) {
   const dns = useApi<{ everyone?: unknown[] }>("/api/me/dns");
   const aiSt = useApi<{ status: { configured: boolean; usedSeconds: number; config: { model: string; monthlyMinutes: number } } }>("/api/integrations/ai");
-  const wa = useApi<{ status: { linked: boolean; number?: string }; people: { phone: string }[] }>("/api/integrations/whatsapp");
+  const wa = useApi<{ status: { linked: boolean; number?: string; paused?: boolean }; people: { phone: string }[] }>("/api/integrations/whatsapp");
+  const { toast } = useStore();
+  const pause = async (paused: boolean) => {
+    try {
+      await api("PUT", "/api/integrations/whatsapp/paused", { paused });
+      toast(paused ? "WhatsApp paused: nothing is sent, called or answered" : "WhatsApp is on again");
+      wa.reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+  };
   const people = dns.data?.everyone?.length ?? 0;
   const chans = useApi<Channel[]>("/api/notifications/channels");
   const ch = (p: string) => chans.data?.find((c) => c.provider === p);
@@ -231,7 +241,8 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
       status: cf.clientId ? `${people} account${people === 1 ? "" : "s"} signed in` : "Set up once, then everyone signs in" }] : []),
     { key: "whatsapp", logo: <WhatsApp size={32} />, name: "WhatsApp", on: !!wa.data?.status.linked,
       desc: "Link your own WhatsApp: on-call alerts reach the team there, each in their language and outside their quiet hours.",
-      status: wa.data?.status.linked ? `+${wa.data.status.number} · ${wa.data.people.filter((p) => p.phone).length} people reached` : "Scan a QR code once" },
+      status: !wa.data?.status.linked ? "Scan a QR code once" : wa.data.status.paused ? "Paused: no alerts, calls or answers" : `+${wa.data.status.number} · ${wa.data.people.filter((p) => p.phone).length} people reached`,
+      toggle: wa.data?.status.linked ? { checked: !wa.data.status.paused, onChange: (v: boolean) => pause(!v), label: "WhatsApp on" } : undefined },
     { key: "ai", logo: <Gemini size={30} />, name: "AI", on: !!aiSt.data?.status.configured,
       desc: "Gemini Live answers on-call calls: it explains the incident, answers questions from the dashboard's data, and acknowledges it for you.",
       status: aiSt.data?.status.configured ? `${aiSt.data.status.config.model} · ${Math.round(aiSt.data.status.usedSeconds / 60)} of ${aiSt.data.status.config.monthlyMinutes} minutes this month` : "Paste a Gemini API key once" },
@@ -259,11 +270,12 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {items.map((i) => (
-        <button key={i.key} onClick={() => open(i.key)} className="group flex flex-col gap-4 rounded-3xl border border-line bg-surface p-5 text-left transition hover:-translate-y-0.5 hover:border-fg/20 hover:shadow-lg">
+      {items.map((i: (typeof items)[number] & { toggle?: { checked: boolean; onChange: (v: boolean) => void; label: string } }) => (
+        <div key={i.key} className="relative flex">
+        <button onClick={() => open(i.key)} className="group flex flex-1 flex-col gap-4 rounded-3xl border border-line bg-surface p-5 text-left transition hover:-translate-y-0.5 hover:border-fg/20 hover:shadow-lg">
           <div className="flex items-start justify-between gap-3">
             <span className="grid h-14 w-14 place-items-center rounded-2xl bg-surface2">{i.logo}</span>
-            <Badge tone={i.on ? "ok" : undefined}>{i.on ? "Connected" : "Not connected"}</Badge>
+            {!i.toggle && <Badge tone={i.on ? "ok" : undefined}>{i.on ? "Connected" : "Not connected"}</Badge>}
           </div>
           <div>
             <div className="text-base font-semibold">{i.name}</div>
@@ -274,6 +286,13 @@ function IntegrationCards({ github, cf, open }: { github: GitHubStatus; cf?: { c
             <span className="inline-flex items-center gap-1 font-medium text-fg">{i.on ? "Manage" : "Set up"} <ChevronRight size={14} className="transition group-hover:translate-x-0.5" /></span>
           </div>
         </button>
+        {i.toggle && ( // beside the card's button, not in it: a switch inside a button is not allowed
+          <label className="absolute right-5 top-5 flex items-center gap-2 text-xs font-medium text-muted">
+            {i.toggle.checked ? "On" : "Paused"}
+            <span aria-label={i.toggle.label}><Toggle checked={i.toggle.checked} onChange={i.toggle.onChange} /></span>
+          </label>
+        )}
+        </div>
       ))}
     </div>
   );

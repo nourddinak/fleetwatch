@@ -38,6 +38,7 @@ import (
 var (
 	ErrNotLinked = valid.Error("WhatsApp is not linked: the owner links it in Integrations → WhatsApp")
 	ErrSelf      = valid.Error("this is the number the dashboard sends from: WhatsApp cannot message or call itself")
+	ErrPaused    = valid.Error("WhatsApp is paused: the owner turns it back on in Integrations")
 )
 
 // Status is how the link stands, for the dashboard.
@@ -49,6 +50,7 @@ type Status struct {
 	QR        string `json:"qr,omitempty"`   // while linking: a data: URL of the QR code to scan
 	Code      string `json:"code,omitempty"` // while linking by phone number: the code to type in WhatsApp
 	Error     string `json:"error,omitempty"`
+	Paused    bool   `json:"paused,omitempty"` // linked, but sends, calls and answers nothing
 }
 
 // Person is how one dashboard user is reached on WhatsApp.
@@ -84,6 +86,10 @@ type Service struct {
 	// OnMessage answers a team member's message (text, or a voice note's audio and
 	// type); "" sends nothing. Messages from numbers nobody saved never reach it.
 	OnMessage func(ctx context.Context, person, text string, audio []byte, mime string) string
+	// Team reports whether a person is still on the team (not removed, not disabled):
+	// People and PersonOf leave the others out, so they are treated like numbers nobody
+	// saved and nothing reaches them. nil = everyone saved.
+	Team func(person string) bool
 	// DataDir and HelperPath let it ask the root helper for ffmpeg (see ffmpeg.go).
 	DataDir, HelperPath string
 	// Speak turns a reply into speech (16-bit mono PCM at rate), for voice-note replies.
@@ -150,20 +156,48 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) publish() {
 	if s.Bus != nil {
 		st := s.Status()
-		s.Bus.Publish("whatsapp", map[string]bool{"linked": st.Linked, "connected": st.Connected, "linking": st.QR != "" || st.Code != ""})
+		s.Bus.Publish("whatsapp", map[string]bool{"linked": st.Linked, "connected": st.Connected, "linking": st.QR != "" || st.Code != "", "paused": st.Paused})
 	}
 }
 
 // Status reports the link.
 func (s *Service) Status() Status {
+	paused := s.Paused()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := Status{QR: s.qr, Code: s.code, Error: s.lastErr}
+	st := Status{QR: s.qr, Code: s.code, Error: s.lastErr, Paused: paused}
 	if cl := s.client; cl != nil && cl.Store.ID != nil {
 		st.Linked, st.Connected = true, cl.IsConnected() && cl.IsLoggedIn()
 		st.Number, st.Name = cl.Store.ID.User, cl.Store.PushName
 	}
 	return st
+}
+
+// Paused reports whether the owner turned WhatsApp off for now (it stays linked).
+func (s *Service) Paused() bool {
+	var p bool
+	if s.db != nil {
+		settings.Load(s.db, "whatsapp.paused", &p)
+	}
+	return p
+}
+
+// SetPaused turns sending, calling and answering off or back on.
+func (s *Service) SetPaused(p bool) error {
+	if err := settings.Save(s.db, "whatsapp.paused", p); err != nil {
+		return err
+	}
+	s.publish()
+	return nil
+}
+
+// Forget drops someone removed from the team: their number, the messages waiting for
+// them or from them, and their reminders.
+func (s *Service) Forget(person string) {
+	now := s.Now().UnixMilli()
+	s.db.Exec(`DELETE FROM whatsapp_people WHERE person = ?`, person)
+	s.db.Exec(`UPDATE whatsapp_notes SET canceled_at = ? WHERE (to_person = ? OR from_person = ?) AND delivered_at = 0 AND canceled_at = 0`, now, person, person)
+	s.db.Exec(`UPDATE whatsapp_watches SET canceled_at = ? WHERE person = ? AND done_at = 0 AND canceled_at = 0`, now, person)
 }
 
 // Linked reports whether messages can be sent.
@@ -351,6 +385,9 @@ func (s *Service) Send(ctx context.Context, phone, text string) error {
 	if err != nil {
 		return err
 	}
+	if s.Paused() {
+		return ErrPaused
+	}
 	s.mu.Lock()
 	cl := s.client
 	s.mu.Unlock()
@@ -379,6 +416,9 @@ func (s *Service) PersonOf(id string) (Person, bool) {
 	if s.db.QueryRow(`SELECT data FROM whatsapp_people WHERE person = ?`, id).Scan(&raw) != nil || json.Unmarshal([]byte(raw), &p) != nil {
 		return p, false
 	}
+	if s.Team != nil && !s.Team(id) { // disabled: nothing reaches them (their number is kept)
+		return Person{}, false
+	}
 	return p, p.Phone != ""
 }
 
@@ -395,6 +435,12 @@ func (s *Service) People() map[string]Person {
 		var p Person
 		if rows.Scan(&id, &raw) == nil && json.Unmarshal([]byte(raw), &p) == nil {
 			out[id] = p
+		}
+	}
+	rows.Close()
+	for id := range out {
+		if s.Team != nil && !s.Team(id) { // removed or disabled: no briefings, calls or answers
+			delete(out, id)
 		}
 	}
 	return out

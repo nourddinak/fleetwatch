@@ -348,7 +348,7 @@ func serve() error {
 		}
 		if list, err := authSvc.ListMembers(); err == nil {
 			for _, m := range list {
-				if !m.Disabled {
+				if !m.Disabled && m.Role != auth.RoleClient {
 					out = append(out, oncall.Person{ID: m.ID, Name: cmp.Or(m.DisplayName, m.Username), Username: m.Username, Email: m.Email, Devices: phones.Count(m.ID)})
 				}
 			}
@@ -429,6 +429,14 @@ func serve() error {
 	waSvc.OnMessage = calls.message // team members can write to it, or send voice notes
 	waSvc.Speak = aiSvc.Speak       // and get voice notes back, if they like
 	calls.status = status           // the owner posts to status pages from WhatsApp
+	// Removed, disabled or client members get no answer, like numbers nobody saved.
+	waSvc.Team = func(person string) bool {
+		if person == oncall.Owner {
+			return true
+		}
+		m, err := authSvc.GetMember(person)
+		return err == nil && !m.Disabled && m.Role != auth.RoleClient
+	}
 	groupPost = calls.groupIncident
 	authSvc.OnLogin = calls.signedIn // a sign-in from a new browser: the AI calls its person
 	onCall.Page = func(ctx context.Context, p oncall.Person, x incidents.Incident, ackURL string, level int) error {

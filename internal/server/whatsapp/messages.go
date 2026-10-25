@@ -20,7 +20,7 @@ const maxVoiceNote = 15 << 20
 
 func (s *Service) onMessage(cl *whatsmeow.Client, evt *events.Message) {
 	info := evt.Info
-	if s.OnMessage == nil || cl == nil || info.IsFromMe || info.Chat.Server == types.BroadcastServer ||
+	if s.OnMessage == nil || cl == nil || info.IsFromMe || info.Chat.Server == types.BroadcastServer || s.Paused() ||
 		time.Since(info.Timestamp) > 5*time.Minute { // the backlog after a reconnect is not answered
 		return
 	}
@@ -38,7 +38,7 @@ func (s *Service) onMessage(cl *whatsmeow.Client, evt *events.Message) {
 		person, _ = s.callerOf(ctx, cl, info.SenderAlt)
 	}
 	if person == "" {
-		slog.Info("whatsapp: ignored a message from a number nobody saved")
+		slog.Info("whatsapp: ignored a message from a number not on the team")
 		return
 	}
 	msg := evt.Message

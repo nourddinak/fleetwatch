@@ -24,6 +24,7 @@ interface WaStatus {
   qr?: string;
   code?: string;
   error?: string;
+  paused?: boolean;
 }
 
 export const LANGUAGES: Record<string, string> = {
@@ -77,7 +78,8 @@ export function WhatsAppSetup() {
       <Card>
         <SectionTitle icon={<WhatsApp size={18} />} title="Your WhatsApp"
           sub="Link your own WhatsApp, the way WhatsApp Web is linked. On-call alerts call the team from it and send the details as a message, and the team can call it or write to it (voice notes too) to ask the AI about anything: only from the numbers saved below, others get no answer."
-          action={st.linked ? <Badge tone={st.connected ? "ok" : "warn"} dot>{st.connected ? "Connected" : "Reconnecting"}</Badge> : undefined} />
+          action={st.linked ? st.paused ? <Badge tone="warn" dot>Paused</Badge> : <Badge tone={st.connected ? "ok" : "warn"} dot>{st.connected ? "Connected" : "Reconnecting"}</Badge> : undefined} />
+        {st.paused && <p className="mb-3 flex items-center gap-2 rounded-xl bg-warn/10 px-3 py-2 text-xs text-warn"><AlertTriangle size={13} />Paused: no alerts, calls or answers go out until you turn it back on (the switch on the WhatsApp card in Integrations).</p>}
         {st.linked ? (
           <div className="flex flex-wrap items-center gap-3">
             <span className="grid h-11 w-11 place-items-center rounded-2xl bg-surface2"><WhatsApp size={22} /></span>

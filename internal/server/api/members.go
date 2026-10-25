@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/whatsapp"
 )
 
 // memberRoutes: the owner manages the team (the /api/members prefix is owner-only).
@@ -108,12 +110,35 @@ func (s *server) memberRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 	}))
 	mux.HandleFunc("DELETE /api/members/{id}", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-		if err := s.Auth.DeleteMember(client(r), r.PathValue("id")); err != nil {
+		id := r.PathValue("id")
+		m, _ := s.Auth.GetMember(id)
+		var wp whatsapp.Person
+		reach := false
+		if s.WhatsApp != nil {
+			wp, reach = s.WhatsApp.PersonOf(id) // before they are gone
+		}
+		if err := s.Auth.DeleteMember(client(r), id); err != nil {
 			failMember(w, err)
 			return
 		}
 		if s.Mobile != nil {
-			s.Mobile.RemoveMember(r.PathValue("id")) // their phones stop getting alerts
+			s.Mobile.RemoveMember(id) // their phones stop getting alerts
+		}
+		if s.WhatsApp != nil {
+			s.WhatsApp.Forget(id) // the AI stops answering them; their waiting messages and reminders end
+			if reach && m.Role != auth.RoleClient {
+				owner := "The owner"
+				if pr, err := s.Auth.Profile(); err == nil {
+					owner = cmp.Or(pr.DisplayName, pr.Username)
+				}
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					if err := s.WhatsApp.Send(ctx, wp.Phone, "👋 "+owner+" removed you from the team on Fleetwatch. Your dashboard account is closed, and this number will not answer you or send you alerts anymore."); err != nil {
+						slog.Warn("whatsapp: removed member", "err", err)
+					}
+				}()
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))

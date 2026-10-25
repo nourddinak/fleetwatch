@@ -448,11 +448,14 @@ func (s *Service) Ack(incidentID, person, sig string) (incidents.Incident, strin
 	if !hmac.Equal([]byte(sig), []byte(s.sign(incidentID, person))) {
 		return incidents.Incident{}, "", valid.Error("this link is not valid")
 	}
-	name := person
+	name := ""
 	for _, p := range s.People() {
 		if p.ID == person {
 			name = p.Name
 		}
+	}
+	if name == "" {
+		return incidents.Incident{}, person, valid.Error("this link belongs to someone who is not on the team anymore")
 	}
 	x, err := s.Incidents.Get(incidentID)
 	if err != nil {

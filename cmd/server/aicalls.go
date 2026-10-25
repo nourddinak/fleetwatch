@@ -163,7 +163,9 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 			}
 		}
 		if len(lines) > 0 {
-			d.delivered(person, notes)
+			if heard(lines, took) {
+				d.delivered(person, notes)
+			}
 			how := "outgoing"
 			switch {
 			case inbound:
@@ -178,6 +180,12 @@ func (d callDeps) sessionOpening(person, incidentID string, inbound bool, openin
 			go d.afterCall(person, name, how, incidentID, lines, took, report) // the call ends now: the summary can wait
 		}
 	}
+}
+
+// heard reports whether the person stayed on the call long enough to hear what it was
+// for: they said something, or listened for a while. Hung up at once, it was not passed on.
+func heard(lines []ai.Line, took time.Duration) bool {
+	return took >= 20*time.Second || slices.ContainsFunc(lines, func(l ai.Line) bool { return l.Who == "person" && strings.TrimSpace(l.Text) != "" })
 }
 
 // afterCall keeps a call in the history with a summary, and puts both on its incident.
@@ -557,16 +565,31 @@ func (d callDeps) toolkit(person, name, incidentID string) []ai.Tool {
 				if err != nil {
 					return nil, err
 				}
+				if who == person {
+					return nil, valid.Error("that is the person you are talking to")
+				}
 				wp, err := d.reachable(who)
 				if err != nil {
 					return nil, err
 				}
+				x, _ := d.incidents.Get(incidentID)
+				if sayOnCall(who, name+" asks you to look at the incident "+x.Title+".") {
+					return "they are on a call with me right now: I asked them there instead of calling", nil
+				}
 				go func() {
 					c, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 					defer cancel()
-					d.wa.Ring(c, wp.Phone, 45*time.Second, d.talker(who, incidentID))
+					them := d.nameOf(who)
+					switch o, err := d.wa.Dial(c, wp.Phone, 45*time.Second, d.talker(who, incidentID)); {
+					case err != nil:
+						d.tell(person, "The call to "+them+" did not go out: "+err.Error())
+					case o == whatsapp.Declined:
+						d.tell(person, them+" declined the call.")
+					case o == whatsapp.NoAnswer:
+						d.tell(person, them+" did not answer the call.")
+					}
 				}()
-				return "calling them now", nil
+				return "calling them now; you will hear if they do not pick up", nil
 			}},
 		{Name: "past_incidents", Description: "How often an incident like this one (same kind, same server) happened in the last 30 days, how each ended, and what was said on their calls.",
 			Params: map[string]any{"id": map[string]any{"type": "STRING", "description": "An incident's id; without it, the incident of this call"}},

@@ -143,9 +143,17 @@ func (d callDeps) passMessage(from string) ai.Tool {
 				d.wa.LeaveNote(from, to, msg, "text", true)
 				sayOnCall(to, "message from "+sender+": "+msg) // on a call with the AI right now: they hear it too
 				return "sent", nil
-			case "call":
-				if _, err := d.wa.LeaveNote(from, to, msg, "call", false); err != nil { // the call passes it on; unanswered, it waits for later
+			case "call", "later":
+				id, err := d.wa.LeaveNote(from, to, msg, how, false) // the call passes it on; unanswered, it waits for later
+				if err != nil {
 					return nil, err
+				}
+				if sayOnCall(to, "message from "+sender+": "+msg+" (if they answer it, pass_message it back to "+sender+")") {
+					d.wa.Deliver(id) // already on a call with the AI (often the reply to this sender's own call): no second call
+					return "they are on a call with me right now, so I told them there instead of calling", nil
+				}
+				if how == "later" {
+					return "kept: I will tell them the next time they call or chat with me, and let you know", nil
 				}
 				go func() { // runs alongside this call: how it goes is told to the sender as it happens
 					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -161,19 +169,18 @@ func (d callDeps) passMessage(from string) ai.Tool {
 						d.tell(from, them+" picked up; I am telling them your message now.")
 						talker(ctx, m)
 					}
-					switch answered, err := d.wa.Ring(ctx, wp.Phone, 45*time.Second, picked); {
+					switch o, err := d.wa.Dial(ctx, wp.Phone, 45*time.Second, picked); {
 					case err != nil:
 						d.tell(from, "The call to "+them+" did not go out ("+err.Error()+"); I kept the message and will tell them when they call or write.")
-					case !answered:
+					case o == whatsapp.Declined:
+						d.tell(from, them+" declined the call; I kept the message and will tell them when they call or write.")
+					case o == whatsapp.NoAnswer:
 						d.tell(from, them+" did not answer; I kept the message and will tell them when they call or write.")
+					case slices.ContainsFunc(d.wa.Waiting(to), func(n whatsapp.Note) bool { return n.ID == id }):
+						d.tell(from, them+" picked up but hung up before hearing your message; I kept it and will tell them when they call or write.")
 					}
 				}()
 				return "calling them now, while this call goes on; you will hear how it goes", nil
-			case "later":
-				if _, err := d.wa.LeaveNote(from, to, msg, "later", false); err != nil {
-					return nil, err
-				}
-				return "kept: I will tell them the next time they call or chat with me, and let you know", nil
 			}
 			return nil, valid.Error("how: text, call or later")
 		}}

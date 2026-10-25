@@ -125,6 +125,9 @@ func (s *Service) PostToGroup(ctx context.Context, text string) error {
 }
 
 func (s *Service) connected() (*whatsmeow.Client, error) {
+	if s.Paused() {
+		return nil, ErrPaused
+	}
 	s.mu.Lock()
 	cl := s.client
 	s.mu.Unlock()

@@ -39,29 +39,47 @@ func (s *Service) TalkerFor(person, incident string) Talker {
 	return s.Talker(person, incident)
 }
 
+// Outcome is how a call went.
+type Outcome int
+
+const (
+	NoAnswer Outcome = iota // it rang out
+	Declined                // they declined it, or were on another call
+	Answered
+)
+
 // Ring calls a phone number on WhatsApp for up to wait. When they answer, talk speaks
 // with them, or without it the alert sound plays; then the call ends. It reports
 // whether they answered.
 func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration, talk Talker) (bool, error) {
+	o, err := s.Dial(ctx, phone, wait, talk)
+	return o == Answered, err
+}
+
+// Dial is Ring, telling a declined call from one that rang out.
+func (s *Service) Dial(ctx context.Context, phone string, wait time.Duration, talk Talker) (Outcome, error) {
 	digits, err := CleanPhone(phone)
 	if err != nil {
-		return false, err
+		return NoAnswer, err
+	}
+	if s.Paused() {
+		return NoAnswer, ErrPaused
 	}
 	s.mu.Lock()
 	caller, cl := s.caller, s.client
 	s.mu.Unlock()
 	if caller == nil || cl == nil || cl.Store.ID == nil {
-		return false, ErrNotLinked
+		return NoAnswer, ErrNotLinked
 	}
 	if digits == cl.Store.ID.User {
-		return false, ErrSelf
+		return NoAnswer, ErrSelf
 	}
 	if !cl.IsConnected() {
-		return false, errors.New("WhatsApp is not connected right now")
+		return NoAnswer, errors.New("WhatsApp is not connected right now")
 	}
 	call, err := caller.Call(ctx, "+"+digits)
 	if err != nil {
-		return false, fmt.Errorf("the call did not go out: %w", err)
+		return NoAnswer, fmt.Errorf("the call did not go out: %w", err)
 	}
 	var acceptOnce, readyOnce sync.Once
 	accepted, ready := make(chan struct{}), make(chan struct{})
@@ -75,21 +93,21 @@ func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration, ta
 	select {
 	case <-accepted:
 	case <-ended: // declined or busy
-		return false, nil
+		return Declined, nil
 	case <-time.After(wait):
-		return false, nil
+		return NoAnswer, nil
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return NoAnswer, ctx.Err()
 	}
 	select { // sound sent before the media flows would be lost
 	case <-ready:
 	case <-ended:
-		return true, nil
+		return Answered, nil
 	case <-time.After(8 * time.Second):
 	}
 	if talk != nil {
 		talkOn(ctx, call, ended, talk)
-		return true, nil
+		return Answered, nil
 	}
 	done := make(chan struct{})
 	var doneOnce sync.Once
@@ -101,7 +119,7 @@ func (s *Service) Ring(ctx context.Context, phone string, wait time.Duration, ta
 	case <-ended:
 	case <-time.After(20 * time.Second):
 	}
-	return true, nil
+	return Answered, nil
 }
 
 // samples plays a buffer of 16 kHz audio.
@@ -256,13 +274,13 @@ func (s *Service) incoming(cl *whatsmeow.Client, call *meowcaller.Call) {
 	defer cancel()
 	person, digits := s.callerOf(ctx, cl, call.Peer())
 	var talk Talker
-	if person != "" && s.Inbound != nil {
+	if person != "" && s.Inbound != nil && !s.Paused() {
 		talk = s.Inbound(person)
 	}
 	if talk == nil {
 		call.Reject()
 		if person == "" {
-			slog.Info("whatsapp: declined a call from a number nobody saved", "from", digits)
+			slog.Info("whatsapp: declined a call from a number not on the team", "from", digits)
 		}
 		return
 	}

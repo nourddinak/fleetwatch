@@ -302,3 +302,42 @@ func TestForBot(t *testing.T) {
 		t.Fatal("no group yet")
 	}
 }
+
+// Paused: nothing goes out; someone off the team is not reached; Forget drops them.
+func TestPauseAndTeam(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(d, dir, nil)
+	if s.Paused() || s.SetPaused(true) != nil || !s.Paused() || !s.Status().Paused {
+		t.Fatal("pause")
+	}
+	if s.Send(t.Context(), "+212612345678", "hi") != ErrPaused {
+		t.Fatal("a paused WhatsApp sends nothing")
+	}
+	if _, err := s.Dial(t.Context(), "+212612345678", time.Second, nil); err != ErrPaused {
+		t.Fatal("nor calls", err)
+	}
+	s.SetPaused(false)
+	for id, phone := range map[string]string{"owner": "+212600000001", "mem_a": "+212600000002", "mem_b": "+212600000003"} {
+		if _, err := s.SetPerson(id, Person{Phone: phone}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Team = func(id string) bool { return id != "mem_b" } // mem_b was disabled
+	if _, ok := s.PersonOf("mem_b"); ok || len(s.People()) != 2 {
+		t.Fatal("a disabled member is not reached")
+	}
+	s.Team = nil
+	if _, ok := s.PersonOf("mem_b"); !ok {
+		t.Fatal("their number is kept, for when they are back")
+	}
+	note, _ := s.LeaveNote("owner", "mem_a", "hi", "later", false)
+	s.Forget("mem_a")
+	if _, ok := s.PersonOf("mem_a"); ok || len(s.Waiting("mem_a")) != 0 || s.Deliver(note) {
+		t.Fatal("a removed member is forgotten")
+	}
+}
