@@ -26,6 +26,9 @@ var memberWrites = regexp.MustCompile(`^(POST /api/auth/logout|POST /api/account
 	`POST /api/2fa/(setup|enable|disable|recovery-codes)|PUT /api/account/alert-rules|PUT /api/handoff|` +
 	`POST /api/phones/pairing|PUT /api/me/channels/[a-z]+|POST /api/me/channels/[a-z]+/test|DELETE /api/me/whatsapp/(messages|reminders)/[0-9]+|(PATCH|DELETE) /api/phones/[^/]+|POST /api/phones/[^/]+/test|POST /api/servers/[^/]+/(docker/refresh|docker/updates|firewall/scan))$`)
 
+// clientAllowed: all a client may call (the portal, signing out, their password and 2FA).
+var clientAllowed = regexp.MustCompile(`^(GET /api/portal|POST /api/auth/logout|PUT /api/account|POST /api/account/password|POST /api/2fa/(setup|enable|disable|recovery-codes))$`)
+
 // Writes operators may also make: operate apps and handle incidents, not configure.
 var operatorWrites = regexp.MustCompile(`^(POST /api/apps/[^/]+/commands/[^/]+/run|POST /api/apps/[^/]+/(health/check|storage/scan)|` +
 	`POST /api/incidents/[^/]+/[^/]+|PUT /api/maintenance|POST /api/servers/[^/]+/(disk/scan|disk/clean|security/scan)|` +
@@ -140,6 +143,12 @@ func (s *server) allowed(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return false
 	}
 	p := r.URL.Path
+	if sess.Role == auth.RoleClient { // a client reaches their portal and their own account, nothing else
+		if !clientAllowed.MatchString(r.Method + " " + p) {
+			return deny("This account only sees its portal.")
+		}
+		return true
+	}
 	for _, prefix := range ownerOnly {
 		if strings.HasPrefix(p, prefix) {
 			return deny("Only the owner can do this.")

@@ -17,7 +17,31 @@ const (
 	RoleOwner    = "owner"
 	RoleOperator = "operator" // sees everything allowed, restarts apps, runs commands, handles incidents
 	RoleViewer   = "viewer"   // read-only
+	RoleClient   = "client"   // a customer: only their portal (Portal), nothing of the dashboard
 )
+
+// Portal is what a client sees: their apps, uptime checks and status pages, by ID.
+type Portal struct {
+	Apps   []string `json:"apps"`
+	Checks []string `json:"checks"`
+	Pages  []string `json:"pages"`
+}
+
+func encodePortal(p Portal) string {
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+func decodePortal(s string) Portal {
+	p := Portal{}
+	json.Unmarshal([]byte(s), &p)
+	for _, l := range []*[]string{&p.Apps, &p.Checks, &p.Pages} {
+		if *l == nil {
+			*l = []string{}
+		}
+	}
+	return p
+}
 
 var ErrNoMember = errors.New("team member not found")
 
@@ -33,6 +57,7 @@ type Member struct {
 	CreatedAt   int64    `json:"createdAt"`
 	LastLoginAt int64    `json:"lastLoginAt"`
 	TwoFA       bool     `json:"twofaEnabled"`
+	Portal      Portal   `json:"portal"`
 }
 
 // MemberInput creates or changes a member; an empty Password keeps the current one.
@@ -44,6 +69,7 @@ type MemberInput struct {
 	Servers     []string `json:"servers"`
 	Disabled    bool     `json:"disabled"`
 	Password    string   `json:"password"`
+	Portal      Portal   `json:"portal"`
 }
 
 func encodeServers(list []string) string {
@@ -68,8 +94,20 @@ func (in *MemberInput) validate(creating bool) error {
 	if creating && !usernameRe.MatchString(in.Username) {
 		return valid.Error("username may use letters, numbers, dots, dashes and underscores (up to 64)")
 	}
-	if in.Role != RoleOperator && in.Role != RoleViewer {
-		return valid.Error("role must be operator or viewer")
+	if in.Role != RoleOperator && in.Role != RoleViewer && in.Role != RoleClient {
+		return valid.Error("role must be operator, viewer or client")
+	}
+	if in.Role == RoleClient {
+		in.Servers = []string{} // no server of the dashboard: only the portal
+		n := len(in.Portal.Apps) + len(in.Portal.Checks) + len(in.Portal.Pages)
+		if n == 0 {
+			return valid.Error("pick what the client sees: apps, uptime checks or status pages")
+		}
+		if n > 300 {
+			return valid.Error("too many things for one client")
+		}
+	} else {
+		in.Portal = Portal{}
 	}
 	if len(in.DisplayName) > 80 || len(in.Email) > 254 {
 		return valid.Error("name or email is too long")
@@ -86,7 +124,7 @@ func (in *MemberInput) validate(creating bool) error {
 }
 
 func (s *Service) ListMembers() ([]Member, error) {
-	rows, err := s.db.Query(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL FROM members ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL, portal FROM members ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -94,11 +132,11 @@ func (s *Service) ListMembers() ([]Member, error) {
 	out := []Member{}
 	for rows.Next() {
 		var m Member
-		var servers string
-		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA); err != nil {
+		var servers, portal string
+		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA, &portal); err != nil {
 			return nil, err
 		}
-		m.Servers = decodeServers(servers)
+		m.Servers, m.Portal = decodeServers(servers), decodePortal(portal)
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -106,13 +144,13 @@ func (s *Service) ListMembers() ([]Member, error) {
 
 func (s *Service) GetMember(id string) (Member, error) {
 	var m Member
-	var servers string
-	err := s.db.QueryRow(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL FROM members WHERE id = ?`, id).
-		Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA)
+	var servers, portal string
+	err := s.db.QueryRow(`SELECT id, username, display_name, email, role, servers, disabled, created_at, last_login_at, totp_secret_enc IS NOT NULL, portal FROM members WHERE id = ?`, id).
+		Scan(&m.ID, &m.Username, &m.DisplayName, &m.Email, &m.Role, &servers, &m.Disabled, &m.CreatedAt, &m.LastLoginAt, &m.TwoFA, &portal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrNoMember
 	}
-	m.Servers = decodeServers(servers)
+	m.Servers, m.Portal = decodeServers(servers), decodePortal(portal)
 	return m, err
 }
 
@@ -130,8 +168,8 @@ func (s *Service) CreateMember(c Client, in MemberInput) (Member, error) {
 	b := make([]byte, 8)
 	rand.Read(b)
 	id := "mem_" + hex.EncodeToString(b)
-	_, err = s.db.Exec(`INSERT INTO members (id, username, display_name, email, password_hash, role, servers, disabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.Username, in.DisplayName, in.Email, hash, in.Role, encodeServers(in.Servers), in.Disabled, s.Now().UnixMilli())
+	_, err = s.db.Exec(`INSERT INTO members (id, username, display_name, email, password_hash, role, servers, disabled, created_at, portal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Username, in.DisplayName, in.Email, hash, in.Role, encodeServers(in.Servers), in.Disabled, s.Now().UnixMilli(), encodePortal(in.Portal))
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return Member{}, valid.Error("that username is taken")
 	}
@@ -153,8 +191,8 @@ func (s *Service) UpdateMember(c Client, id string, in MemberInput) (Member, err
 	if err := in.validate(false); err != nil {
 		return old, err
 	}
-	if _, err := s.db.Exec(`UPDATE members SET display_name = ?, email = ?, role = ?, servers = ?, disabled = ? WHERE id = ?`,
-		in.DisplayName, in.Email, in.Role, encodeServers(in.Servers), in.Disabled, id); err != nil {
+	if _, err := s.db.Exec(`UPDATE members SET display_name = ?, email = ?, role = ?, servers = ?, disabled = ?, portal = ? WHERE id = ?`,
+		in.DisplayName, in.Email, in.Role, encodeServers(in.Servers), in.Disabled, encodePortal(in.Portal), id); err != nil {
 		return old, err
 	}
 	if in.Password != "" {

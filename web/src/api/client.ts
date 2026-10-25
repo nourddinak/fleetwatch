@@ -70,7 +70,7 @@ export function useApi<T>(path: string) {
 }
 
 export interface Profile {
-  role: "owner" | "operator" | "viewer";
+  role: "owner" | "operator" | "viewer" | "client";
   servers?: string[]; // a member limited to these servers
   username: string;
   displayName: string;

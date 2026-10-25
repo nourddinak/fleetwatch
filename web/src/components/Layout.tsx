@@ -2,6 +2,7 @@ import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Activity, AlarmClock, AlertOctagon, Container, Database, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
+import { Portal } from "../pages/Portal";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
 import { SearchPalette } from "./SearchPalette";
@@ -71,6 +72,7 @@ export function RequireAuth() {
   if (auth === "needs2fa") return <Navigate to="/2fa" replace />;
   if (auth !== "in") return <Navigate to="/login" replace />;
   if (me?.twofaRequired) return <Force2FA />;
+  if (me?.role === "client") return <Portal />;
   return <Shell />;
 }
 

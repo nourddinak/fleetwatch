@@ -161,7 +161,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Live feed: REST snapshots, then WebSocket pushes. Reconnects with backoff and
   // re-fetches on reconnect, since messages sent while disconnected are lost.
-  const blocked = !!me?.twofaRequired; // must set up 2FA first: every other call is refused
+  // must set up 2FA first, or a client (portal only): every other call is refused
+  const blocked = !!me?.twofaRequired || me?.role === "client";
   useEffect(() => {
     if (auth !== "in" || blocked) return;
     let ws: WebSocket | null = null;

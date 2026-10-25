@@ -110,6 +110,7 @@ func New(d Deps) http.Handler {
 	s.memberRoutes(mux)
 	s.activityRoutes(mux)
 	s.timelineRoutes(mux)
+	s.portalRoutes(mux)
 	mux.HandleFunc("GET /api/system/usage", s.authed(s.usage))
 	// What a server normally does at this hour (learned): the server page shows it.
 	mux.HandleFunc("GET /api/servers/{id}/normal", s.authed(func(w http.ResponseWriter, r *http.Request, _ auth.Session) {

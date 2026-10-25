@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus, Trash2, Users } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ExternalLink, Plus, Trash2, Users } from "lucide-react";
 import { api, useApi, type ApiError } from "../api/client";
 import { useStore } from "../store/store";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, IconButton, Input, LoadingState, Modal, SectionTitle, Segmented, Spinner, Table, Td, Toggle, ToggleRow, Tr, WhatsApp } from "../components/ui";
@@ -10,24 +11,34 @@ interface Member {
   username: string;
   displayName: string;
   email: string;
-  role: "operator" | "viewer";
+  role: "operator" | "viewer" | "client";
   servers: string[] | null; // null = every server
+  portal: Portal;
   disabled: boolean;
   createdAt: number;
   lastLoginAt: number;
   twofaEnabled: boolean;
+}
+interface Portal {
+  apps: string[];
+  checks: string[];
+  pages: string[];
 }
 type Form = Omit<Member, "id" | "createdAt" | "lastLoginAt" | "twofaEnabled"> & { id?: string; password: string; twofaEnabled?: boolean };
 
 const ROLE_INFO = {
   operator: "Sees the servers below, restarts apps, runs their commands, handles incidents, turns on maintenance and cleans disks. Cannot change settings, servers or the team.",
   viewer: "Sees the servers below and everything about them, but cannot change anything.",
+  client: "A customer: signs in to a portal of their own, branded like their status page, with only the apps, uptime checks and status pages picked below. They see nothing of the dashboard, your servers or other clients.",
 };
 
 /** Settings → Team: people besides you, each with a role and, if you like, only some servers. */
 export function TeamSettings() {
   const { servers, getServer, toast } = useStore();
   const list = useApi<Member[]>("/api/members");
+  const checks = useApi<{ id: string; name: string }[]>("/api/uptime");
+  const pages = useApi<{ id: string; title: string }[]>("/api/status-pages");
+  const { apps } = useStore();
   const [form, setForm] = useState<Form | null>(null);
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState<Member | null>(null);
@@ -42,7 +53,7 @@ export function TeamSettings() {
     if (!form) return;
     setBusy(true);
     try {
-      const body = { username: form.username, displayName: form.displayName, email: form.email, role: form.role, servers: form.servers, disabled: form.disabled, password: form.password };
+      const body = { username: form.username, displayName: form.displayName, email: form.email, role: form.role, servers: form.servers, disabled: form.disabled, password: form.password, portal: form.portal };
       const m = await api<Member>(form.id ? "PUT" : "POST", form.id ? `/api/members/${form.id}` : "/api/members", body);
       toast(form.id ? "Saved" : `${form.username} can now sign in`);
       if (invite.send) {
@@ -81,7 +92,7 @@ export function TeamSettings() {
       <SectionTitle icon={<Users size={15} />}
         title="Team"
         sub="Give others their own sign-in. Every action they take is in the audit log under their name. You stay the owner: only you change settings, servers and the team."
-        action={<Button size="sm" onClick={() => open({ username: "", displayName: "", email: "", role: "operator", servers: null, disabled: false, password: "" })}><Plus size={14} /> Member</Button>}
+        action={<Button size="sm" onClick={() => open({ username: "", displayName: "", email: "", role: "operator", servers: null, disabled: false, password: "", portal: { apps: [], checks: [], pages: [] } })}><Plus size={14} /> Member</Button>}
       />
       {list.error ? (
         <ErrorState message={list.error} onRetry={list.reload} />
@@ -98,13 +109,14 @@ export function TeamSettings() {
                 <div className="text-xs text-muted">{m.username}{m.email ? ` · ${m.email}` : ""}</div>
               </Td>
               <Td>
-                <Badge tone={m.role === "operator" ? "info" : "neutral"} className="capitalize">{m.role}</Badge>
+                <Badge tone={m.role === "operator" ? "info" : m.role === "client" ? "ok" : "neutral"} className="capitalize">{m.role}</Badge>
                 {m.disabled && <Badge tone="warn" className="ml-1">disabled</Badge>}
                 {m.twofaEnabled && <Badge tone="ok" className="ml-1">2FA</Badge>}
               </Td>
-              <Td className="text-xs">{m.servers === null ? "All servers" : m.servers.map((id) => getServer(id)?.name ?? id).join(", ") || "None"}</Td>
+              <Td className="text-xs">{m.role === "client" ? `Portal: ${m.portal.apps.length} apps, ${m.portal.checks.length} checks, ${m.portal.pages.length} status pages` : m.servers === null ? "All servers" : m.servers.map((id) => getServer(id)?.name ?? id).join(", ") || "None"}</Td>
               <Td className="text-xs text-muted">{m.lastLoginAt ? relTime(m.lastLoginAt) : "never"}</Td>
               <Td className="whitespace-nowrap text-right">
+                {m.role === "client" && <Link to={`/portal?member=${m.id}`}><Button size="sm" variant="ghost"><ExternalLink size={13} /> Portal</Button></Link>}
                 <Button size="sm" variant="ghost" onClick={() => open({ ...m, password: "" })}>Edit</Button>
                 <IconButton aria-label="Remove member" onClick={() => setDel(m)}><Trash2 size={14} /></IconButton>
               </Td>
@@ -139,11 +151,33 @@ export function TeamSettings() {
               </Field>
             </div>
             <Field label="Role">
-              <Segmented value={form.role} onChange={(v) => setForm({ ...form, role: v })} options={[{ value: "operator", label: "Operator" }, { value: "viewer", label: "Viewer" }]} />
+              <Segmented value={form.role} onChange={(v) => setForm({ ...form, role: v })} options={[{ value: "operator", label: "Operator" }, { value: "viewer", label: "Viewer" }, { value: "client", label: "Client" }]} />
             </Field>
             <p className="-mt-2 text-xs text-muted">{ROLE_INFO[form.role]}</p>
-            <ToggleRow label="All servers" desc="Including servers added later." checked={form.servers === null} onChange={(v) => setForm({ ...form, servers: v ? null : [] })} />
-            {form.servers !== null && (
+            {form.role === "client" && (
+              <div className="grid gap-4 sm:grid-cols-3">
+                {([
+                  ["apps", "Apps", apps.map((a) => ({ id: a.id, name: a.name }))],
+                  ["checks", "Uptime checks", (checks.data ?? []).map((c) => ({ id: c.id, name: c.name }))],
+                  ["pages", "Status pages", (pages.data ?? []).map((p) => ({ id: p.id, name: p.title }))],
+                ] as const).map(([key, label, items]) => (
+                  <Field key={key} label={label}>
+                    <div className="max-h-48 space-y-1 overflow-auto rounded-xl bg-surface2 p-2">
+                      {items.length === 0 && <p className="px-1 text-xs text-muted">None yet.</p>}
+                      {items.map((it) => (
+                        <label key={it.id} className="flex items-center gap-2 px-1 py-0.5 text-sm">
+                          <input type="checkbox" checked={form.portal[key].includes(it.id)}
+                            onChange={(e) => setForm({ ...form, portal: { ...form.portal, [key]: e.target.checked ? [...form.portal[key], it.id] : form.portal[key].filter((x) => x !== it.id) } })} />
+                          <span className="truncate">{it.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                ))}
+              </div>
+            )}
+            {form.role !== "client" && <ToggleRow label="All servers" desc="Including servers added later." checked={form.servers === null} onChange={(v) => setForm({ ...form, servers: v ? null : [] })} />}
+            {form.role !== "client" && form.servers !== null && (
               <div className="grid gap-2 sm:grid-cols-2">
                 {servers.map((s) => (
                   <label key={s.id} className="flex items-center gap-2 rounded-xl bg-surface2 px-3 py-2 text-sm">

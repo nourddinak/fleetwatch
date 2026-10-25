@@ -97,7 +97,7 @@ type Session struct {
 func (s Session) Owner() bool { return s.MemberID == "" }
 
 type Profile struct {
-	Role              string   `json:"role"`              // owner | operator | viewer
+	Role              string   `json:"role"`              // owner | operator | viewer | client
 	Servers           []string `json:"servers,omitempty"` // a member limited to these servers
 	Username          string   `json:"username"`
 	DisplayName       string   `json:"displayName"`
