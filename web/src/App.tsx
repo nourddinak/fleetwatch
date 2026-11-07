@@ -78,6 +78,7 @@ const CronJobs = page(() => import("./pages/CronJobs"), "CronJobs");
 const Backups = page(() => import("./pages/Backups"), "Backups");
 const Sites = page(() => import("./pages/Sites"), "Sites");
 const Docker = page(() => import("./pages/Docker"), "Docker");
+const Emails = page(() => import("./pages/Emails"), "Emails");
 const Databases = page(() => import("./pages/Databases"), "Databases");
 const Portal = page(() => import("./pages/Portal"), "Portal");
 const ServerSites = page(() => import("./pages/Sites"), "ServerSites");
@@ -165,6 +166,7 @@ export default function App() {
             <Route path="backups" element={<Backups />} />
             <Route path="sites" element={<Sites />} />
             <Route path="docker" element={<Docker />} />
+            <Route path="emails" element={<Emails />} />
             <Route path="databases" element={<Databases />} />
             <Route path="portal" element={<Portal />} />
             <Route path="sites/:id" element={<SitePage />} />
