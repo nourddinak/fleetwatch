@@ -1,0 +1,14 @@
+# Copy to wrangler.toml for a manual deploy (Fleetwatch can deploy this Worker itself:
+# Emails → Settings → Cloudflare). No secrets here: set them with `wrangler secret put`.
+name = "fleetwatch-email"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+# Where the Worker posts mail: your dashboard's public https address.
+FLEETWATCH_URL = "https://fleetwatch.example.com/api/emails/inbound"
+
+# Secrets (wrangler secret put NAME):
+#   INBOUND_SECRET  Emails → Settings → "Manual setup" shows it
+#   ROUTES          {"v":1,"d":{"example.com":["you@gmail.com"]},"a":{}}
+#                   where Gmail copies go while the dashboard is unreachable

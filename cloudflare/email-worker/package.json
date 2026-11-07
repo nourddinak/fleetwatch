@@ -1,0 +1,10 @@
+{
+  "name": "fleetwatch-email-worker",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Email Worker for Fleetwatch's Emails page",
+  "scripts": {
+    "test": "node --test test/worker.test.js",
+    "deploy": "wrangler deploy"
+  }
+}

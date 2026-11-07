@@ -1,7 +1,7 @@
 import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlarmClock, AlertOctagon, Container, Database, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
+import { Activity, AlarmClock, AlertOctagon, Container, Database, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Mail, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
 import { Portal } from "../pages/Portal";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
@@ -10,6 +10,7 @@ import { AddAppDialog } from "./AddAppDialog";
 import { ErrorBoundary, LoadingState, Spinner } from "./ui";
 import { useApi } from "../api/client";
 import { UpdateBanner } from "./PlatformUpdate";
+import { useEmailUnread } from "./email/data";
 
 const TwoFASetup = lazy(() => import("../pages/Settings").then((m) => ({ default: m.TwoFASettings })));
 
@@ -132,6 +133,7 @@ function Shell() {
   const active = incidents.filter((i) => i.status === "active").length;
   const unread = notifications.filter((n) => !n.read).length;
   const owner = !me || me.role === "owner";
+  const mailUnread = useEmailUnread(); // null: no mail for this account
   type NavItem = { to: string; label: string; icon: typeof Server; end?: boolean; badge?: number; crit?: boolean };
   const groups: { title: string; items: NavItem[] }[] = [
     { title: "", items: [{ to: "/", label: "Overview", icon: LayoutDashboard, end: true }] },
@@ -142,6 +144,7 @@ function Shell() {
       { to: "/docker", label: "Docker", icon: Container },
       ...(owner ? [{ to: "/databases", label: "Databases", icon: Database }] : []),
       { to: "/domains", label: "Domains", icon: Globe },
+      ...(mailUnread !== null ? [{ to: "/emails", label: "Emails", icon: Mail, badge: mailUnread }] : []),
       { to: "/integrations", label: "Integrations", icon: Puzzle },
     ] },
     { title: "Observe", items: [

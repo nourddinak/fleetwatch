@@ -42,6 +42,7 @@ import (
 	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/email"
 	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
@@ -422,6 +423,36 @@ func serve() error {
 		slog.Warn("whatsapp", "err", err)
 	}
 	// Answered calls talk with the AI (Gemini Live), when the owner set it up.
+	mailSvc, err := email.New(d, box, bus, env("OPS_DATA_DIR", "data"))
+	if err != nil {
+		return err
+	}
+	mailSvc.Mail, mailSvc.Notify, mailSvc.PublicURL = status.Mail, notifier, os.Getenv("OPS_PUBLIC_URL")
+	mailSvc.SenderFor = func(domain, chosen string) string { return pickSender(status.Mail.Senders(), domain, chosen) }
+	mailSvc.DKIM = func(ctx context.Context, domain, chosen string) email.Check {
+		id := pickSender(status.Mail.Senders(), domain, chosen)
+		for _, snd := range status.Mail.Senders() {
+			if snd.ID != id || snd.DomainID == "" {
+				continue
+			}
+			rd, err := status.Mail.DomainCheck(ctx, id)
+			if err != nil {
+				return email.Check{Status: "error", Detail: err.Error()}
+			}
+			if !strings.EqualFold(rd.Name, domain) {
+				return email.Check{Status: "wrong", Detail: "the sender " + snd.Label + " signs for " + rd.Name + ", not " + domain}
+			}
+			for _, rec := range rd.Records {
+				if rec.Record == "DKIM" {
+					if rec.Status == "verified" {
+						return email.Check{Status: "ok", Detail: "Resend verified " + rec.Name}
+					}
+					return email.Check{Status: "missing", Detail: "Resend: DKIM " + rec.Status + " (Integrations → Email)"}
+				}
+			}
+		}
+		return email.Check{Status: "unknown", Detail: "sent through SMTP: check DKIM with that provider (Resend senders are checked here)"}
+	}
 	aiSvc := ai.New(d, box)
 	calls := &callDeps{db: d, auth: authSvc, commands: cmdSvc, detector: detector, ai: aiSvc, wa: waSvc, incidents: incStore, hub: hub, apps: appSvc, logs: logStore, uptime: upSvc, admin: admin, people: func() []oncall.Person { return onCall.People() }, oncall: onCall}
 	waSvc.Talker = func(person, incident string) whatsapp.Talker { return calls.talker(person, incident) }
@@ -852,7 +883,7 @@ func serve() error {
 			UI: web.Dist(), Version: version, DB: d, Auth: authSvc, DataDir: env("OPS_DATA_DIR", "data"),
 			Fleet: hub, Metrics: store, Bus: bus, PublicURL: os.Getenv("OPS_PUBLIC_URL"),
 			Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
-			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Databases: dbSvc, Geo: geoSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
+			Incidents: incStore, Detector: detector, Notify: notifier, Release: updates, Maint: maint, Domains: domainChecks, Tokens: tokens.New(d), Status: status, Disk: diskSvc, Forecast: forecasts, Security: sec, OnCall: onCall, Mobile: phones, Uptime: upSvc, Cron: cronSvc, Backups: backupSvc, Databases: dbSvc, Geo: geoSvc, Docker: dockerSvc, Admin: admin, Vulns: vulnSvc, GitHub: ghSvc, Sites: siteSvc, EnvFiles: envSvc, DNS: dnsSvc, WhatsApp: waSvc, Email: mailSvc, AI: aiSvc, Anomaly: unusual, EnvHistory: envfile.NewHistory(d, box), ServerFileHistory: envfile.NewServerHistory(d, box),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -865,6 +896,19 @@ func serve() error {
 	go notifier.Run(ctx)
 	go updates.Run(ctx)
 	go domainChecks.Run(ctx)
+	go mailSvc.Run(ctx)
+	go func() { // mail domains' DNS, once a day
+		for {
+			c, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			mailSvc.CheckAll(c)
+			cancel()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(6 * time.Hour):
+			}
+		}
+	}()
 	go status.Run(ctx)
 	go sec.Run(ctx)
 	go onCall.Run(ctx)
@@ -1062,4 +1106,20 @@ func resetAdmin() error {
 	}
 	fmt.Fprintln(os.Stderr, "Admin password reset. 2FA is disabled and all sessions were signed out.")
 	return nil
+}
+
+// pickSender is the Integrations → Email sender a mail domain sends through: the one
+// chosen, else one sending from that domain, else the default ("").
+func pickSender(senders []statuspage.Sender, domain, chosen string) string {
+	for _, snd := range senders {
+		if chosen != "" && snd.ID == chosen {
+			return chosen
+		}
+	}
+	for _, snd := range senders {
+		if strings.HasSuffix(strings.ToLower(snd.From), "@"+strings.ToLower(domain)) {
+			return snd.ID
+		}
+	}
+	return ""
 }

@@ -25,6 +25,7 @@ import (
 	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/docker"
 	"fleetwatch/internal/server/domains"
+	"fleetwatch/internal/server/email"
 	"fleetwatch/internal/server/envfile"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/forecast"
@@ -91,6 +92,7 @@ type Deps struct {
 	EnvFiles   *envfile.Service
 	DNS        *dns.Service
 	WhatsApp   *whatsapp.Service
+	Email      *email.Service
 	AI         *ai.Service
 	EnvHistory *envfile.History
 	// ServerFileHistory keeps servers' Caddyfile versions.
@@ -226,6 +228,9 @@ func New(d Deps) http.Handler {
 	if d.AI != nil {
 		s.aiRoutes(mux)
 	}
+	if d.Email != nil {
+		s.emailRoutes(mux)
+	}
 	if d.Maint != nil {
 		mux.HandleFunc("GET /api/maintenance", s.authed(s.maintenanceList))
 		mux.HandleFunc("PUT /api/maintenance", s.authed(s.maintenanceSet))
@@ -284,7 +289,7 @@ func sameOriginWrites(next http.Handler) http.Handler {
 			// The phone app uses its own bearer token, never cookies; GitHub signs its webhooks;
 			// heartbeat links are called by scripts, with their secret in the path.
 			if strings.HasPrefix(r.URL.Path, "/api/") && !sameOrigin(r) && r.URL.Path != "/api/public/subscribe/remove" && r.URL.Path != "/api/public/ack" && !strings.HasPrefix(r.URL.Path, "/api/mobile/") && !strings.HasPrefix(r.URL.Path, "/api/public/ping/") &&
-				r.URL.Path != "/api/integrations/github/webhook" {
+				r.URL.Path != "/api/integrations/github/webhook" && r.URL.Path != "/api/emails/inbound" { // the Email Worker signs its posts
 				writeError(w, http.StatusForbidden, "forbidden_origin", "cross-origin request refused")
 				return
 			}
