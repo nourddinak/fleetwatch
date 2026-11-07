@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, Download, ExternalLink, RefreshCw, Trash2, XCircle } from "lucide-react";
 import { api, ApiError, useApi } from "../../api/client";
 import { useStore } from "../../store/store";
@@ -8,17 +8,92 @@ import { fmtBytes } from "../DiskRescue";
 import { fullDate, type Contact, type Job, type Options, type Overview } from "./data";
 
 interface CFStatus {
-  connected: boolean; accountId?: string; account?: string; worker?: string; url?: string; deployedAt?: number; edgeBytes: number; edgeLimit: number; error?: string;
+  connected: boolean; signIn: boolean; accountId?: string; account?: string; worker?: string; url?: string; deployedAt?: number; edgeBytes: number; edgeLimit: number; error?: string;
   permissions: string[]; destinations: { email: string; verified: boolean }[];
+}
+interface SignIn { app: boolean; appEmail: boolean; accounts: number; account: string }
+
+const EMAIL_SCOPES = [
+  ["Email Routing Rules", "Write", "email-routing-rule.write"],
+  ["Email Routing Addresses", "Write", "email-routing-address.write"],
+  ["Workers Scripts", "Write", "workers-scripts.write"],
+];
+
+/** The way in: the dashboard's own "Sign in with Cloudflare", given the email permissions. */
+function SignInSteps({ si, publicUrl, onUse, busy }: { si: SignIn; publicUrl: string; onUse: () => void; busy: boolean }) {
+  const { toast } = useStore();
+  const go = (allow: boolean) =>
+    api<{ url: string }>("POST", "/api/emails/cloudflare/signin-url", { allow }).then((r) => (window.location.href = r.url)).catch((e: ApiError) => toast(e.message, "err"));
+  const step = (n: number, done: boolean, title: string, body?: ReactNode) => (
+    <li className="flex gap-3">
+      <span className={done ? "mt-0.5 text-ok" : "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface2 text-[11px] font-semibold"}>{done ? <CheckCircle2 size={18} /> : n}</span>
+      <div className="min-w-0 flex-1">
+        <div className={done ? "text-sm text-muted line-through" : "text-sm font-medium"}>{title}</div>
+        {!done && body && <div className="mt-2 space-y-2 text-xs text-muted">{body}</div>}
+      </div>
+    </li>
+  );
+  const https = publicUrl.startsWith("https://") && !/localhost|127\.0\.0\.1/.test(publicUrl);
+  return (
+    <ol className="space-y-4">
+      {step(1, si.app, "Set up Sign in with Cloudflare", <>
+        <p>Done once, in Integrations: it is how the dashboard talks to your Cloudflare account, for sites and DNS too.</p>
+        <Link to="/integrations?tab=cloudflare"><Button size="sm" variant="secondary">Open Integrations → Cloudflare</Button></Link>
+      </>)}
+      {si.app && step(2, si.appEmail, "Let the sign-in handle email", <>
+        <p>
+          Your sign-in app was made before email existed. In Cloudflare open{" "}
+          <a className="underline" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noreferrer">Manage account → OAuth clients <ExternalLink size={11} className="inline" /></a>,
+          {" "}pick <b className="text-fg">Fleetwatch</b>, edit its scopes and add these three (leave them Required), then save:
+        </p>
+        <ul className="space-y-1">{EMAIL_SCOPES.map(([n, l, id]) => <li key={id}><Badge className="mr-1.5">{n} · {l}</Badge><code className="font-mono text-[11px]">{id}</code></li>)}</ul>
+        <Button size="sm" onClick={() => go(true)}>I added them: sign in with Cloudflare</Button>
+      </>)}
+      {si.app && si.appEmail && step(3, !!si.account, "Sign in with Cloudflare", <>
+        <p>{si.accounts ? "Your account was connected before email: sign in once more so Cloudflare grants the email permissions." : "Connect your Cloudflare account."} You come straight back here.</p>
+        <Button size="sm" onClick={() => go(false)}>Sign in with Cloudflare</Button>
+      </>)}
+      {si.account && step(4, false, `Turn on email with ${si.account}`, <>
+        {https ? <p>Deploys the mail Worker to your account. After that, add a domain and press <b className="text-fg">Set up in Cloudflare</b> on it.</p>
+          : <p className="text-warn">Open the dashboard at its public https address first (or set OPS_PUBLIC_URL): Cloudflare's Worker must be able to reach it. Now: {publicUrl}</p>}
+        <Button size="sm" onClick={onUse} disabled={busy || !https}>{busy && <Spinner size={13} />} Turn on email</Button>
+      </>)}
+    </ol>
+  );
 }
 
 function Cloudflare() {
   const { toast } = useStore();
-  const { data, reload, error } = useApi<{ status: CFStatus; publicUrl: string }>("/api/emails/cloudflare");
+  const [params, setParams] = useSearchParams();
+  const { data, reload, error } = useApi<{ status: CFStatus; publicUrl: string; signIn: SignIn }>("/api/emails/cloudflare");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState("");
   const [manual, setManual] = useState<{ secret: string; url: string } | null>(null);
   const [disc, setDisc] = useState(false);
+  const useSignIn = async () => {
+    setBusy("signin");
+    try {
+      const r = await api<{ error?: string }>("POST", "/api/emails/cloudflare/signin");
+      toast(r.error ? "Connected, but: " + r.error : "Email is on: the Worker is deployed. Now add a domain.", r.error ? "err" : undefined);
+      reload();
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setBusy("");
+  };
+  // Back from Cloudflare's sign-in: say what happened, and finish by itself when it can.
+  useEffect(() => {
+    const back = params.get("cloudflare");
+    if (!back || !data) return;
+    const n = new URLSearchParams(params);
+    n.delete("cloudflare");
+    n.delete("message");
+    setParams(n, { replace: true });
+    if (back === "error") toast(params.get("message") || "Cloudflare sign-in failed", "err");
+    else if (data.signIn.account && !data.status.connected) useSignIn();
+    else if (back === "connected" && !data.signIn.account) toast("Signed in, but Cloudflare did not grant the email permissions: check step 2", "err");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, params]);
   if (error) return <p className="text-sm text-crit">{error}</p>;
   if (!data) return <LoadingState />;
   const st = data.status;
@@ -47,10 +122,15 @@ function Cloudflare() {
         <div className="space-y-4 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="ok" dot>Connected</Badge>
-            <span className="text-muted">{st.account}</span>
+            <span className="text-muted">{st.account}{st.signIn ? " · through Sign in with Cloudflare" : " · with an API token"}</span>
             <span className="text-muted">· Worker <span className="font-mono">{st.worker}</span> {st.deployedAt ? `deployed ${fullDate(st.deployedAt)}` : "not deployed yet"}</span>
           </div>
-          {st.error && <p className="rounded-2xl bg-warn-soft px-4 py-2 text-xs text-warn">{st.error}</p>}
+          {st.error && (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-warn-soft px-4 py-2 text-xs text-warn">
+              <span className="min-w-0 flex-1">{st.error}</span>
+              {st.signIn && <Button size="sm" variant="secondary" onClick={() => api<{ url: string }>("POST", "/api/emails/cloudflare/signin-url", { allow: false }).then((r) => (window.location.href = r.url))}>Sign in again</Button>}
+            </div>
+          )}
           <div className="text-xs text-muted">
             Mail posts to <span className="font-mono">{st.url}/api/emails/inbound</span>. While the dashboard is down the Worker still copies mail to Gmail with what it knows ({st.edgeBytes} of {st.edgeLimit} bytes used).
           </div>
@@ -73,18 +153,23 @@ function Cloudflare() {
           </div>
         </div>
       ) : (
-        <div className="space-y-4 text-sm">
-          <p className="text-muted">
-            Create an API token at{" "}
-            <a className="underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">dash.cloudflare.com → API Tokens <ExternalLink size={11} className="inline" /></a>{" "}
-            (Create custom token) with these permissions, on the account and domains you use for mail:
-          </p>
-          <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted">{st.permissions.map((p) => <li key={p}>{p}</li>)}</ul>
-          <p className="text-xs text-muted">The Worker will post mail to <span className="font-mono">{data.publicUrl}/api/emails/inbound</span>: this must be the dashboard's public https address.</p>
-          <div className="flex flex-wrap gap-2">
-            <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste the API token" className="max-w-md" aria-label="Cloudflare API token" />
-            <Button onClick={connect} disabled={!token || !!busy}>{busy === "connect" && <Spinner size={14} />} Connect</Button>
-          </div>
+        <div className="space-y-5">
+          <SignInSteps si={data.signIn} publicUrl={data.publicUrl} onUse={useSignIn} busy={busy === "signin"} />
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted">Or use an API token instead</summary>
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-muted">
+                Create one at{" "}
+                <a className="underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">dash.cloudflare.com → API Tokens <ExternalLink size={11} className="inline" /></a>{" "}
+                (Create custom token) with these permissions:
+              </p>
+              <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted">{st.permissions.map((p) => <li key={p}>{p}</li>)}</ul>
+              <div className="flex flex-wrap gap-2">
+                <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste the API token" className="max-w-md" aria-label="Cloudflare API token" />
+                <Button onClick={connect} disabled={!token || !!busy}>{busy === "connect" && <Spinner size={14} />} Connect</Button>
+              </div>
+            </div>
+          </details>
         </div>
       )}
       <details className="mt-5 text-sm">
@@ -101,7 +186,7 @@ function Cloudflare() {
           )}
         </div>
       </details>
-      <ConfirmDialog open={disc} title="Disconnect Cloudflare?" message="The token is forgotten. The deployed Worker keeps receiving mail, but forwarding changes will no longer reach it." confirmLabel="Disconnect"
+      <ConfirmDialog open={disc} title="Disconnect Cloudflare?" message="Email stops using this Cloudflare connection. The deployed Worker keeps receiving mail, but forwarding changes will no longer reach it." confirmLabel="Disconnect"
         onCancel={() => setDisc(false)} onConfirm={() => (setDisc(false), api("DELETE", "/api/emails/cloudflare").then(reload))} />
     </Card>
   );

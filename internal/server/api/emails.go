@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"fleetwatch/internal/server/auth"
+	"fleetwatch/internal/server/dns"
 	"fleetwatch/internal/server/email"
+	"fleetwatch/internal/server/github"
 	"fleetwatch/internal/server/valid"
 )
 
@@ -602,7 +604,43 @@ func (s *server) emailRoutes(mux *http.ServeMux) {
 			fail(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": st, "publicUrl": s.publicURL(r)})
+		writeJSON(w, http.StatusOK, map[string]any{"status": st, "publicUrl": s.publicURL(r), "signIn": s.cloudflareSignIn()})
+	}))
+	// Sign in with Cloudflare (again) asking for the email permissions, coming back here.
+	// allow: the owner added them to an older sign-in app, so ask for them from now on.
+	mux.HandleFunc("POST /api/emails/cloudflare/signin-url", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
+		var in struct {
+			Allow bool `json:"allow"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if s.DNS == nil {
+			writeError(w, http.StatusNotFound, "not_found", "Cloudflare sign-in is not available.")
+			return
+		}
+		if in.Allow {
+			if err := s.DNS.AllowEmail(); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+		u, err := s.DNS.SignInURLTo(s.publicURL(r), github.OwnerKey, "#/emails?tab=settings")
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"url": u})
+	}))
+	// Email through the connected account: deploys the Worker, nothing pasted.
+	mux.HandleFunc("POST /api/emails/cloudflare/signin", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
+		st, err := E.UseSignIn(r.Context(), s.publicURL(r))
+		if err != nil && !st.Connected {
+			fail(w, err)
+			return
+		}
+		s.audit(r, "email.cloudflare.connect", st.AccountID, st.Account+" (sign-in)")
+		writeJSON(w, http.StatusOK, map[string]any{"status": st, "error": errText(err)})
 	}))
 	mux.HandleFunc("POST /api/emails/cloudflare", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
 		var in struct {
@@ -738,6 +776,28 @@ func (s *server) emailRoutes(mux *http.ServeMux) {
 		s.audit(r, "email.failure.dismiss", strconv.FormatInt(id, 10), "")
 		w.WriteHeader(http.StatusNoContent)
 	}))
+}
+
+// cloudflareSignIn says how far the dashboard's Cloudflare sign-in is from handling
+// email: the app set up, its email permissions, an owner account granted them.
+func (s *server) cloudflareSignIn() map[string]any {
+	out := map[string]any{"app": false, "appEmail": false, "accounts": 0, "account": ""}
+	if s.DNS == nil {
+		return out
+	}
+	out["app"], out["appEmail"] = s.DNS.AppClientID() != "", s.DNS.AppEmail()
+	n := 0
+	for _, a := range s.DNS.Accounts(github.OwnerKey) {
+		if a.Provider != "cloudflare" {
+			continue
+		}
+		n++
+		if dns.HasEmail(a.Scopes) && out["account"] == "" {
+			out["account"] = a.Label
+		}
+	}
+	out["accounts"] = n
+	return out
 }
 
 func errText(err error) string {

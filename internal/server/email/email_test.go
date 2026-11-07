@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"path/filepath"
 	"strings"
@@ -518,5 +521,75 @@ func TestExportMbox(t *testing.T) {
 	n, err := s.ExportMbox(OwnerAccess, "", "", &b)
 	if err != nil || n != 2 || strings.Count(b.String(), "\nFrom ") != 1 || !strings.Contains(b.String(), "\n>From the start") {
 		t.Fatalf("mbox (%d, %v): %q", n, err, b.String())
+	}
+}
+
+// With the dashboard's Cloudflare sign-in, email needs nothing pasted: the connected
+// account's token deploys the Worker and adds the Gmail destinations.
+func TestUseSignInDeploysWorker(t *testing.T) {
+	s, _ := newSvc(t)
+	setup(t, s)
+	var mu sync.Mutex
+	seen := map[string]string{}
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer signed-in-token" {
+			w.WriteHeader(403)
+			w.Write([]byte(`{"success":false,"errors":[{"message":"bad token"}]}`))
+			return
+		}
+		key := r.Method + " " + r.URL.Path
+		switch key {
+		case "GET /zones":
+			w.Write([]byte(`{"success":true,"result":[{"id":"z1","name":"nashop.store","account":{"id":"acc1","name":"Me"}}],"result_info":{"total_pages":1}}`))
+			return
+		case "GET /accounts/acc1/email/routing/addresses":
+			w.Write([]byte(`{"success":true,"result":[],"result_info":{"total_pages":1}}`))
+			return
+		case "POST /accounts/acc1/email/routing/addresses":
+			b, _ := io.ReadAll(r.Body)
+			seen[key] = string(b)
+		case "PUT /accounts/acc1/workers/scripts/fleetwatch-email":
+			r.ParseMultipartForm(1 << 20)
+			seen[key] = r.FormValue("metadata")
+			if f, _, err := r.FormFile("worker.js"); err == nil {
+				b, _ := io.ReadAll(f)
+				seen["script"] = string(b)
+			}
+		default:
+			t.Errorf("unexpected %s", key)
+		}
+		w.Write([]byte(`{"success":true,"result":{}}`))
+	}))
+	defer cf.Close()
+	s.CloudflareAPI = cf.URL
+	s.SignIn = func(context.Context) (string, string, error) { return "signed-in-token", "nashop.store", nil }
+
+	st, err := s.UseSignIn(context.Background(), "https://dash.example.com")
+	if err != nil || !st.Connected || !st.SignIn || st.AccountID != "acc1" || st.DeployedAt == 0 {
+		t.Fatalf("%+v %v", st, err)
+	}
+	meta := seen["PUT /accounts/acc1/workers/scripts/fleetwatch-email"]
+	for _, want := range []string{`"FLEETWATCH_URL"`, `https://dash.example.com/api/emails/inbound`, `"INBOUND_SECRET"`, `"ROUTES"`, `me@gmail.com`} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("worker metadata lacks %s: %s", want, meta)
+		}
+	}
+	if !strings.Contains(seen["script"], "export default") || !strings.Contains(seen["POST /accounts/acc1/email/routing/addresses"], "me@gmail.com") {
+		t.Fatalf("worker or destination missing: %v", seen)
+	}
+	if _, err := s.UseSignIn(context.Background(), "http://localhost:8090"); err == nil {
+		t.Fatal("a dashboard the Worker cannot reach was accepted")
+	}
+	// The sign-in expires: deploying says so instead of failing quietly.
+	s.SignIn = func(context.Context) (string, string, error) {
+		return "", "", errors.New("the Cloudflare sign-in has expired")
+	}
+	if err := s.PushEdge(context.Background()); err == nil {
+		t.Fatal("an expired sign-in deployed")
+	}
+	if st, _ := s.Cloudflare(context.Background()); !strings.Contains(st.Error, "expired") {
+		t.Fatalf("error not shown: %+v", st)
 	}
 }

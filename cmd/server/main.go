@@ -662,6 +662,7 @@ func serve() error {
 	}
 	hub.Handlers[proto.TypeSiteResult] = siteSvc.OnResult
 	dnsSvc := dns.New(d, box, bus)
+	mailSvc.SignIn = func(ctx context.Context) (string, string, error) { return dnsSvc.EmailToken(ctx, github.OwnerKey) }
 	siteSvc.DNS = dnsSvc
 	// Cloudflare accounts that ask for it block the dashboard's blocked addresses too:
 	// on every change, and every 15 minutes to catch up after errors.

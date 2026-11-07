@@ -44,17 +44,22 @@ func (s *server) myDNSRoutes(mux *http.ServeMux) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		q := r.URL.Query()
-		if q.Get("error") == "invalid_scope" { // a client made without the traffic permission: go on without it
-			if u, err := s.DNS.RetryWithoutAnalytics(q.Get("state"), s.publicURL(r)); err == nil {
+		if q.Get("error") == "invalid_scope" { // a client made without some permission: go on without it
+			if u, err := s.DNS.RetryWithFewerScopes(q.Get("state"), s.publicURL(r)); err == nil {
 				http.Redirect(w, r, u, http.StatusSeeOther)
 				return
 			}
 		}
+		next := s.DNS.Next(q.Get("state"))
 		a, err := s.DNS.FinishSignIn(ctx, q.Get("code"), q.Get("state"))
 		if err == nil && q.Get("error") != "" { // refused on Cloudflare's side: nothing was granted
 			err = errors.New("Cloudflare: " + q.Get("error_description"))
 		}
-		page := "/#/integrations?tab=cloudflare&" // the owner's and everyone's own Integrations page
+		// The owner's and everyone's own Integrations page, or the page the sign-in started from.
+		page := "/#/integrations?tab=cloudflare&"
+		if next != "" {
+			page = "/" + next + "&"
+		}
 		if err != nil {
 			http.Redirect(w, r, page+"cloudflare=error&message="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return

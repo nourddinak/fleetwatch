@@ -14,7 +14,7 @@ import (
 )
 
 // AnalyticsScope lets a sign-in read traffic stats. A client made before it existed may
-// not list it; the sign-in then goes on without it (see RetryWithoutAnalytics).
+// not list it; the sign-in then goes on without it (see RetryWithFewerScopes).
 const AnalyticsScope = "analytics.read"
 
 // Traffic is a site's last 24 hours on Cloudflare, over its domains.

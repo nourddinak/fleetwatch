@@ -34,7 +34,7 @@ func (s *server) integrationRoutes(mux *http.ServeMux) {
 			"webhooks": strings.HasPrefix(pub, "https://") && !strings.Contains(pub, "localhost") && !strings.Contains(pub, "127.0.0.1")}
 		if s.DNS != nil {
 			out["cloudflare"] = map[string]any{"clientId": s.DNS.AppClientID(), "redirectUri": pub + dns.CallbackPath,
-				"scopes": append(dns.Scopes, dns.AnalyticsScope), "noAnalytics": s.DNS.AppNoAnalytics()}
+				"scopes": append(append(dns.Scopes, dns.AnalyticsScope), dns.EmailScopes...), "noAnalytics": s.DNS.AppNoAnalytics()}
 		}
 		writeJSON(w, http.StatusOK, out)
 	}))

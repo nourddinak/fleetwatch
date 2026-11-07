@@ -37,7 +37,8 @@ var TokenPermissions = []string{
 const cfKey = "email.cloudflare"
 
 type cfSettings struct {
-	Sealed     []byte `json:"sealed,omitempty"`
+	Sealed     []byte `json:"sealed,omitempty"` // an API token pasted here, or:
+	SignIn     bool   `json:"signIn,omitempty"` // the owner's "Sign in with Cloudflare" account
 	AccountID  string `json:"accountId"`
 	Account    string `json:"account"`
 	Worker     string `json:"worker"`
@@ -51,6 +52,7 @@ type cfSettings struct {
 // CloudflareStatus is what the settings page shows (never the token).
 type CloudflareStatus struct {
 	Connected    bool          `json:"connected"`
+	SignIn       bool          `json:"signIn"` // through the dashboard's Cloudflare sign-in (else a token)
 	AccountID    string        `json:"accountId,omitempty"`
 	Account      string        `json:"account,omitempty"`
 	Worker       string        `json:"worker,omitempty"`
@@ -123,7 +125,7 @@ func (c cfClient) do(ctx context.Context, method, path, ctype string, body io.Re
 			msg = "Cloudflare: " + env.Errors[0].Message
 		}
 		if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusUnauthorized {
-			msg += " — the token may be missing a permission"
+			msg += " — the sign-in or token may be missing a permission"
 		}
 		return env, errors.New(msg)
 	}
@@ -143,16 +145,23 @@ func (c cfClient) call(ctx context.Context, method, path string, body, out any) 
 	return c.do(ctx, method, path, ctype, rd, out)
 }
 
-func (s *Service) client() (cfClient, cfSettings, error) {
+func (s *Service) client(ctx context.Context) (cfClient, cfSettings, error) {
 	c := s.cf()
-	if len(c.Sealed) == 0 {
-		return cfClient{}, c, valid.Error("connect Cloudflare first (Emails → Settings)")
+	switch {
+	case len(c.Sealed) > 0:
+		tok, err := s.box.Open(c.Sealed, "email.cloudflare")
+		if err != nil {
+			return cfClient{}, c, valid.Error("the saved Cloudflare token cannot be read: paste it again")
+		}
+		return cfClient{base: s.CloudflareAPI, token: string(tok)}, c, nil
+	case c.SignIn && s.SignIn != nil:
+		tok, _, err := s.SignIn(ctx)
+		if err != nil {
+			return cfClient{}, c, err
+		}
+		return cfClient{base: s.CloudflareAPI, token: tok}, c, nil
 	}
-	tok, err := s.box.Open(c.Sealed, "email.cloudflare")
-	if err != nil {
-		return cfClient{}, c, valid.Error("the saved Cloudflare token cannot be read: paste it again")
-	}
-	return cfClient{base: s.CloudflareAPI, token: string(tok)}, c, nil
+	return cfClient{}, c, valid.Error("connect Cloudflare first (Emails → Settings)")
 }
 
 type Zone struct {
@@ -180,27 +189,43 @@ func (c cfClient) zones(ctx context.Context) ([]Zone, error) {
 	return out, nil
 }
 
-// ConnectCloudflare saves a token after checking it can list zones. url is where the
-// Worker will post mail (the dashboard's public address).
+// ConnectCloudflare saves a pasted API token after checking it can list zones.
+// publicURL is where the Worker will post mail (the dashboard's public address).
 func (s *Service) ConnectCloudflare(ctx context.Context, token, publicURL string) (CloudflareStatus, error) {
 	token = strings.TrimSpace(token)
 	if len(token) < 20 || len(token) > 300 || strings.ContainsAny(token, " \r\n") {
 		return CloudflareStatus{}, valid.Error("paste the API token Cloudflare showed you")
 	}
+	return s.connect(ctx, token, publicURL, func(c *cfSettings) { c.Sealed, c.SignIn = s.box.Seal([]byte(token), "email.cloudflare"), false })
+}
+
+// UseSignIn sets email up through the owner's connected Cloudflare account (the
+// dashboard's "Sign in with Cloudflare"): nothing to paste.
+func (s *Service) UseSignIn(ctx context.Context, publicURL string) (CloudflareStatus, error) {
+	if s.SignIn == nil {
+		return CloudflareStatus{}, valid.Error("Sign in with Cloudflare is not available")
+	}
+	tok, _, err := s.SignIn(ctx)
+	if err != nil {
+		return CloudflareStatus{}, err
+	}
+	return s.connect(ctx, tok, publicURL, func(c *cfSettings) { c.Sealed, c.SignIn = nil, true })
+}
+
+func (s *Service) connect(ctx context.Context, token, publicURL string, keep func(*cfSettings)) (CloudflareStatus, error) {
 	u, err := url.Parse(publicURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || strings.HasPrefix(u.Hostname(), "localhost") || strings.HasPrefix(u.Hostname(), "127.") {
 		return CloudflareStatus{}, valid.Error("the Worker must reach this dashboard over https on a public address: open the dashboard at its https address (or set OPS_PUBLIC_URL)")
 	}
-	cl := cfClient{base: s.CloudflareAPI, token: token}
-	zs, err := cl.zones(ctx)
+	zs, err := cfClient{base: s.CloudflareAPI, token: token}.zones(ctx)
 	if err != nil {
 		return CloudflareStatus{}, err
 	}
 	if len(zs) == 0 {
-		return CloudflareStatus{}, valid.Error("the token sees no domains: give it Zone · Zone · Read on your domains")
+		return CloudflareStatus{}, valid.Error("Cloudflare shows no domains for this account")
 	}
 	c := s.cf()
-	c.Sealed = s.box.Seal([]byte(token), "email.cloudflare")
+	keep(&c)
 	c.AccountID, c.Account, c.URL = zs[0].Account.ID, zs[0].Account.Name, strings.TrimRight(publicURL, "/")
 	if len(c.Secret) == 0 {
 		c.Secret = s.box.Seal([]byte(randomHex(32)), "email.inbound")
@@ -216,7 +241,7 @@ func (s *Service) ConnectCloudflare(ctx context.Context, token, publicURL string
 
 func (s *Service) DisconnectCloudflare() error {
 	c := s.cf()
-	c.Sealed, c.DeployedAt, c.Error = nil, 0, ""
+	c.Sealed, c.SignIn, c.DeployedAt, c.Error = nil, false, 0, ""
 	return s.saveCF(c) // the inbound secret stays: the deployed Worker keeps working
 }
 
@@ -247,13 +272,14 @@ func (s *Service) ManualSecret() (string, error) {
 
 func (s *Service) Cloudflare(ctx context.Context) (CloudflareStatus, error) {
 	c := s.cf()
-	st := CloudflareStatus{Connected: len(c.Sealed) > 0, AccountID: c.AccountID, Account: c.Account, Worker: c.Worker, URL: c.URL, DeployedAt: c.DeployedAt,
+	st := CloudflareStatus{Connected: len(c.Sealed) > 0 || c.SignIn, SignIn: c.SignIn, AccountID: c.AccountID, Account: c.Account, Worker: c.Worker, URL: c.URL, DeployedAt: c.DeployedAt,
 		EdgeBytes: c.EdgeBytes, EdgeLimit: edgeLimit, Error: c.Error, Permissions: TokenPermissions, Destinations: []Destination{}}
 	if !st.Connected {
 		return st, nil
 	}
-	cl, _, err := s.client()
+	cl, _, err := s.client(ctx)
 	if err != nil {
+		st.Error = err.Error()
 		return st, nil
 	}
 	ds, err := cl.destinations(ctx, c.AccountID)
@@ -267,7 +293,7 @@ func (s *Service) Cloudflare(ctx context.Context) (CloudflareStatus, error) {
 
 // Zones are the Cloudflare domains the token sees (to turn on for email).
 func (s *Service) Zones(ctx context.Context) ([]Zone, error) {
-	cl, _, err := s.client()
+	cl, _, err := s.client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -339,9 +365,14 @@ func (s *Service) edgeChanged() {
 // PushEdge deploys the Worker with the current routes, and asks Cloudflare to verify
 // any new Gmail destination (it emails the address a confirmation link).
 func (s *Service) PushEdge(ctx context.Context) error {
-	cl, c, err := s.client()
+	cl, c, err := s.client(ctx)
 	if err != nil {
-		return nil // not connected: a Worker deployed by hand keeps its own routes
+		if len(c.Sealed) == 0 && !c.SignIn {
+			return nil // not connected: a Worker deployed by hand keeps its own routes
+		}
+		c.Error = err.Error() // e.g. the sign-in expired: shown on the settings page
+		s.saveCF(c)
+		return err
 	}
 	routes, dests, err := s.edgeRoutes()
 	if err != nil {
@@ -440,7 +471,7 @@ func (s *Service) Setup(ctx context.Context, domainID string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	cl, c, err := s.client()
+	cl, c, err := s.client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +539,7 @@ func (s *Service) Setup(ctx context.Context, domainID string) ([]string, error) 
 
 // routingCheck asks Cloudflare whether routing is on and the catch-all reaches the Worker.
 func (s *Service) routingCheck(ctx context.Context, d Domain) Check {
-	cl, c, err := s.client()
+	cl, c, err := s.client(ctx)
 	if err != nil {
 		return Check{Status: "unknown", Detail: "connect Cloudflare to check routing (or check it in Cloudflare → Email Routing)"}
 	}

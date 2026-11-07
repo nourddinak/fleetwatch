@@ -56,6 +56,9 @@ type Service struct {
 	// Resolver answers the DNS checks; tests replace it.
 	Resolver Resolver
 	DKIM     DKIMCheck
+	// SignIn gives an access token of the owner's connected Cloudflare account with the
+	// email permissions, and its label (the dashboard's "Sign in with Cloudflare").
+	SignIn func(ctx context.Context) (token, label string, err error)
 
 	mu       sync.Mutex
 	wake     chan struct{}

@@ -31,6 +31,10 @@ const CallbackPath = "/api/integrations/cloudflare/callback"
 // for more than the client has).
 var Scopes = []string{"offline_access", "zone.read", "dns.write", "cache.purge", "zone-settings.write", "firewall-services.write"}
 
+// EmailScopes let the Emails page set mail up through the same sign-in: point each
+// domain's catch-all at the Worker, add Gmail destinations, deploy the Worker.
+var EmailScopes = []string{"email-routing-rule.write", "email-routing-address.write", "workers-scripts.write"}
+
 const appAD = "dns.cloudflare-app"
 
 var accountRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -40,14 +44,20 @@ type appKeys struct {
 	ClientSecret string `json:"clientSecret"`
 	// NoAnalytics: the client does not list AnalyticsScope, so sign-ins leave it out.
 	NoAnalytics bool `json:"noAnalytics,omitempty"`
+	// Email: the client lists EmailScopes (clients made before email did not).
+	Email bool `json:"email,omitempty"`
 }
 
 // scopes is what a sign-in asks for.
 func (k appKeys) scopes() []string {
-	if k.NoAnalytics {
-		return Scopes
+	out := slices.Clone(Scopes)
+	if !k.NoAnalytics {
+		out = append(out, AnalyticsScope)
 	}
-	return append(slices.Clone(Scopes), AnalyticsScope)
+	if k.Email {
+		out = append(out, EmailScopes...)
+	}
+	return out
 }
 
 type tokens struct {
@@ -59,6 +69,7 @@ type tokens struct {
 
 type signIn struct {
 	owner, verifier, redirect string
+	next                      string // the dashboard page to come back to ("" = Integrations)
 	expires                   time.Time
 }
 
@@ -141,7 +152,7 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 	}
 	body := map[string]any{"client_name": "Fleetwatch", "grant_types": []string{"authorization_code", "refresh_token"},
 		"response_types": []string{"code"}, "token_endpoint_auth_method": "client_secret_basic",
-		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": appKeys{}.scopes()}
+		"redirect_uris": []string{publicURL + CallbackPath}, "scopes": appKeys{Email: true}.scopes()}
 	if strings.HasPrefix(publicURL, "https://") {
 		body["client_uri"] = publicURL
 	}
@@ -154,7 +165,7 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 	path := "/accounts/" + acc.ID + "/oauth_clients"
 	_, err := c.call(ctx, http.MethodPost, path, body, &out)
 	if err != nil && strings.Contains(err.Error(), "offline") { // in case a client may not list offline access itself
-		body["scopes"] = slices.DeleteFunc(appKeys{}.scopes(), func(sc string) bool { return sc == "offline_access" })
+		body["scopes"] = slices.DeleteFunc(appKeys{Email: true}.scopes(), func(sc string) bool { return sc == "offline_access" })
 		_, err = c.call(ctx, http.MethodPost, path, body, &out)
 	}
 	if err != nil {
@@ -164,7 +175,7 @@ func (s *Service) AutoApp(ctx context.Context, token, accountID, publicURL strin
 	if id == "" || secret == "" {
 		return "", valid.Error("Cloudflare made the sign-in app but did not send its ID and secret: set it up by hand with a new secret (Manage account → OAuth clients)")
 	}
-	return acc.Name, s.SetApp(id, secret)
+	return acc.Name, s.saveApp(appKeys{ClientID: id, ClientSecret: secret, Email: true})
 }
 
 // AppNoAnalytics reports whether sign-ins leave the traffic permission out.
@@ -183,22 +194,45 @@ func (s *Service) AllowAnalytics() error {
 	return s.saveApp(k)
 }
 
-// RetryWithoutAnalytics handles Cloudflare refusing a sign-in because the client does not
-// list the traffic permission: from now on sign-ins leave it out, and this one starts over.
-func (s *Service) RetryWithoutAnalytics(state, publicURL string) (string, error) {
+// AppEmail reports whether sign-ins ask for the email permissions.
+func (s *Service) AppEmail() bool {
+	k, _ := s.app()
+	return k.Email
+}
+
+// AllowEmail: the owner added EmailScopes to the client; sign-ins ask for them.
+func (s *Service) AllowEmail() error {
+	k, ok := s.app()
+	if !ok {
+		return valid.Error("set up Sign in with Cloudflare first (Integrations → Cloudflare)")
+	}
+	k.Email = true
+	return s.saveApp(k)
+}
+
+// RetryWithFewerScopes handles Cloudflare refusing a sign-in because the client does not
+// list a permission asked for: the traffic one first, then the email ones. From now on
+// sign-ins leave it out, and this one starts over.
+func (s *Service) RetryWithFewerScopes(state, publicURL string) (string, error) {
 	s.mu.Lock()
 	p, ok := s.pending[state]
 	delete(s.pending, state)
 	s.mu.Unlock()
 	k, set := s.app()
-	if !ok || !set || k.NoAnalytics {
+	switch {
+	case !ok || !set:
+		return "", valid.Error("Cloudflare refused the permissions asked for")
+	case !k.NoAnalytics:
+		k.NoAnalytics = true
+	case k.Email:
+		k.Email = false
+	default:
 		return "", valid.Error("Cloudflare refused the permissions asked for")
 	}
-	k.NoAnalytics = true
 	if err := s.saveApp(k); err != nil {
 		return "", err
 	}
-	return s.SignInURL(publicURL, p.owner)
+	return s.SignInURLTo(publicURL, p.owner, p.next)
 }
 
 // ClearApp forgets the OAuth client; accounts already connected stop working.
@@ -216,6 +250,14 @@ func random(n int) string {
 
 // SignInURL starts a sign-in for owner ("owner" or a member ID).
 func (s *Service) SignInURL(publicURL, owner string) (string, error) {
+	return s.SignInURLTo(publicURL, owner, "")
+}
+
+// SignInURLTo is SignInURL coming back to the dashboard page next (a "#/…" route).
+func (s *Service) SignInURLTo(publicURL, owner, next string) (string, error) {
+	if !strings.HasPrefix(next, "#/") || strings.ContainsAny(next, "\r\n ") {
+		next = ""
+	}
 	k, ok := s.app()
 	if !ok {
 		return "", valid.Error("Cloudflare is not set up yet: the dashboard owner adds it in Integrations")
@@ -229,7 +271,7 @@ func (s *Service) SignInURL(publicURL, owner string) (string, error) {
 			delete(s.pending, st)
 		}
 	}
-	s.pending[state] = signIn{owner, verifier, redirect, s.Now().Add(15 * time.Minute)}
+	s.pending[state] = signIn{owner, verifier, redirect, next, s.Now().Add(15 * time.Minute)}
 	s.mu.Unlock()
 	q := url.Values{"response_type": {"code"}, "client_id": {k.ClientID}, "redirect_uri": {redirect}, "scope": {strings.Join(k.scopes(), " ")},
 		"state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
@@ -270,6 +312,13 @@ func (s *Service) tokenCall(ctx context.Context, k appKeys, form url.Values) (to
 		out.ExpiresIn = 3600
 	}
 	return tokens{out.AccessToken, out.RefreshToken, s.Now().Unix() + out.ExpiresIn, out.Scope}, nil
+}
+
+// Next is where a sign-in in progress comes back to ("" = Integrations).
+func (s *Service) Next(state string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending[state].next
 }
 
 // FinishSignIn trades the code Cloudflare sent back for tokens and keeps the account.
@@ -362,6 +411,33 @@ func (s *Service) token(ctx context.Context, a *Account, enc []byte) (string, er
 	raw, _ := json.Marshal(nt)
 	s.db.Exec(`UPDATE dns_accounts SET secret_enc = ? WHERE id = ?`, s.box.Seal(raw, secretAD+a.ID), a.ID)
 	return nt.Access, nil
+}
+
+// EmailToken is an access token of owner's connected Cloudflare account that was granted
+// the email permissions, with that account's label.
+func (s *Service) EmailToken(ctx context.Context, owner string) (string, string, error) {
+	for _, a := range s.Accounts(owner) {
+		if a.Provider != "cloudflare" || !HasEmail(a.Scopes) {
+			continue
+		}
+		var enc []byte
+		if s.db.QueryRow(`SELECT secret_enc FROM dns_accounts WHERE id = ?`, a.ID).Scan(&enc) != nil {
+			continue
+		}
+		tok, err := s.token(ctx, &a, enc)
+		return tok, a.Label, err
+	}
+	return "", "", valid.Error("no connected Cloudflare account has the email permissions yet: sign in with Cloudflare again")
+}
+
+// HasEmail reports whether granted scopes include every email permission.
+func HasEmail(granted []string) bool {
+	for _, sc := range EmailScopes {
+		if !slices.Contains(granted, sc) {
+			return false
+		}
+	}
+	return true
 }
 
 // revoke signs an account out of Cloudflare (best effort).

@@ -39,16 +39,13 @@ You need:
 - the dashboard reachable at a public **https** address (set `OPS_PUBLIC_URL`, or open the dashboard at that address when connecting);
 - a sender in **Integrations → Email** to send from. Resend's free tier sends 100 emails a day, so heavy sending needs a paid plan with Resend or another provider.
 
-1. **Create a Cloudflare API token.** Go to dash.cloudflare.com → My Profile → API Tokens → Create custom token, with these permissions:
-   - Account · Workers Scripts · Edit
-   - Account · Email Routing Addresses · Edit
-   - Zone · Email Routing Rules · Edit
-   - Zone · DNS · Edit
-   - Zone · Zone · Read
-   - Zone · Zone Settings · Edit
+1. **Connect Cloudflare through the dashboard's sign-in.** Open Emails → Settings → Cloudflare and follow the steps it shows. Nothing needs to be pasted:
+   - **Sign in with Cloudflare** must be set up once in Integrations → Cloudflare. A sign-in app made there from now on already includes the email permissions.
+   - A sign-in app made before email existed needs three permissions added in Cloudflare → Manage account → OAuth clients → Fleetwatch → edit scopes: `email-routing-rule.write`, `email-routing-address.write` and `workers-scripts.write`. Then press **I added them: sign in with Cloudflare**.
+   - Sign in with Cloudflare. You come back to the Emails settings, and email turns on by itself: Fleetwatch deploys the Worker (`fleetwatch-email`) with its secret and routes.
 
-   If a step later says a permission is missing, Fleetwatch shows Cloudflare's own error message.
-2. **Emails → Settings → Cloudflare:** paste the token and click Connect. Fleetwatch deploys the Worker (`fleetwatch-email`) with its secret and routes.
+   If something is missing, the page shows Cloudflare's own error message. If the sign-in expires later, the page offers **Sign in again**.
+2. Alternatively, use an API token instead (under **Or use an API token instead**), created with these permissions: Account · Workers Scripts · Edit; Account · Email Routing Addresses · Edit; Zone · Email Routing Rules · Edit; Zone · DNS · Edit; Zone · Zone · Read; Zone · Zone Settings · Edit.
 3. **Emails → Domains & addresses → Add domain:** pick the domain.
 4. **Set up in Cloudflare** (on the domain). This:
    - merges `include:_spf.mx.cloudflare.net` into your SPF record (it never adds a second SPF record);
