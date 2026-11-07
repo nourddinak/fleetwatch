@@ -45,7 +45,7 @@ func (s *Service) Drafts(a Access) ([]Draft, error) {
 			}
 		}
 	}
-	rows, err := s.db.Query(`SELECT `+draftCols+` FROM email_drafts WHERE queued = 0 AND (`+where+`) ORDER BY updated_at DESC LIMIT 200`, args...)
+	rows, err := s.db.Query(`SELECT `+draftCols+` FROM mail_drafts WHERE queued = 0 AND (`+where+`) ORDER BY updated_at DESC LIMIT 200`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (s *Service) Drafts(a Access) ([]Draft, error) {
 }
 
 func (s *Service) Draft(a Access, id string) (Draft, error) {
-	d, err := scanDraft(s.db.QueryRow(`SELECT `+draftCols+` FROM email_drafts WHERE id = ?`, id))
+	d, err := scanDraft(s.db.QueryRow(`SELECT `+draftCols+` FROM mail_drafts WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) || err == nil && !a.AddressCan(d.FromID, "send") {
 		return Draft{}, ErrNotFound
 	}
@@ -123,14 +123,14 @@ func (s *Service) SaveDraft(a Access, d Draft, by string) (Draft, error) {
 	}
 	if d.ID == "" {
 		d.ID = newID("emdr")
-		_, err := s.db.Exec(`INSERT INTO email_drafts (id, from_id, to_json, cc_json, bcc_json, subject, html, reply_to_id, forward_id, files, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		_, err := s.db.Exec(`INSERT INTO mail_drafts (id, from_id, to_json, cc_json, bcc_json, subject, html, reply_to_id, forward_id, files, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			d.ID, d.FromID, jsonList(d.To), jsonList(d.Cc), jsonList(d.Bcc), d.Subject, d.HTML, null(d.ReplyToID), null(d.ForwardID), jsonString(d.Files), by, d.UpdatedAt)
 		return d, err
 	}
 	if _, err := s.Draft(a, d.ID); err != nil {
 		return d, err
 	}
-	res, err := s.db.Exec(`UPDATE email_drafts SET from_id = ?, to_json = ?, cc_json = ?, bcc_json = ?, subject = ?, html = ?, reply_to_id = ?, forward_id = ?, files = ?, updated_at = ? WHERE id = ? AND queued = 0`,
+	res, err := s.db.Exec(`UPDATE mail_drafts SET from_id = ?, to_json = ?, cc_json = ?, bcc_json = ?, subject = ?, html = ?, reply_to_id = ?, forward_id = ?, files = ?, updated_at = ? WHERE id = ? AND queued = 0`,
 		d.FromID, jsonList(d.To), jsonList(d.Cc), jsonList(d.Bcc), d.Subject, d.HTML, null(d.ReplyToID), null(d.ForwardID), jsonString(d.Files), d.UpdatedAt, d.ID)
 	if n, _ := res.RowsAffected(); err == nil && n == 0 {
 		return d, valid.Error("this draft is being sent")
@@ -143,7 +143,7 @@ func (s *Service) DeleteDraft(a Access, id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM email_drafts WHERE id = ? AND queued = 0`, id); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM mail_drafts WHERE id = ? AND queued = 0`, id); err != nil {
 		return err
 	}
 	for _, f := range d.Files {
@@ -184,7 +184,7 @@ func (s *Service) sweepUploads() {
 			continue
 		}
 		var n int
-		s.db.QueryRow(`SELECT COUNT(*) FROM email_drafts WHERE files LIKE ?`, "%"+strings.TrimSuffix(e.Name(), ".tmp")+"%").Scan(&n)
+		s.db.QueryRow(`SELECT COUNT(*) FROM mail_drafts WHERE files LIKE ?`, "%"+strings.TrimSuffix(e.Name(), ".tmp")+"%").Scan(&n)
 		if n == 0 {
 			os.Remove(filepath.Join(dir, e.Name()))
 		}
@@ -402,11 +402,11 @@ func (s *Service) Send(a Access, draftID string, sendAt int64) (Job, error) {
 		return j, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO email_outbox (id, message_id, draft_id, sender_id, from_addr, rcpts, state, send_at, next_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)`,
+	if _, err := tx.Exec(`INSERT INTO mail_outbox (id, message_id, draft_id, sender_id, from_addr, rcpts, state, send_at, next_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)`,
 		j.ID, msgID, d.ID, sender, from.Address, jsonList(rcpts), when, when, now.Unix()); err != nil {
 		return j, err
 	}
-	if _, err := tx.Exec(`UPDATE email_drafts SET queued = 1 WHERE id = ?`, d.ID); err != nil {
+	if _, err := tx.Exec(`UPDATE mail_drafts SET queued = 1 WHERE id = ?`, d.ID); err != nil {
 		return j, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -20,7 +20,7 @@ func (s *Service) Contacts(q string, limit int) ([]Contact, error) {
 		limit = 100
 	}
 	like := "%" + strings.ToLower(strings.TrimSpace(q)) + "%"
-	rows, err := s.db.Query(`SELECT id, address, name, company, notes, uses, last_used FROM email_contacts
+	rows, err := s.db.Query(`SELECT id, address, name, company, notes, uses, last_used FROM mail_contacts
 		WHERE address LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY uses DESC, last_used DESC LIMIT ?`, like, like, like, limit)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (s *Service) Suggest(a Access, q string) ([]Contact, error) {
 	}
 	where, args := a.mailboxFilter("mailbox_id")
 	like := "%" + strings.ToLower(strings.TrimSpace(q)) + "%"
-	rows, err := s.db.Query(`SELECT from_addr, MAX(from_name), COUNT(*) FROM email_messages WHERE direction = 'in' AND folder != 'spam' AND (from_addr LIKE ? OR from_name LIKE ?) AND `+where+`
+	rows, err := s.db.Query(`SELECT from_addr, MAX(from_name), COUNT(*) FROM mail_messages WHERE direction = 'in' AND folder != 'spam' AND (from_addr LIKE ? OR from_name LIKE ?) AND `+where+`
 		GROUP BY from_addr ORDER BY COUNT(*) DESC LIMIT 8`, append([]any{like, like}, args...)...)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (s *Service) SaveContact(c Contact) (Contact, error) {
 		return c, valid.Error("name, company or notes are too long")
 	}
 	if c.ID == 0 {
-		res, err := s.db.Exec(`INSERT INTO email_contacts (address, name, company, notes, last_used) VALUES (?, ?, ?, ?, ?)
+		res, err := s.db.Exec(`INSERT INTO mail_contacts (address, name, company, notes, last_used) VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT (address) DO UPDATE SET name = excluded.name, company = excluded.company, notes = excluded.notes`, c.Address, c.Name, c.Company, c.Notes, s.Now().Unix())
 		if err != nil {
 			return c, err
@@ -75,7 +75,7 @@ func (s *Service) SaveContact(c Contact) (Contact, error) {
 		c.ID, _ = res.LastInsertId()
 		return c, nil
 	}
-	_, err := s.db.Exec(`UPDATE email_contacts SET address = ?, name = ?, company = ?, notes = ? WHERE id = ?`, c.Address, c.Name, c.Company, c.Notes, c.ID)
+	_, err := s.db.Exec(`UPDATE mail_contacts SET address = ?, name = ?, company = ?, notes = ? WHERE id = ?`, c.Address, c.Name, c.Company, c.Notes, c.ID)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return c, valid.Error("another contact has that address")
 	}
@@ -83,7 +83,7 @@ func (s *Service) SaveContact(c Contact) (Contact, error) {
 }
 
 func (s *Service) DeleteContact(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM email_contacts WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM mail_contacts WHERE id = ?`, id)
 	return err
 }
 
@@ -101,7 +101,7 @@ func (s *Service) ExportMbox(a Access, mailbox, folder string, w io.Writer) (int
 		where += " AND folder = ?"
 		args = append(args, folder)
 	}
-	rows, err := s.db.Query(`SELECT id, from_addr, received_at, raw_path FROM email_messages WHERE `+where+` ORDER BY received_at`, args...)
+	rows, err := s.db.Query(`SELECT id, from_addr, received_at, raw_path FROM mail_messages WHERE `+where+` ORDER BY received_at`, args...)
 	if err != nil {
 		return 0, err
 	}

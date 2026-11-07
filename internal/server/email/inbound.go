@@ -49,7 +49,7 @@ func (s *Service) resolve(rcpt string) (Address, Domain, string) {
 		}
 	}
 	var id string
-	if s.db.QueryRow(`SELECT id FROM email_domains WHERE name = ?`, rcpt[at+1:]).Scan(&id) != nil {
+	if s.db.QueryRow(`SELECT id FROM mail_domains WHERE name = ?`, rcpt[at+1:]).Scan(&id) != nil {
 		return Address{}, Domain{}, "No such address."
 	}
 	d, _ := s.Domain(id)
@@ -81,7 +81,7 @@ func (s *Service) Ingest(in Inbound, raw []byte) (Result, error) {
 	hash := hex.EncodeToString(sum[:])
 	box := a.Mailbox()
 	var dup int64
-	if s.db.QueryRow(`SELECT id FROM email_messages WHERE mailbox_id = ? AND sha256 = ?`, box, hash).Scan(&dup) == nil {
+	if s.db.QueryRow(`SELECT id FROM mail_messages WHERE mailbox_id = ? AND sha256 = ?`, box, hash).Scan(&dup) == nil {
 		res.Stored, res.Duplicate = true, true
 		return res, nil
 	}
@@ -113,7 +113,7 @@ func (s *Service) Ingest(in Inbound, raw []byte) (Result, error) {
 	})
 	if err != nil {
 		var n int
-		if s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE raw_path = ?`, rel).Scan(&n); n == 0 {
+		if s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE raw_path = ?`, rel).Scan(&n); n == 0 {
 			s.recordFailure(in, int64(len(raw)), rel, err)
 		}
 		return res, err
@@ -136,7 +136,7 @@ func (s *Service) Ingest(in Inbound, raw []byte) (Result, error) {
 }
 
 func (s *Service) domainNames() []string {
-	rows, err := s.db.Query(`SELECT name FROM email_domains`)
+	rows, err := s.db.Query(`SELECT name FROM mail_domains`)
 	if err != nil {
 		return nil
 	}
@@ -183,7 +183,7 @@ func (s *Service) file(f fileInput) (int64, error) {
 	if sent.IsZero() || sent.After(f.at.Add(24*time.Hour)) {
 		sent = f.at
 	}
-	res, err := tx.Exec(`INSERT INTO email_messages (mailbox_id, domain_id, thread_id, direction, folder, message_id, in_reply_to, refs, rcpt, from_addr, from_name,
+	res, err := tx.Exec(`INSERT INTO mail_messages (mailbox_id, domain_id, thread_id, direction, folder, message_id, in_reply_to, refs, rcpt, from_addr, from_name,
 		to_json, cc_json, bcc_json, reply_to, subject, snippet, size, attachments, unread, spam_score, spam_why, auth, sha256, raw_path, sent_at, received_at, moved_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.mailbox, f.domain, thread, f.direction, f.folder, msgID, p.InReplyTo, strings.Join(p.References, " "), f.rcpt, p.From.Address, p.From.Name,
@@ -195,7 +195,7 @@ func (s *Service) file(f fileInput) (int64, error) {
 	id, _ := res.LastInsertId()
 	files := []string{}
 	for i, at := range p.Attachments {
-		if _, err := tx.Exec(`INSERT INTO email_attachments (message_id, part, filename, type, size, content_id) VALUES (?, ?, ?, ?, ?, ?)`, id, i, at.Filename, at.Type, at.Size, at.ContentID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO mail_attachments (message_id, part, filename, type, size, content_id) VALUES (?, ?, ?, ?, ?, ?)`, id, i, at.Filename, at.Type, at.Size, at.ContentID); err != nil {
 			return 0, err
 		}
 		if !at.Inline {
@@ -213,10 +213,10 @@ func (s *Service) file(f fileInput) (int64, error) {
 	if len(body) > 200000 {
 		body = body[:200000]
 	}
-	if _, err := tx.Exec(`INSERT INTO email_fts (rowid, subject, people, body, files) VALUES (?, ?, ?, ?, ?)`, id, p.Subject, strings.Join(people, " "), body, strings.Join(files, " ")); err != nil {
+	if _, err := tx.Exec(`INSERT INTO mail_fts (rowid, subject, people, body, files) VALUES (?, ?, ?, ?, ?)`, id, p.Subject, strings.Join(people, " "), body, strings.Join(files, " ")); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`UPDATE email_threads SET last_at = MAX(last_at, ?) WHERE id = ?`, f.at.Unix(), thread); err != nil {
+	if _, err := tx.Exec(`UPDATE mail_threads SET last_at = MAX(last_at, ?) WHERE id = ?`, f.at.Unix(), thread); err != nil {
 		return 0, err
 	}
 	// Contacts: who writes in (not spam), and whoever you write to.
@@ -230,7 +230,7 @@ func (s *Service) file(f fileInput) (int64, error) {
 		if c.Address == "" || containsStr(s.domainNamesTx(tx), domainOf(c.Address)) {
 			continue
 		}
-		tx.Exec(`INSERT INTO email_contacts (address, name, uses, last_used) VALUES (?, ?, 1, ?)
+		tx.Exec(`INSERT INTO mail_contacts (address, name, uses, last_used) VALUES (?, ?, 1, ?)
 			ON CONFLICT (address) DO UPDATE SET uses = uses + 1, last_used = excluded.last_used, name = CASE WHEN name = '' THEN excluded.name ELSE name END`,
 			c.Address, c.Name, f.at.Unix())
 	}
@@ -238,7 +238,7 @@ func (s *Service) file(f fileInput) (int64, error) {
 }
 
 func (s *Service) domainNamesTx(tx *sql.Tx) []string {
-	rows, err := tx.Query(`SELECT name FROM email_domains`)
+	rows, err := tx.Query(`SELECT name FROM mail_domains`)
 	if err != nil {
 		return nil
 	}
@@ -264,18 +264,18 @@ func (s *Service) threadFor(tx *sql.Tx, mailbox string, p Parsed, at time.Time) 
 	}
 	for i := len(ids) - 1; i >= 0 && i >= len(ids)-20; i-- {
 		var t int64
-		if tx.QueryRow(`SELECT thread_id FROM email_messages WHERE mailbox_id = ? AND message_id = ? LIMIT 1`, mailbox, ids[i]).Scan(&t) == nil {
+		if tx.QueryRow(`SELECT thread_id FROM mail_messages WHERE mailbox_id = ? AND message_id = ? LIMIT 1`, mailbox, ids[i]).Scan(&t) == nil {
 			return t, nil
 		}
 	}
 	subj := normSubject(p.Subject)
 	if subj != "" && (p.InReplyTo != "" || len(p.References) > 0 || reSubjectPrefix.MatchString(p.Subject)) {
 		var t int64
-		if tx.QueryRow(`SELECT id FROM email_threads WHERE mailbox_id = ? AND subject = ? AND last_at > ? ORDER BY last_at DESC LIMIT 1`, mailbox, subj, at.Add(-30*24*time.Hour).Unix()).Scan(&t) == nil {
+		if tx.QueryRow(`SELECT id FROM mail_threads WHERE mailbox_id = ? AND subject = ? AND last_at > ? ORDER BY last_at DESC LIMIT 1`, mailbox, subj, at.Add(-30*24*time.Hour).Unix()).Scan(&t) == nil {
 			return t, nil
 		}
 	}
-	res, err := tx.Exec(`INSERT INTO email_threads (mailbox_id, subject, last_at) VALUES (?, ?, ?)`, mailbox, subj, at.Unix())
+	res, err := tx.Exec(`INSERT INTO mail_threads (mailbox_id, subject, last_at) VALUES (?, ?, ?)`, mailbox, subj, at.Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -286,12 +286,12 @@ func (s *Service) threadFor(tx *sql.Tx, mailbox string, p Parsed, at time.Time) 
 
 func (s *Service) recordFailure(in Inbound, size int64, rel string, cause error) {
 	slog.Error("email: could not file an inbound message", "rcpt", in.Rcpt, "err", cause)
-	s.db.Exec(`INSERT INTO email_inbound_failures (rcpt, mail_from, size, raw_path, error, received_at) VALUES (?, ?, ?, ?, ?, ?)`,
+	s.db.Exec(`INSERT INTO mail_inbound_failures (rcpt, mail_from, size, raw_path, error, received_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		strings.ToLower(in.Rcpt), strings.ToLower(in.MailFrom), size, rel, cause.Error(), s.Now().Unix())
 }
 
 func (s *Service) Failures() ([]Failure, error) {
-	rows, err := s.db.Query(`SELECT id, rcpt, mail_from, size, raw_path, error, received_at FROM email_inbound_failures ORDER BY id DESC LIMIT 200`)
+	rows, err := s.db.Query(`SELECT id, rcpt, mail_from, size, raw_path, error, received_at FROM mail_inbound_failures ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -313,14 +313,14 @@ func (s *Service) Failures() ([]Failure, error) {
 func (s *Service) RetryFailure(id int64) (Result, error) {
 	var in Inbound
 	var rel string
-	if err := s.db.QueryRow(`SELECT rcpt, mail_from, raw_path FROM email_inbound_failures WHERE id = ?`, id).Scan(&in.Rcpt, &in.MailFrom, &rel); err != nil {
+	if err := s.db.QueryRow(`SELECT rcpt, mail_from, raw_path FROM mail_inbound_failures WHERE id = ?`, id).Scan(&in.Rcpt, &in.MailFrom, &rel); err != nil {
 		return Result{}, ErrNotFound
 	}
 	raw, err := s.readFile(rel)
 	if err != nil {
 		return Result{}, fmt.Errorf("the saved copy cannot be read: %w", err)
 	}
-	s.db.Exec(`DELETE FROM email_inbound_failures WHERE id = ?`, id)
+	s.db.Exec(`DELETE FROM mail_inbound_failures WHERE id = ?`, id)
 	res, err := s.Ingest(in, raw)
 	if err != nil {
 		return res, err
@@ -333,12 +333,12 @@ func (s *Service) RetryFailure(id int64) (Result, error) {
 
 func (s *Service) DismissFailure(id int64) error {
 	var rel string
-	s.db.QueryRow(`SELECT raw_path FROM email_inbound_failures WHERE id = ?`, id).Scan(&rel)
+	s.db.QueryRow(`SELECT raw_path FROM mail_inbound_failures WHERE id = ?`, id).Scan(&rel)
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE raw_path = ?`, rel).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE raw_path = ?`, rel).Scan(&n)
 	if rel != "" && n == 0 {
 		s.removeFile(rel)
 	}
-	_, err := s.db.Exec(`DELETE FROM email_inbound_failures WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM mail_inbound_failures WHERE id = ?`, id)
 	return err
 }

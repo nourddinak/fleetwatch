@@ -36,12 +36,12 @@ func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 const jobCols = `o.id, o.message_id, o.state, o.attempts, o.send_at, o.next_at, o.last_error, o.accepted_at, o.from_addr, COALESCE(m.subject, '')`
 
 func (s *Service) jobFor(messageID int64) (Job, error) {
-	return scanJob(s.db.QueryRow(`SELECT `+jobCols+` FROM email_outbox o LEFT JOIN email_messages m ON m.id = o.message_id WHERE o.message_id = ?`, messageID))
+	return scanJob(s.db.QueryRow(`SELECT `+jobCols+` FROM mail_outbox o LEFT JOIN mail_messages m ON m.id = o.message_id WHERE o.message_id = ?`, messageID))
 }
 
 func (s *Service) job(id string) (Job, string, error) {
 	var box string
-	j, err := scanJob(&withExtra{s.db.QueryRow(`SELECT `+jobCols+`, COALESCE(m.mailbox_id, '') FROM email_outbox o LEFT JOIN email_messages m ON m.id = o.message_id WHERE o.id = ?`, id), []any{&box}})
+	j, err := scanJob(&withExtra{s.db.QueryRow(`SELECT `+jobCols+`, COALESCE(m.mailbox_id, '') FROM mail_outbox o LEFT JOIN mail_messages m ON m.id = o.message_id WHERE o.id = ?`, id), []any{&box}})
 	if errors.Is(err, sql.ErrNoRows) {
 		return j, "", ErrNotFound
 	}
@@ -51,7 +51,7 @@ func (s *Service) job(id string) (Job, string, error) {
 // Outbox lists jobs that are not done (and recent failures) the person may see.
 func (s *Service) Outbox(a Access) ([]Job, error) {
 	where, args := a.mailboxFilter("m.mailbox_id")
-	rows, err := s.db.Query(`SELECT `+jobCols+` FROM email_outbox o JOIN email_messages m ON m.id = o.message_id
+	rows, err := s.db.Query(`SELECT `+jobCols+` FROM mail_outbox o JOIN mail_messages m ON m.id = o.message_id
 		WHERE (o.state != 'accepted' OR o.accepted_at > ?) AND `+where+` ORDER BY o.created_at DESC LIMIT 200`, append([]any{s.Now().Add(-24 * time.Hour).Unix()}, args...)...)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (s *Service) Cancel(a Access, jobID string) (string, error) {
 	if err != nil || !a.Mailbox(box, "send") && !a.AddressCan(addressIDOf(s, j.From), "send") {
 		return "", ErrNotFound
 	}
-	res, err := s.db.Exec(`UPDATE email_outbox SET state = 'canceled' WHERE id = ? AND state = 'scheduled'`, jobID)
+	res, err := s.db.Exec(`UPDATE mail_outbox SET state = 'canceled' WHERE id = ? AND state = 'scheduled'`, jobID)
 	if err != nil {
 		return "", err
 	}
@@ -82,17 +82,17 @@ func (s *Service) Cancel(a Access, jobID string) (string, error) {
 		return "", valid.Error("too late: the message has already been handed to the provider")
 	}
 	var draft, rel string
-	s.db.QueryRow(`SELECT draft_id FROM email_outbox WHERE id = ?`, jobID).Scan(&draft)
-	s.db.QueryRow(`SELECT raw_path FROM email_messages WHERE id = ?`, j.MessageID).Scan(&rel)
+	s.db.QueryRow(`SELECT draft_id FROM mail_outbox WHERE id = ?`, jobID).Scan(&draft)
+	s.db.QueryRow(`SELECT raw_path FROM mail_messages WHERE id = ?`, j.MessageID).Scan(&rel)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
-	tx.Exec(`DELETE FROM email_outbox WHERE id = ?`, jobID)
-	tx.Exec(`DELETE FROM email_fts WHERE rowid = ?`, j.MessageID)
-	tx.Exec(`DELETE FROM email_messages WHERE id = ?`, j.MessageID)
-	tx.Exec(`UPDATE email_drafts SET queued = 0, updated_at = ? WHERE id = ?`, s.Now().Unix(), draft)
+	tx.Exec(`DELETE FROM mail_outbox WHERE id = ?`, jobID)
+	tx.Exec(`DELETE FROM mail_fts WHERE rowid = ?`, j.MessageID)
+	tx.Exec(`DELETE FROM mail_messages WHERE id = ?`, j.MessageID)
+	tx.Exec(`UPDATE mail_drafts SET queued = 0, updated_at = ? WHERE id = ?`, s.Now().Unix(), draft)
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
@@ -122,7 +122,7 @@ func (s *Service) Retry(a Access, jobID string, force bool) error {
 		return valid.Error("only failed messages can be retried")
 	}
 	now := s.Now().Unix()
-	_, err = s.db.Exec(`UPDATE email_outbox SET state = 'scheduled', attempts = 0, next_at = ?, last_error = '' WHERE id = ? AND state = ?`, now, jobID, j.State)
+	_, err = s.db.Exec(`UPDATE mail_outbox SET state = 'scheduled', attempts = 0, next_at = ?, last_error = '' WHERE id = ? AND state = ?`, now, jobID, j.State)
 	s.poke()
 	return err
 }
@@ -130,7 +130,7 @@ func (s *Service) Retry(a Access, jobID string, force bool) error {
 // Run sends due jobs until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	// A job left "sending" by a crash may or may not have gone out.
-	s.db.Exec(`UPDATE email_outbox SET state = 'unknown', last_error = 'the dashboard stopped while sending' WHERE state = 'sending'`)
+	s.db.Exec(`UPDATE mail_outbox SET state = 'unknown', last_error = 'the dashboard stopped while sending' WHERE state = 'sending'`)
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	sweep := time.NewTicker(time.Hour)
@@ -164,7 +164,7 @@ func (s *Service) Run(ctx context.Context) {
 func (s *Service) sendDue(ctx context.Context) {
 	for range 20 {
 		var id string
-		err := s.db.QueryRow(`SELECT id FROM email_outbox WHERE state = 'scheduled' AND next_at <= ? ORDER BY next_at LIMIT 1`, s.Now().Unix()).Scan(&id)
+		err := s.db.QueryRow(`SELECT id FROM mail_outbox WHERE state = 'scheduled' AND next_at <= ? ORDER BY next_at LIMIT 1`, s.Now().Unix()).Scan(&id)
 		if err != nil {
 			return
 		}
@@ -173,14 +173,14 @@ func (s *Service) sendDue(ctx context.Context) {
 }
 
 func (s *Service) sendOne(ctx context.Context, id string) {
-	res, err := s.db.Exec(`UPDATE email_outbox SET state = 'sending', attempts = attempts + 1 WHERE id = ? AND state = 'scheduled'`, id)
+	res, err := s.db.Exec(`UPDATE mail_outbox SET state = 'sending', attempts = attempts + 1 WHERE id = ? AND state = 'scheduled'`, id)
 	if n, _ := res.RowsAffected(); err != nil || n == 0 {
 		return
 	}
 	var msgID int64
 	var sender, from, rcpts, draft string
 	var attempts int
-	s.db.QueryRow(`SELECT message_id, sender_id, from_addr, rcpts, draft_id, attempts FROM email_outbox WHERE id = ?`, id).Scan(&msgID, &sender, &from, &rcpts, &draft, &attempts)
+	s.db.QueryRow(`SELECT message_id, sender_id, from_addr, rcpts, draft_id, attempts FROM mail_outbox WHERE id = ?`, id).Scan(&msgID, &sender, &from, &rcpts, &draft, &attempts)
 	raw, err := s.rawOf(msgID)
 	if err == nil {
 		if s.Mail == nil {
@@ -194,10 +194,10 @@ func (s *Service) sendOne(ctx context.Context, id string) {
 	now := s.Now()
 	switch state, retry := classify(err, attempts); state {
 	case "accepted":
-		s.db.Exec(`UPDATE email_outbox SET state = 'accepted', accepted_at = ?, last_error = '' WHERE id = ?`, now.Unix(), id)
+		s.db.Exec(`UPDATE mail_outbox SET state = 'accepted', accepted_at = ?, last_error = '' WHERE id = ?`, now.Unix(), id)
 		var files string
-		if s.db.QueryRow(`SELECT files FROM email_drafts WHERE id = ?`, draft).Scan(&files) == nil {
-			s.db.Exec(`DELETE FROM email_drafts WHERE id = ?`, draft)
+		if s.db.QueryRow(`SELECT files FROM mail_drafts WHERE id = ?`, draft).Scan(&files) == nil {
+			s.db.Exec(`DELETE FROM mail_drafts WHERE id = ?`, draft)
 			var fs []File
 			jsonInto(files, &fs)
 			for _, f := range fs {
@@ -205,9 +205,9 @@ func (s *Service) sendOne(ctx context.Context, id string) {
 			}
 		}
 	case "scheduled":
-		s.db.Exec(`UPDATE email_outbox SET state = 'scheduled', next_at = ?, last_error = ? WHERE id = ?`, now.Add(retry).Unix(), trunc(err.Error(), 500), id)
+		s.db.Exec(`UPDATE mail_outbox SET state = 'scheduled', next_at = ?, last_error = ? WHERE id = ?`, now.Add(retry).Unix(), trunc(err.Error(), 500), id)
 	default:
-		s.db.Exec(`UPDATE email_outbox SET state = ?, last_error = ? WHERE id = ?`, state, trunc(err.Error(), 500), id)
+		s.db.Exec(`UPDATE mail_outbox SET state = ?, last_error = ? WHERE id = ?`, state, trunc(err.Error(), 500), id)
 		slog.Warn("email: sending failed", "job", id, "state", state, "err", trunc(err.Error(), 200))
 	}
 	s.changed()

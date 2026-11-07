@@ -34,7 +34,7 @@ func (s *Service) For(memberID string, owner, operator bool) Access {
 	if !operator || memberID == "" {
 		return a
 	}
-	rows, err := s.db.Query(`SELECT scope_kind, scope_id, level FROM email_grants WHERE member_id = ?`, memberID)
+	rows, err := s.db.Query(`SELECT scope_kind, scope_id, level FROM mail_grants WHERE member_id = ?`, memberID)
 	if err != nil {
 		return a
 	}
@@ -51,7 +51,7 @@ func (s *Service) For(memberID string, owner, operator bool) Access {
 	if len(a.domains)+len(a.addrs) == 0 {
 		return a
 	}
-	addrRows, err := s.db.Query(`SELECT id, domain_id, COALESCE(inbox_id, '') FROM email_addresses`)
+	addrRows, err := s.db.Query(`SELECT id, domain_id, COALESCE(inbox_id, '') FROM mail_addresses`)
 	if err != nil {
 		return a
 	}
@@ -105,7 +105,7 @@ func (a Access) mailboxFilter(col string) (string, []any) {
 // ---------- grants (owner only) ----------
 
 func (s *Service) Grants() ([]Grant, error) {
-	rows, err := s.db.Query(`SELECT member_id, scope_kind, scope_id, level FROM email_grants ORDER BY member_id, scope_kind, scope_id`)
+	rows, err := s.db.Query(`SELECT member_id, scope_kind, scope_id, level FROM mail_grants ORDER BY member_id, scope_kind, scope_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (s *Service) SetGrants(memberID, role string, gs []Grant) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM email_grants WHERE member_id = ?`, memberID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM mail_grants WHERE member_id = ?`, memberID); err != nil {
 		return err
 	}
 	for _, g := range gs {
@@ -142,14 +142,14 @@ func (s *Service) SetGrants(memberID, role string, gs []Grant) error {
 		var n int
 		switch g.ScopeKind {
 		case "domain":
-			tx.QueryRow(`SELECT COUNT(*) FROM email_domains WHERE id = ?`, g.ScopeID).Scan(&n)
+			tx.QueryRow(`SELECT COUNT(*) FROM mail_domains WHERE id = ?`, g.ScopeID).Scan(&n)
 		case "address":
-			tx.QueryRow(`SELECT COUNT(*) FROM email_addresses WHERE id = ?`, g.ScopeID).Scan(&n)
+			tx.QueryRow(`SELECT COUNT(*) FROM mail_addresses WHERE id = ?`, g.ScopeID).Scan(&n)
 		}
 		if n == 0 {
 			return valid.Error("a grant names a domain or address that does not exist")
 		}
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO email_grants (member_id, scope_kind, scope_id, level) VALUES (?, ?, ?, ?)`, memberID, g.ScopeKind, g.ScopeID, g.Level); err != nil {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO mail_grants (member_id, scope_kind, scope_id, level) VALUES (?, ?, ?, ?)`, memberID, g.ScopeKind, g.ScopeID, g.Level); err != nil {
 			return err
 		}
 	}

@@ -394,7 +394,7 @@ func TestSendUndoAndNoDoubleSend(t *testing.T) {
 		t.Fatal("network errors must be retried later")
 	}
 	// A crash mid-send becomes unknown, not a resend.
-	s.db.Exec(`UPDATE email_outbox SET state = 'sending' WHERE id = ?`, j2.ID)
+	s.db.Exec(`UPDATE mail_outbox SET state = 'sending' WHERE id = ?`, j2.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	s.Run(ctx)

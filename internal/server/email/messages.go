@@ -110,14 +110,14 @@ func (s *Service) searchSQL(q string) (string, []any) {
 			}
 			args = append(args, t.Unix())
 		case "label":
-			conds = append(conds, "m.id IN (SELECT ml.message_id FROM email_message_labels ml JOIN email_folders f ON f.id = ml.label_id WHERE f.kind = 'label' AND f.name = ? COLLATE NOCASE)")
+			conds = append(conds, "m.id IN (SELECT ml.message_id FROM mail_message_labels ml JOIN mail_folders f ON f.id = ml.label_id WHERE f.kind = 'label' AND f.name = ? COLLATE NOCASE)")
 			args = append(args, strings.Trim(val, `"`))
 		default:
 			ftsTerm("", m[0])
 		}
 	}
 	if len(fts) > 0 {
-		conds = append(conds, "m.id IN (SELECT rowid FROM email_fts WHERE email_fts MATCH ?)")
+		conds = append(conds, "m.id IN (SELECT rowid FROM mail_fts WHERE mail_fts MATCH ?)")
 		args = append(args, strings.Join(fts, " AND "))
 	}
 	return strings.Join(conds, " AND "), args
@@ -143,10 +143,10 @@ func (s *Service) List(a Access, q Query) (Page, error) {
 		return Page{}, valid.Error("unknown folder")
 	}
 	if q.Label != "" {
-		add("m.id IN (SELECT message_id FROM email_message_labels WHERE label_id = ?)", q.Label)
+		add("m.id IN (SELECT message_id FROM mail_message_labels WHERE label_id = ?)", q.Label)
 	}
 	if q.Mailbox != "" {
-		add("(m.mailbox_id = ? OR m.rcpt = (SELECT address FROM email_addresses WHERE id = ?))", q.Mailbox, q.Mailbox)
+		add("(m.mailbox_id = ? OR m.rcpt = (SELECT address FROM mail_addresses WHERE id = ?))", q.Mailbox, q.Mailbox)
 	}
 	if q.Domain != "" {
 		add("m.domain_id = ?", q.Domain)
@@ -171,8 +171,8 @@ func (s *Service) List(a Access, q Query) (Page, error) {
 	if q.Limit <= 0 || q.Limit > 100 {
 		q.Limit = 50
 	}
-	rows, err := s.db.Query(`SELECT `+msgCols+`, (SELECT COUNT(*) FROM email_messages t WHERE t.thread_id = m.thread_id AND t.folder != 'trash')
-		FROM email_messages m WHERE `+where+` ORDER BY m.received_at DESC, m.id DESC LIMIT ?`, append(args, q.Limit+1)...)
+	rows, err := s.db.Query(`SELECT `+msgCols+`, (SELECT COUNT(*) FROM mail_messages t WHERE t.thread_id = m.thread_id AND t.folder != 'trash')
+		FROM mail_messages m WHERE `+where+` ORDER BY m.received_at DESC, m.id DESC LIMIT ?`, append(args, q.Limit+1)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "fts5") {
 			return Page{}, valid.Error("that search could not be understood")
@@ -222,7 +222,7 @@ func (s *Service) addLabels(ms []Message) {
 		idx[m.ID] = i
 		ph[i], args[i] = "?", m.ID
 	}
-	rows, err := s.db.Query(`SELECT message_id, label_id FROM email_message_labels WHERE message_id IN (`+strings.Join(ph, ",")+`)`, args...)
+	rows, err := s.db.Query(`SELECT message_id, label_id FROM mail_message_labels WHERE message_id IN (`+strings.Join(ph, ",")+`)`, args...)
 	if err != nil {
 		return
 	}
@@ -248,7 +248,7 @@ func (s *Service) addJobs(ms []Message) {
 
 // Get is one message the person may read.
 func (s *Service) Get(a Access, id int64) (Message, error) {
-	m, err := scanMessage(s.db.QueryRow(`SELECT `+msgCols+` FROM email_messages m WHERE m.id = ?`, id))
+	m, err := scanMessage(s.db.QueryRow(`SELECT `+msgCols+` FROM mail_messages m WHERE m.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) || err == nil && !a.Mailbox(m.MailboxID, "read") {
 		return Message{}, ErrNotFound
 	}
@@ -272,7 +272,7 @@ type Body struct {
 
 func (s *Service) rawOf(id int64) ([]byte, error) {
 	var rel string
-	if err := s.db.QueryRow(`SELECT raw_path FROM email_messages WHERE id = ?`, id).Scan(&rel); err != nil {
+	if err := s.db.QueryRow(`SELECT raw_path FROM mail_messages WHERE id = ?`, id).Scan(&rel); err != nil {
 		return nil, ErrNotFound
 	}
 	return s.readFile(rel)
@@ -333,7 +333,7 @@ func (s *Service) Thread(a Access, threadID int64, trash bool) ([]Message, error
 	if !trash {
 		where += " AND m.folder != 'trash'"
 	}
-	rows, err := s.db.Query(`SELECT `+msgCols+` FROM email_messages m WHERE m.thread_id = ? AND `+where+` ORDER BY m.sent_at, m.id`, append([]any{threadID}, args...)...)
+	rows, err := s.db.Query(`SELECT `+msgCols+` FROM mail_messages m WHERE m.thread_id = ? AND `+where+` ORDER BY m.sent_at, m.id`, append([]any{threadID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ type Counts struct {
 func (s *Service) Counts(a Access) (Counts, error) {
 	c := Counts{Folders: map[string]int{}, Boxes: map[string]int{}}
 	where, args := a.mailboxFilter("mailbox_id")
-	rows, err := s.db.Query(`SELECT folder, mailbox_id, COUNT(*) FROM email_messages WHERE unread = 1 AND `+where+` GROUP BY folder, mailbox_id`, args...)
+	rows, err := s.db.Query(`SELECT folder, mailbox_id, COUNT(*) FROM mail_messages WHERE unread = 1 AND `+where+` GROUP BY folder, mailbox_id`, args...)
 	if err != nil {
 		return c, err
 	}
@@ -383,7 +383,7 @@ func (s *Service) Counts(a Access) (Counts, error) {
 	}
 	rows.Close()
 	dw, dargs := a.mailboxFilter("from_id")
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_drafts WHERE queued = 0 AND `+dw, dargs...).Scan(&c.Drafts)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_drafts WHERE queued = 0 AND `+dw, dargs...).Scan(&c.Drafts)
 	return c, nil
 }
 
@@ -408,7 +408,7 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 		}
 		if strings.HasPrefix(in.Folder, "f:") {
 			var n int
-			s.db.QueryRow(`SELECT COUNT(*) FROM email_folders WHERE id = ? AND kind = 'folder'`, in.Folder[2:]).Scan(&n)
+			s.db.QueryRow(`SELECT COUNT(*) FROM mail_folders WHERE id = ? AND kind = 'folder'`, in.Folder[2:]).Scan(&n)
 			if n == 0 {
 				return 0, valid.Error("no such folder")
 			}
@@ -416,7 +416,7 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 	}
 	if in.Action == "label" || in.Action == "unlabel" {
 		var n int
-		s.db.QueryRow(`SELECT COUNT(*) FROM email_folders WHERE id = ? AND kind = 'label'`, in.Label).Scan(&n)
+		s.db.QueryRow(`SELECT COUNT(*) FROM mail_folders WHERE id = ? AND kind = 'label'`, in.Label).Scan(&n)
 		if n == 0 {
 			return 0, valid.Error("no such label")
 		}
@@ -429,7 +429,7 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 	done := 0
 	for _, id := range in.IDs {
 		var box, folder, prev, from string
-		if s.db.QueryRow(`SELECT mailbox_id, folder, prev_folder, from_addr FROM email_messages WHERE id = ?`, id).Scan(&box, &folder, &prev, &from) != nil || !a.Mailbox(box, need) {
+		if s.db.QueryRow(`SELECT mailbox_id, folder, prev_folder, from_addr FROM mail_messages WHERE id = ?`, id).Scan(&box, &folder, &prev, &from) != nil || !a.Mailbox(box, need) {
 			continue // not found and not allowed look the same
 		}
 		var err error
@@ -437,7 +437,7 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 			if to == folder {
 				return
 			}
-			_, err = s.db.Exec(`UPDATE email_messages SET folder = ?, prev_folder = ?, moved_at = ? WHERE id = ?`, to, folder, now, id)
+			_, err = s.db.Exec(`UPDATE mail_messages SET folder = ?, prev_folder = ?, moved_at = ? WHERE id = ?`, to, folder, now, id)
 		}
 		back := func() string {
 			if prev == "" || prev == "trash" || prev == "spam" {
@@ -447,9 +447,9 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 		}
 		switch in.Action {
 		case "read", "unread":
-			_, err = s.db.Exec(`UPDATE email_messages SET unread = ? WHERE id = ?`, in.Action == "unread", id)
+			_, err = s.db.Exec(`UPDATE mail_messages SET unread = ? WHERE id = ?`, in.Action == "unread", id)
 		case "star", "unstar":
-			_, err = s.db.Exec(`UPDATE email_messages SET starred = ? WHERE id = ?`, in.Action == "star", id)
+			_, err = s.db.Exec(`UPDATE mail_messages SET starred = ? WHERE id = ?`, in.Action == "star", id)
 		case "move":
 			move(in.Folder)
 		case "trash":
@@ -466,9 +466,9 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 				s.AddSpamRule(SpamRule{Scope: box, Pattern: from, Action: "allow"})
 			}
 		case "label":
-			_, err = s.db.Exec(`INSERT OR IGNORE INTO email_message_labels (message_id, label_id) VALUES (?, ?)`, id, in.Label)
+			_, err = s.db.Exec(`INSERT OR IGNORE INTO mail_message_labels (message_id, label_id) VALUES (?, ?)`, id, in.Label)
 		case "unlabel":
-			_, err = s.db.Exec(`DELETE FROM email_message_labels WHERE message_id = ? AND label_id = ?`, id, in.Label)
+			_, err = s.db.Exec(`DELETE FROM mail_message_labels WHERE message_id = ? AND label_id = ?`, id, in.Label)
 		case "purge":
 			if folder != "trash" && folder != "spam" {
 				return done, valid.Error("only mail in Trash or Spam can be deleted for good")
@@ -492,11 +492,11 @@ func (s *Service) Act(a Access, in Action) (int, error) {
 func (s *Service) purge(id int64) error {
 	var rel string
 	var thread int64
-	if err := s.db.QueryRow(`SELECT raw_path, thread_id FROM email_messages WHERE id = ?`, id).Scan(&rel, &thread); err != nil {
+	if err := s.db.QueryRow(`SELECT raw_path, thread_id FROM mail_messages WHERE id = ?`, id).Scan(&rel, &thread); err != nil {
 		return nil
 	}
 	var state string
-	if s.db.QueryRow(`SELECT state FROM email_outbox WHERE message_id = ?`, id).Scan(&state) == nil && (state == "scheduled" || state == "sending") {
+	if s.db.QueryRow(`SELECT state FROM mail_outbox WHERE message_id = ?`, id).Scan(&state) == nil && (state == "scheduled" || state == "sending") {
 		return valid.Error("this message is still being sent")
 	}
 	tx, err := s.db.Begin()
@@ -504,17 +504,17 @@ func (s *Service) purge(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM email_outbox WHERE message_id = ?`, `DELETE FROM email_fts WHERE rowid = ?`, `DELETE FROM email_messages WHERE id = ?`} {
+	for _, q := range []string{`DELETE FROM mail_outbox WHERE message_id = ?`, `DELETE FROM mail_fts WHERE rowid = ?`, `DELETE FROM mail_messages WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
 		}
 	}
-	tx.Exec(`DELETE FROM email_threads WHERE id = ? AND NOT EXISTS (SELECT 1 FROM email_messages WHERE thread_id = ?)`, thread, thread)
+	tx.Exec(`DELETE FROM mail_threads WHERE id = ? AND NOT EXISTS (SELECT 1 FROM mail_messages WHERE thread_id = ?)`, thread, thread)
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE raw_path = ?`, rel).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE raw_path = ?`, rel).Scan(&n)
 	if n == 0 {
 		s.removeFile(rel)
 	}
@@ -524,7 +524,7 @@ func (s *Service) purge(id int64) error {
 // ---------- folders and labels ----------
 
 func (s *Service) Folders(a Access) ([]Folder, error) {
-	rows, err := s.db.Query(`SELECT id, kind, name, color, created_at FROM email_folders ORDER BY kind, name COLLATE NOCASE`)
+	rows, err := s.db.Query(`SELECT id, kind, name, color, created_at FROM mail_folders ORDER BY kind, name COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
 	}
@@ -538,9 +538,9 @@ func (s *Service) Folders(a Access) ([]Folder, error) {
 	where, args := a.mailboxFilter("m.mailbox_id")
 	for i, f := range out {
 		if f.Kind == "folder" {
-			s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(unread), 0) FROM email_messages m WHERE m.folder = ? AND `+where, append([]any{"f:" + f.ID}, args...)...).Scan(&out[i].Count, &out[i].Unread)
+			s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(unread), 0) FROM mail_messages m WHERE m.folder = ? AND `+where, append([]any{"f:" + f.ID}, args...)...).Scan(&out[i].Count, &out[i].Unread)
 		} else {
-			s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(m.unread), 0) FROM email_message_labels l JOIN email_messages m ON m.id = l.message_id WHERE l.label_id = ? AND `+where, append([]any{f.ID}, args...)...).Scan(&out[i].Count, &out[i].Unread)
+			s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(m.unread), 0) FROM mail_message_labels l JOIN mail_messages m ON m.id = l.message_id WHERE l.label_id = ? AND `+where, append([]any{f.ID}, args...)...).Scan(&out[i].Count, &out[i].Unread)
 		}
 	}
 	return out, nil
@@ -561,13 +561,13 @@ func (s *Service) SaveFolder(f Folder) (Folder, error) {
 			return f, valid.Error("kind must be folder or label")
 		}
 		f.ID, f.CreatedAt = newID("emf"), s.Now().Unix()
-		_, err := s.db.Exec(`INSERT INTO email_folders (id, kind, name, color, created_at) VALUES (?, ?, ?, ?, ?)`, f.ID, f.Kind, f.Name, f.Color, f.CreatedAt)
+		_, err := s.db.Exec(`INSERT INTO mail_folders (id, kind, name, color, created_at) VALUES (?, ?, ?, ?, ?)`, f.ID, f.Kind, f.Name, f.Color, f.CreatedAt)
 		if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 			return f, valid.Error("that name is taken")
 		}
 		return f, err
 	}
-	res, err := s.db.Exec(`UPDATE email_folders SET name = ?, color = ? WHERE id = ?`, f.Name, f.Color, f.ID)
+	res, err := s.db.Exec(`UPDATE mail_folders SET name = ?, color = ? WHERE id = ?`, f.Name, f.Color, f.ID)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return f, valid.Error("that name is taken")
 	}
@@ -584,8 +584,8 @@ func (s *Service) DeleteFolder(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	tx.Exec(`UPDATE email_messages SET folder = 'inbox', moved_at = ? WHERE folder = ?`, s.Now().Unix(), "f:"+id)
-	if _, err := tx.Exec(`DELETE FROM email_folders WHERE id = ?`, id); err != nil {
+	tx.Exec(`UPDATE mail_messages SET folder = 'inbox', moved_at = ? WHERE folder = ?`, s.Now().Unix(), "f:"+id)
+	if _, err := tx.Exec(`DELETE FROM mail_folders WHERE id = ?`, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -610,8 +610,8 @@ type Pending struct {
 
 func (s *Service) Usage() (Usage, error) {
 	u := Usage{Domains: map[string]int64{}, Folders: map[string]int64{}, Retain: map[string]Pending{}, Largest: []Message{}, Dir: s.dir}
-	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM email_messages`).Scan(&u.Messages, &u.Bytes)
-	rows, err := s.db.Query(`SELECT domain_id, folder, SUM(size) FROM email_messages GROUP BY domain_id, folder`)
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM mail_messages`).Scan(&u.Messages, &u.Bytes)
+	rows, err := s.db.Query(`SELECT domain_id, folder, SUM(size) FROM mail_messages GROUP BY domain_id, folder`)
 	if err != nil {
 		return u, err
 	}
@@ -626,7 +626,7 @@ func (s *Service) Usage() (Usage, error) {
 		u.Folders[f] += n
 	}
 	rows.Close()
-	lr, err := s.db.Query(`SELECT ` + msgCols + ` FROM email_messages m ORDER BY m.size DESC LIMIT 10`)
+	lr, err := s.db.Query(`SELECT ` + msgCols + ` FROM mail_messages m ORDER BY m.size DESC LIMIT 10`)
 	if err != nil {
 		return u, err
 	}
@@ -642,7 +642,7 @@ func (s *Service) Usage() (Usage, error) {
 			continue
 		}
 		var p Pending
-		s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM email_messages WHERE folder = ? AND moved_at < ?`, folder, s.Now().AddDate(0, 0, -days).Unix()).Scan(&p.Messages, &p.Bytes)
+		s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM mail_messages WHERE folder = ? AND moved_at < ?`, folder, s.Now().AddDate(0, 0, -days).Unix()).Scan(&p.Messages, &p.Bytes)
 		u.Retain[folder] = p
 	}
 	return u, nil
@@ -656,7 +656,7 @@ func (s *Service) Sweep() {
 		if days <= 0 {
 			continue
 		}
-		rows, err := s.db.Query(`SELECT id FROM email_messages WHERE folder = ? AND moved_at < ? LIMIT 500`, folder, s.Now().AddDate(0, 0, -days).Unix())
+		rows, err := s.db.Query(`SELECT id FROM mail_messages WHERE folder = ? AND moved_at < ? LIMIT 500`, folder, s.Now().AddDate(0, 0, -days).Unix())
 		if err != nil {
 			continue
 		}

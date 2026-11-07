@@ -412,7 +412,7 @@ func (s *Service) zoneFor(ctx context.Context, cl cfClient, d Domain) (string, e
 	}
 	for _, z := range zs {
 		if strings.EqualFold(z.Name, d.Name) || strings.HasSuffix(strings.ToLower(d.Name), "."+strings.ToLower(z.Name)) {
-			s.db.Exec(`UPDATE email_domains SET zone_id = ? WHERE id = ?`, z.ID, d.ID)
+			s.db.Exec(`UPDATE mail_domains SET zone_id = ? WHERE id = ?`, z.ID, d.ID)
 			return z.ID, nil
 		}
 	}

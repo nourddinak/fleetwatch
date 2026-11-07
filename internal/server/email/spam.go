@@ -119,7 +119,7 @@ func sameSite(a, b string) bool {
 // ---------- allow / block lists ----------
 
 func (s *Service) SpamRules() ([]SpamRule, error) {
-	rows, err := s.db.Query(`SELECT id, scope, pattern, action, created_at FROM email_spam_rules ORDER BY action, pattern`)
+	rows, err := s.db.Query(`SELECT id, scope, pattern, action, created_at FROM mail_spam_rules ORDER BY action, pattern`)
 	if err != nil {
 		return nil, err
 	}
@@ -147,13 +147,13 @@ func (s *Service) AddSpamRule(r SpamRule) (SpamRule, error) {
 		return r, valid.Error("action must be allow or block")
 	}
 	r.ID, r.CreatedAt = newID("esr"), s.Now().Unix()
-	_, err := s.db.Exec(`INSERT INTO email_spam_rules (id, scope, pattern, action, created_at) VALUES (?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO mail_spam_rules (id, scope, pattern, action, created_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (scope, pattern) DO UPDATE SET action = excluded.action`, r.ID, r.Scope, r.Pattern, r.Action, r.CreatedAt)
 	return r, err
 }
 
 func (s *Service) DeleteSpamRule(id string) error {
-	_, err := s.db.Exec(`DELETE FROM email_spam_rules WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM mail_spam_rules WHERE id = ?`, id)
 	return err
 }
 
@@ -161,7 +161,7 @@ func (s *Service) DeleteSpamRule(id string) error {
 // domain's, then everyone's; an address beats a domain pattern).
 func (s *Service) listed(from string, a Address) string {
 	from = strings.ToLower(from)
-	rows, err := s.db.Query(`SELECT pattern, action FROM email_spam_rules WHERE scope IN ('', ?, ?) AND pattern IN (?, ?)`, a.ID, a.DomainID, from, "@"+domainOf(from))
+	rows, err := s.db.Query(`SELECT pattern, action FROM mail_spam_rules WHERE scope IN ('', ?, ?) AND pattern IN (?, ?)`, a.ID, a.DomainID, from, "@"+domainOf(from))
 	if err != nil {
 		return ""
 	}

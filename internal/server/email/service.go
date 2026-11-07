@@ -120,7 +120,7 @@ func scanDomain(sc interface{ Scan(...any) error }) (Domain, error) {
 }
 
 func (s *Service) Domains() ([]Domain, error) {
-	rows, err := s.db.Query(`SELECT ` + domainCols + ` FROM email_domains ORDER BY name`)
+	rows, err := s.db.Query(`SELECT ` + domainCols + ` FROM mail_domains ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *Service) Domains() ([]Domain, error) {
 }
 
 func (s *Service) Domain(id string) (Domain, error) {
-	d, err := scanDomain(s.db.QueryRow(`SELECT `+domainCols+` FROM email_domains WHERE id = ?`, id))
+	d, err := scanDomain(s.db.QueryRow(`SELECT `+domainCols+` FROM mail_domains WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -151,7 +151,7 @@ func (s *Service) AddDomain(name, zoneID string) (Domain, error) {
 		return Domain{}, valid.Error("enter a domain like example.com")
 	}
 	d := Domain{ID: newID("emd"), Name: name, ZoneID: zoneID, ForwardTo: []string{}, SpamThreshold: 5, CreatedAt: s.Now().Unix()}
-	_, err := s.db.Exec(`INSERT INTO email_domains (id, name, zone_id, created_at) VALUES (?, ?, ?, ?)`, d.ID, d.Name, d.ZoneID, d.CreatedAt)
+	_, err := s.db.Exec(`INSERT INTO mail_domains (id, name, zone_id, created_at) VALUES (?, ?, ?, ?)`, d.ID, d.Name, d.ZoneID, d.CreatedAt)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return d, valid.Error(name + " is already on")
 	}
@@ -189,7 +189,7 @@ func (s *Service) UpdateDomain(id string, in DomainUpdate) (Domain, error) {
 	if len(in.SenderID) > 64 {
 		return d, valid.Error("unknown sender")
 	}
-	_, err = s.db.Exec(`UPDATE email_domains SET catch_all = ?, catch_all_to = ?, sender_id = ?, forward_to = ?, spam_threshold = ? WHERE id = ?`,
+	_, err = s.db.Exec(`UPDATE mail_domains SET catch_all = ?, catch_all_to = ?, sender_id = ?, forward_to = ?, spam_threshold = ? WHERE id = ?`,
 		in.CatchAll, in.CatchAllTo, in.SenderID, jsonList(fwd), in.SpamThreshold, id)
 	if err != nil {
 		return d, err
@@ -202,7 +202,7 @@ func (s *Service) UpdateDomain(id string, in DomainUpdate) (Domain, error) {
 // deleted as a side effect.
 func (s *Service) RemoveDomain(id string) error {
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE domain_id = ?`, id).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE domain_id = ?`, id).Scan(&n)
 	if n > 0 {
 		return valid.Error(fmt.Sprintf("this domain still has %d messages: delete them (or export them) first", n))
 	}
@@ -211,13 +211,13 @@ func (s *Service) RemoveDomain(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	tx.Exec(`DELETE FROM email_drafts WHERE from_id IN (SELECT id FROM email_addresses WHERE domain_id = ?)`, id)
-	tx.Exec(`UPDATE email_addresses SET inbox_id = NULL WHERE domain_id = ?`, id)
-	tx.Exec(`DELETE FROM email_grants WHERE (scope_kind = 'domain' AND scope_id = ?) OR (scope_kind = 'address' AND scope_id IN (SELECT id FROM email_addresses WHERE domain_id = ?))`, id, id)
-	if _, err := tx.Exec(`DELETE FROM email_addresses WHERE domain_id = ?`, id); err != nil {
+	tx.Exec(`DELETE FROM mail_drafts WHERE from_id IN (SELECT id FROM mail_addresses WHERE domain_id = ?)`, id)
+	tx.Exec(`UPDATE mail_addresses SET inbox_id = NULL WHERE domain_id = ?`, id)
+	tx.Exec(`DELETE FROM mail_grants WHERE (scope_kind = 'domain' AND scope_id = ?) OR (scope_kind = 'address' AND scope_id IN (SELECT id FROM mail_addresses WHERE domain_id = ?))`, id, id)
+	if _, err := tx.Exec(`DELETE FROM mail_addresses WHERE domain_id = ?`, id); err != nil {
 		return err
 	}
-	res, err := tx.Exec(`DELETE FROM email_domains WHERE id = ?`, id)
+	res, err := tx.Exec(`DELETE FROM mail_domains WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ func (s *Service) RemoveDomain(id string) error {
 }
 
 func (s *Service) saveChecks(id string, c Checks) {
-	s.db.Exec(`UPDATE email_domains SET checks = ?, checked_at = ? WHERE id = ?`, jsonString(c), s.Now().Unix(), id)
+	s.db.Exec(`UPDATE mail_domains SET checks = ?, checked_at = ? WHERE id = ?`, jsonString(c), s.Now().Unix(), id)
 }
 
 // ---------- addresses ----------
@@ -252,10 +252,10 @@ func scanAddress(sc interface{ Scan(...any) error }, extra ...any) (Address, err
 // Addresses lists every address with its inbox's counts.
 func (s *Service) Addresses() ([]Address, error) {
 	rows, err := s.db.Query(`SELECT ` + addrCols + `,
-		(SELECT COUNT(*) FROM email_messages m WHERE m.mailbox_id = a.id AND m.unread = 1 AND m.folder = 'inbox'),
-		(SELECT COUNT(*) FROM email_messages m WHERE m.mailbox_id = a.id),
-		(SELECT COALESCE(SUM(size), 0) FROM email_messages m WHERE m.mailbox_id = a.id)
-		FROM email_addresses a ORDER BY a.address`)
+		(SELECT COUNT(*) FROM mail_messages m WHERE m.mailbox_id = a.id AND m.unread = 1 AND m.folder = 'inbox'),
+		(SELECT COUNT(*) FROM mail_messages m WHERE m.mailbox_id = a.id),
+		(SELECT COALESCE(SUM(size), 0) FROM mail_messages m WHERE m.mailbox_id = a.id)
+		FROM mail_addresses a ORDER BY a.address`)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +275,7 @@ func (s *Service) Addresses() ([]Address, error) {
 }
 
 func (s *Service) Address(id string) (Address, error) {
-	a, err := scanAddress(s.db.QueryRow(`SELECT `+addrCols+` FROM email_addresses a WHERE a.id = ?`, id))
+	a, err := scanAddress(s.db.QueryRow(`SELECT `+addrCols+` FROM mail_addresses a WHERE a.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -283,7 +283,7 @@ func (s *Service) Address(id string) (Address, error) {
 }
 
 func (s *Service) addressByEmail(addr string) (Address, error) {
-	a, err := scanAddress(s.db.QueryRow(`SELECT `+addrCols+` FROM email_addresses a WHERE a.address = ?`, addr))
+	a, err := scanAddress(s.db.QueryRow(`SELECT `+addrCols+` FROM mail_addresses a WHERE a.address = ?`, addr))
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -352,7 +352,7 @@ func (s *Service) CreateAddress(in AddressInput) (Address, error) {
 		return Address{}, err
 	}
 	a := Address{ID: newID("ema"), DomainID: d.ID, Local: in.Local, Address: in.Local + "@" + d.Name}
-	_, err = s.db.Exec(`INSERT INTO email_addresses (id, domain_id, local, address, display_name, inbox_id, receive, send, disabled, forward_mode, forward_to, notify, signature, created_at)
+	_, err = s.db.Exec(`INSERT INTO mail_addresses (id, domain_id, local, address, display_name, inbox_id, receive, send, disabled, forward_mode, forward_to, notify, signature, created_at)
 		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`, a.ID, a.DomainID, a.Local, a.Address, in.DisplayName, in.InboxID, in.Receive, in.Send, in.Disabled,
 		in.ForwardMode, jsonList(in.ForwardTo), in.Notify, in.Signature, s.Now().Unix())
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
@@ -375,16 +375,16 @@ func (s *Service) UpdateAddress(id string, in AddressInput) (Address, error) {
 	}
 	if in.InboxID != "" {
 		var n int
-		s.db.QueryRow(`SELECT COUNT(*) FROM email_addresses WHERE inbox_id = ?`, id).Scan(&n)
+		s.db.QueryRow(`SELECT COUNT(*) FROM mail_addresses WHERE inbox_id = ?`, id).Scan(&n)
 		if n > 0 {
 			return a, valid.Error("other addresses deliver into this inbox, so it cannot become an alias")
 		}
-		s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE mailbox_id = ?`, id).Scan(&n)
+		s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE mailbox_id = ?`, id).Scan(&n)
 		if n > 0 {
 			return a, valid.Error("this address already has mail in its own inbox, so it cannot become an alias")
 		}
 	}
-	_, err = s.db.Exec(`UPDATE email_addresses SET display_name = ?, inbox_id = NULLIF(?, ''), receive = ?, send = ?, disabled = ?, forward_mode = ?, forward_to = ?, notify = ?, signature = ? WHERE id = ?`,
+	_, err = s.db.Exec(`UPDATE mail_addresses SET display_name = ?, inbox_id = NULLIF(?, ''), receive = ?, send = ?, disabled = ?, forward_mode = ?, forward_to = ?, notify = ?, signature = ? WHERE id = ?`,
 		in.DisplayName, in.InboxID, in.Receive, in.Send, in.Disabled, in.ForwardMode, jsonList(in.ForwardTo), in.Notify, in.Signature, id)
 	if err != nil {
 		return a, err
@@ -396,11 +396,11 @@ func (s *Service) UpdateAddress(id string, in AddressInput) (Address, error) {
 // DeleteAddress removes an address whose inbox is empty (disable it to keep its mail).
 func (s *Service) DeleteAddress(id string) error {
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_messages WHERE mailbox_id = ?`, id).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE mailbox_id = ?`, id).Scan(&n)
 	if n > 0 {
 		return valid.Error(fmt.Sprintf("this inbox still has %d messages: turn the address off instead, or delete its mail first", n))
 	}
-	s.db.QueryRow(`SELECT COUNT(*) FROM email_addresses WHERE inbox_id = ?`, id).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM mail_addresses WHERE inbox_id = ?`, id).Scan(&n)
 	if n > 0 {
 		return valid.Error("aliases deliver into this inbox: remove or move them first")
 	}
@@ -409,10 +409,10 @@ func (s *Service) DeleteAddress(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	tx.Exec(`DELETE FROM email_drafts WHERE from_id = ?`, id)
-	tx.Exec(`DELETE FROM email_grants WHERE scope_kind = 'address' AND scope_id = ?`, id)
-	tx.Exec(`UPDATE email_domains SET catch_all = 0, catch_all_to = '' WHERE catch_all_to = ?`, id)
-	res, err := tx.Exec(`DELETE FROM email_addresses WHERE id = ?`, id)
+	tx.Exec(`DELETE FROM mail_drafts WHERE from_id = ?`, id)
+	tx.Exec(`DELETE FROM mail_grants WHERE scope_kind = 'address' AND scope_id = ?`, id)
+	tx.Exec(`UPDATE mail_domains SET catch_all = 0, catch_all_to = '' WHERE catch_all_to = ?`, id)
+	res, err := tx.Exec(`DELETE FROM mail_addresses WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
