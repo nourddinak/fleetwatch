@@ -98,7 +98,7 @@ func (f *fakeCF) server(t *testing.T) *httptest.Server {
 		case p == "/accounts":
 			ok([]map[string]string{{"id": "acc1", "name": "Me"}})
 		case (p == "/accounts/acc1/oauth_clients" || p == "/accounts/0123456789abcdef0123456789abcdef/oauth_clients") && r.Method == "POST":
-			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes)+1+len(EmailScopes) ||
+			if body["token_endpoint_auth_method"] != "client_secret_basic" || len(body["scopes"].([]any)) != len(Scopes)+1 ||
 				!strings.HasSuffix(body["redirect_uris"].([]any)[0].(string), CallbackPath) {
 				t.Errorf("client: %v", body)
 			}
@@ -215,31 +215,11 @@ func TestCloudflare(t *testing.T) {
 		return q.Get("state")
 	}
 	// A client without the traffic permission: the sign-in starts over without it.
-	if u, err := s.RetryWithFewerScopes(start("mem_1"), "https://dash.test"); err != nil || strings.Contains(u, "analytics") || !s.AppNoAnalytics() {
+	if u, err := s.RetryWithoutAnalytics(start("mem_1"), "https://dash.test"); err != nil || strings.Contains(u, "analytics") || !s.AppNoAnalytics() {
 		t.Fatal(u, err)
 	}
 	if s.AllowAnalytics(); s.AppNoAnalytics() {
 		t.Fatal("not allowed again")
-	}
-	// A client made automatically lists the email permissions; one that refuses them
-	// (an older client) loses them after the traffic one, and the page to come back to stays.
-	stateOf := func(u string) string { pu, _ := url.Parse(u); return pu.Query().Get("state") }
-	u, err := s.SignInURLTo("https://dash.test", "owner", "#/emails?tab=settings")
-	if err != nil || !s.AppEmail() || !strings.Contains(u, "workers-scripts.write") || s.Next(stateOf(u)) != "#/emails?tab=settings" {
-		t.Fatal(u, err)
-	}
-	u, _ = s.RetryWithFewerScopes(stateOf(u), "https://dash.test")
-	if u, err = s.RetryWithFewerScopes(stateOf(u), "https://dash.test"); err != nil || s.AppEmail() || strings.Contains(u, "email-routing") || s.Next(stateOf(u)) != "#/emails?tab=settings" {
-		t.Fatal("email permissions refused:", u, err)
-	}
-	if _, err := s.RetryWithFewerScopes(stateOf(u), "https://dash.test"); err == nil {
-		t.Fatal("nothing left to drop, yet it went on")
-	}
-	if s.AllowAnalytics(); s.AllowEmail() != nil || !s.AppEmail() {
-		t.Fatal("email not allowed again")
-	}
-	if !HasEmail([]string{"zone.read", "email-routing-rule.write", "email-routing-address.write", "workers-scripts.write"}) || HasEmail([]string{"zone.read"}) {
-		t.Fatal("HasEmail")
 	}
 	state := start("mem_1")
 	if _, err := s.FinishSignIn(ctx, "bad", state); err == nil {

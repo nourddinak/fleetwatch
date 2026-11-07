@@ -68,7 +68,6 @@ Your apps show up under Discoveries a few seconds later.
 
 - [Install](docs/install.md): installer options, manual install, Caddy, environment variables, agent configuration.
 - [Operations](docs/operations.md): backups, upgrades, the security model, troubleshooting.
-- [Emails](docs/emails.md): mail on your own domains through Cloudflare Email Routing, setup, backups, limits.
 
 ## Building from source
 

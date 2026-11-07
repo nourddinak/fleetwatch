@@ -39,7 +39,6 @@ function page<M extends Record<string, any>>(load: () => Promise<M>, name: keyof
   );
 }
 const Overview = page(() => import("./pages/Overview"), "Overview");
-const Emails = page(() => import("./pages/Emails"), "Emails");
 const Servers = page(() => import("./pages/Servers"), "Servers");
 const AddServer = page(() => import("./pages/AddServer"), "AddServer");
 const ServerAgent = page(() => import("./pages/ServerDetail"), "ServerAgent");
@@ -161,7 +160,6 @@ export default function App() {
             <Route path="incidents/:id/postmortem" element={<Postmortem />} />
             <Route path="team" element={<TeamPage />} />
             <Route path="domains" element={<Domains />} />
-            <Route path="emails" element={<Emails />} />
             <Route path="uptime" element={<Uptime />} />
             <Route path="cron" element={<CronJobs />} />
             <Route path="backups" element={<Backups />} />

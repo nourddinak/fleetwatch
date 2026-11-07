@@ -149,12 +149,6 @@ func (s *server) allowed(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		}
 		return true
 	}
-	if strings.HasPrefix(p, "/api/emails/") { // mail: what the owner granted, checked by each handler
-		if sess.Role != auth.RoleOperator && p != "/api/emails/counts" {
-			return deny("Only the owner can do this.")
-		}
-		return true
-	}
 	for _, prefix := range ownerOnly {
 		if strings.HasPrefix(p, prefix) {
 			return deny("Only the owner can do this.")

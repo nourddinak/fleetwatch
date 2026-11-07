@@ -202,7 +202,7 @@ export function CloudflareSetup({ clientId, redirectUri, scopes, noAnalytics, on
     }
     setBusy(false);
   };
-  const perms = ["Zone Read", "DNS Write", "Cache Purge", "Zone Settings Write", "Firewall Services Write", "Analytics Read", "Email Routing Rules Write", "Email Routing Addresses Write", "Workers Scripts Write"];
+  const perms = ["Zone Read", "DNS Write", "Cache Purge", "Zone Settings Write", "Firewall Services Write", "Analytics Read"];
   return (
     <Card>
       <SectionTitle icon={<Cloudflare size={17} />} title="Sign in with Cloudflare"

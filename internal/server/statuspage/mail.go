@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"mime"
 	"mime/multipart"
@@ -278,36 +277,7 @@ func (m *Mailer) SendFrom(ctx context.Context, sender string, msg Mail) error {
 	if err != nil {
 		return err
 	}
-	return m.deliver(ctx, cfg, pass, cfg.From, msg.To, body)
-}
-
-// ErrMaybeSent: the connection broke while or after the message was handed over, so
-// the provider may have it. Callers must not send it again on their own.
-var ErrMaybeSent = errors.New("the provider may have accepted the message")
-
-// SendRaw sends a finished MIME message through a sender ("" = the default), with
-// from as the envelope sender (an address on the sender's verified domain).
-func (m *Mailer) SendRaw(ctx context.Context, sender, from string, rcpts []string, raw []byte) error {
-	m.mu.Lock()
-	cfg, ok := m.pick(sender)
-	m.mu.Unlock()
-	if !ok || cfg.Host == "" {
-		return valid.Error("email is not set up: add a sender in Integrations → Email")
-	}
-	pass := ""
-	if len(cfg.Sealed) > 0 {
-		p, err := m.box.Open(cfg.Sealed, "smtp.password")
-		if err != nil {
-			return valid.Error("the sender's SMTP password cannot be read: save it again")
-		}
-		pass = string(p)
-	}
-	return m.deliver(ctx, cfg, pass, from, rcpts, raw)
-}
-
-// deliver is one SMTP session.
-func (m *Mailer) deliver(ctx context.Context, cfg storedSender, pass, from string, rcpts []string, body []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second+time.Duration(len(body)>>15)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	conn, err := m.dial(ctx, addr)
@@ -341,10 +311,10 @@ func (m *Mailer) deliver(ctx context.Context, cfg storedSender, pass, from strin
 			return fmt.Errorf("SMTP sign-in failed: %w", err)
 		}
 	}
-	if err := c.Mail(from); err != nil {
+	if err := c.Mail(cfg.From); err != nil {
 		return fmt.Errorf("SMTP refused the sender: %w", err)
 	}
-	for _, to := range rcpts {
+	for _, to := range msg.To {
 		if err := c.Rcpt(to); err != nil {
 			return fmt.Errorf("SMTP refused %s: %w", to, err)
 		}
@@ -354,17 +324,12 @@ func (m *Mailer) deliver(ctx context.Context, cfg storedSender, pass, from strin
 		return err
 	}
 	if _, err := w.Write(body); err != nil {
-		return fmt.Errorf("%w: %v", ErrMaybeSent, err)
+		return err
 	}
 	if err := w.Close(); err != nil {
-		var te *textproto.Error
-		if errors.As(err, &te) { // the server answered: it refused the message
-			return fmt.Errorf("SMTP did not accept the message: %w", err)
-		}
-		return fmt.Errorf("%w: %v", ErrMaybeSent, err)
+		return fmt.Errorf("SMTP did not accept the message: %w", err)
 	}
-	c.Quit() // the message was accepted; a failed goodbye changes nothing
-	return nil
+	return c.Quit()
 }
 
 func clean(s string) string { return strings.NewReplacer("\r", " ", "\n", " ").Replace(s) }
