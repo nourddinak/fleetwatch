@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, CircleAlert, CircleHelp, Globe, Pencil, Plus, RefreshCw, Trash2, Wand2, XCircle } from "lucide-react";
 import { api, ApiError, useApi } from "../../api/client";
 import { useStore } from "../../store/store";
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, Field, Input, Modal, SectionTitle, Select, Spinner, ToggleRow } from "../ui";
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, Field, Input, LoadingState, Modal, SectionTitle, Select, Spinner, ToggleRow } from "../ui";
 import { fmtBytes } from "../DiskRescue";
 import { Editor } from "./Composer";
 import type { Address, Check, Domain, Overview } from "./data";
@@ -201,6 +201,62 @@ function AddressEditor({ domain, address, addresses, onClose, onSaved }: { domai
   );
 }
 
+export interface CFRule { id: string; enabled: boolean; address: string; action: "forward" | "worker" | "drop" | string; to: string[]; ours: boolean }
+export interface CFDomain { zoneId: string; name: string; domainId?: string; routing: "on" | "off" | "unknown"; rules: CFRule[]; catchAll?: CFRule; error?: string }
+
+const ruleTarget = (r: CFRule) => (r.ours ? "Fleetwatch" : r.action === "forward" ? r.to.join(", ") : r.action === "drop" ? "Dropped" : r.action === "worker" ? `Worker ${r.to.join(", ")}` : r.action || "—");
+
+/** A Cloudflare domain not yet used for email: its routing as Cloudflare has it. */
+function CloudflareZone({ z, busy, disabled, onAdopt }: { z: CFDomain; busy: boolean; disabled: boolean; onAdopt: () => void }) {
+  const rows = [...z.rules, ...(z.catchAll ? [{ ...z.catchAll, address: "Catch-all (any other address)" }] : [])];
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h3 className="mr-auto text-lg font-semibold">{z.name}</h3>
+        <Badge tone={z.routing === "on" ? "ok" : "neutral"} dot>Email Routing {z.routing}</Badge>
+        <Button size="sm" onClick={onAdopt} disabled={disabled}>{busy ? <Spinner size={13} /> : <Wand2 size={13} />} Use for email</Button>
+      </div>
+      {z.error ? <p className="text-xs text-warn">{z.error}</p> : rows.length === 0 ? (
+        <p className="text-sm text-muted">No routing rules in Cloudflare yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-muted">
+              <tr><th className="py-2 pr-3 font-medium">Custom address</th><th className="py-2 pr-3 font-medium">Goes to</th><th className="py-2 font-medium">Status</th></tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map((r) => (
+                <tr key={r.id + r.address} className={r.enabled ? "" : "opacity-50"}>
+                  <td className="py-2.5 pr-3 font-medium">{r.address}</td>
+                  <td className="max-w-[18rem] truncate py-2.5 pr-3 text-xs text-muted" title={ruleTarget(r)}>{ruleTarget(r)}</td>
+                  <td className="py-2.5 text-xs">{r.enabled ? <Badge tone="ok">Active</Badge> : <Badge>Off</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-muted">Use for email: these addresses are created here with the same Gmail copies, the catch-all keeps catching, and Cloudflare sends the domain's mail through Fleetwatch. The old rules are turned off, not deleted.</p>
+    </Card>
+  );
+}
+
+/** Cloudflare rules that still send some of a domain's addresses straight to Gmail. */
+function Bypass({ zone, busy, onAdopt }: { zone?: CFDomain; busy: boolean; onAdopt: (z: CFDomain) => void }) {
+  const left = zone?.rules.filter((r) => r.enabled && !r.ours) ?? [];
+  if (!left.length) return null;
+  return (
+    <div className="mt-4 rounded-2xl bg-warn-soft px-4 py-3 text-xs">
+      <div className="mb-1 font-medium text-warn">Cloudflare still routes these itself, past Fleetwatch:</div>
+      <ul className="space-y-0.5 text-muted">{left.map((r) => <li key={r.id}>{r.address} → {ruleTarget(r)}</li>)}</ul>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <Button size="sm" variant="secondary" onClick={() => onAdopt(zone!)} disabled={busy}>{busy ? <Spinner size={13} /> : <Wand2 size={13} />} Bring them in</Button>
+        <span className="text-muted">Creates them here with the same Gmail copies and turns their Cloudflare rules off (not deleted).</span>
+      </div>
+    </div>
+  );
+}
+
 export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () => void }) {
   const { toast } = useStore();
   const [adding, setAdding] = useState(false);
@@ -209,6 +265,24 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
   const [del, setDel] = useState<{ kind: "domain" | "address"; id: string; name: string } | null>(null);
   const [working, setWorking] = useState("");
   const [steps, setSteps] = useState<{ steps: string[]; error?: string } | null>(null);
+  const [cf, setCf] = useState<CFDomain[] | null>(null);
+  const [cfError, setCfError] = useState("");
+  const loadCf = () => {
+    if (!ov.owner) return;
+    api<CFDomain[]>("GET", "/api/emails/cloudflare/domains").then((x) => (setCf(x), setCfError(""))).catch((e: ApiError) => (setCf([]), setCfError(e.message)));
+  };
+  useEffect(loadCf, [ov.owner]);
+  const adopt = async (z: CFDomain) => {
+    setWorking(z.zoneId + "adopt");
+    try {
+      setSteps(await api<{ steps: string[]; error?: string }>("POST", `/api/emails/cloudflare/domains/${z.zoneId}/adopt`));
+    } catch (e) {
+      toast((e as ApiError).message, "err");
+    }
+    setWorking("");
+    reload();
+    loadCf();
+  };
 
   const check = async (d: Domain) => {
     setWorking(d.id + "check");
@@ -225,6 +299,7 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
     }
     setWorking("");
     reload();
+    loadCf();
   };
   const remove = async () => {
     if (!del) return;
@@ -241,7 +316,7 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
   return (
     <div className="space-y-6">
       <SectionTitle title="Domains & addresses" sub="Create as many addresses as you like: one Cloudflare rule per domain sends them all here." action={ov.owner && <Button onClick={() => setAdding(true)}><Plus size={15} /> Add domain</Button>} />
-      {!ov.domains.length && <EmptyState icon={<Globe size={22} />} title="No domains yet" desc={ov.owner ? "Add one of your domains, then create addresses on it." : "The owner has not shared any domain with you."} />}
+      {!ov.domains.length && !cf?.length && <EmptyState icon={<Globe size={22} />} title="No domains yet" desc={ov.owner ? "Add one of your domains, then create addresses on it." : "The owner has not shared any domain with you."} />}
       {ov.domains.map((d) => {
         const list = ov.addresses.filter((a) => a.domainId === d.id);
         return (
@@ -255,6 +330,7 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
               {ov.owner && <Button size="sm" variant="ghost" onClick={() => setDel({ kind: "domain", id: d.id, name: d.name })} aria-label={`Remove ${d.name}`}><Trash2 size={13} /></Button>}
             </div>
             {d.canManage && <Checks d={d} />}
+            {ov.owner && <Bypass zone={cf?.find((z) => z.domainId === d.id)} busy={!!working} onAdopt={adopt} />}
             <div className="mt-5 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted">
@@ -262,7 +338,7 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
                 </thead>
                 <tbody className="divide-y divide-line">
                   {list.map((a) => {
-                    const fwd = a.forwardMode === "off" ? "none" : a.forwardMode === "custom" ? listText(a.forwardTo) : "like the domain";
+                    const fwd = a.forwardMode === "off" ? "none" : a.forwardMode === "custom" ? listText(a.forwardTo) : listText(d.forwardTo) && `${listText(d.forwardTo)} (domain)`;
                     return (
                       <tr key={a.id} className={a.disabled ? "opacity-50" : ""}>
                         <td className="py-2.5 pr-3">
@@ -270,7 +346,7 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
                           <div className="text-xs text-muted">{a.displayName}{!a.receive && " · does not receive"}{!a.send && " · cannot send"}{a.disabled && " · off"}</div>
                         </td>
                         <td className="py-2.5 pr-3 text-xs text-muted">{a.inboxId ? "→ " + (ov.addresses.find((x) => x.id === a.inboxId)?.address ?? "another inbox") : "own"}</td>
-                        <td className="max-w-[14rem] truncate py-2.5 pr-3 text-xs text-muted">{a.canManage ? fwd || "none" : "—"}</td>
+                        <td className="max-w-[16rem] truncate py-2.5 pr-3 text-xs text-muted" title={fwd || undefined}>{a.canManage ? fwd || "none" : "—"}</td>
                         <td className="py-2.5 pr-3 text-xs text-muted">{a.inboxId ? "" : `${a.total} · ${fmtBytes(a.bytes)}`}{a.unread > 0 && <Badge tone="info" className="ml-2">{a.unread} new</Badge>}</td>
                         <td className="py-2.5 text-right whitespace-nowrap">
                           {a.canManage && <Button size="sm" variant="ghost" onClick={() => setEdit({ d, a })} aria-label={`Edit ${a.address}`}><Pencil size={13} /></Button>}
@@ -287,6 +363,16 @@ export function DomainsAndAddresses({ ov, reload }: { ov: Overview; reload: () =
           </Card>
         );
       })}
+      {ov.owner && cfError && <p className="text-xs text-muted">Cloudflare domains: {cfError}</p>}
+      {ov.owner && cf === null && <LoadingState label="Reading your Cloudflare domains…" />}
+      {cf && cf.some((z) => !z.domainId) && (
+        <div className="space-y-4">
+          <SectionTitle title="Your other Cloudflare domains" sub="How Cloudflare routes their mail today. Use one for email and its rules come along: each address keeps its Gmail copies, and the mail also lands here." />
+          {cf.filter((z) => !z.domainId).map((z) => (
+            <CloudflareZone key={z.zoneId} z={z} busy={working === z.zoneId + "adopt"} disabled={!!working} onAdopt={() => adopt(z)} />
+          ))}
+        </div>
+      )}
       <AddDomain open={adding} onClose={() => setAdding(false)} onAdded={reload} />
       {settings && <DomainSettings d={settings} addresses={ov.addresses} owner={ov.owner} onClose={() => setSettings(null)} onSaved={reload} />}
       {edit && <AddressEditor domain={edit.d} address={edit.a} addresses={ov.addresses} onClose={() => setEdit(null)} onSaved={reload} />}

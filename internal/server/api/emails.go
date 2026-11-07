@@ -632,6 +632,25 @@ func (s *server) emailRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"url": u})
 	}))
+	// Cloudflare's own view: every domain with its routing rules (address → Gmail).
+	mux.HandleFunc("GET /api/emails/cloudflare/domains", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
+		ds, err := E.CloudflareDomains(r.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ds)
+	}))
+	// One click: a Cloudflare domain's rules become addresses, and its mail comes here.
+	mux.HandleFunc("POST /api/emails/cloudflare/domains/{zone}/adopt", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
+		steps, err := E.Adopt(r.Context(), r.PathValue("zone"))
+		s.audit(r, "email.domain.adopt", r.PathValue("zone"), strings.Join(steps, "; "))
+		if errors.Is(err, email.ErrNotFound) {
+			failMail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"steps": steps, "error": errText(err)})
+	}))
 	// Email through the connected account: deploys the Worker, nothing pasted.
 	mux.HandleFunc("POST /api/emails/cloudflare/signin", s.ownerMail(func(w http.ResponseWriter, r *http.Request, _ auth.Session, _ email.Access) {
 		st, err := E.UseSignIn(r.Context(), s.publicURL(r))

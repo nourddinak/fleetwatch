@@ -46,7 +46,7 @@ You need:
 
    If something is missing, the page shows Cloudflare's own error message. If the sign-in expires later, the page offers **Sign in again**.
 2. Alternatively, use an API token instead (under **Or use an API token instead**), created with these permissions: Account · Workers Scripts · Edit; Account · Email Routing Addresses · Edit; Zone · Email Routing Rules · Edit; Zone · DNS · Edit; Zone · Zone · Read; Zone · Zone Settings · Edit.
-3. **Emails → Domains & addresses → Add domain:** pick the domain.
+3. **Emails → Domains & addresses** lists every domain in your Cloudflare account, with its current routing the way Cloudflare shows it (address → Gmail, catch-all). **Use for email** on a domain does steps 3–5 in one go: each Cloudflare rule becomes an address here with the same Gmail copies, a forwarding catch-all keeps catching (into an inbox here), and the old rules are turned off, not deleted, once the Worker handles the domain. **Bring them in** does the same for rules left on a domain already in use. You can also **Add domain** by hand.
 4. **Set up in Cloudflare** (on the domain). This:
    - merges `include:_spf.mx.cloudflare.net` into your SPF record (it never adds a second SPF record);
    - turns on Email Routing, which adds the MX records;

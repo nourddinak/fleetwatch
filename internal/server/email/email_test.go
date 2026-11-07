@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -591,5 +592,87 @@ func TestUseSignInDeploysWorker(t *testing.T) {
 	}
 	if st, _ := s.Cloudflare(context.Background()); !strings.Contains(st.Error, "expired") {
 		t.Fatalf("error not shown: %+v", st)
+	}
+}
+
+// Adopting a Cloudflare domain keeps what Cloudflare did: address → Gmail rules become
+// addresses with those copies, a forwarding catch-all keeps catching, and the old rules
+// are turned off (not deleted) once the Worker handles the domain.
+func TestAdoptCloudflareDomain(t *testing.T) {
+	s, _ := newSvc(t)
+	s.Resolver = fakeDNS{}
+	var mu sync.Mutex
+	var calls []string
+	var disabled map[string]any
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		key := r.Method + " " + r.URL.Path
+		calls = append(calls, key)
+		res := `{}`
+		switch key {
+		case "GET /zones":
+			res = `[{"id":"z1","name":"nashop.store","account":{"id":"acc1","name":"Me"}},{"id":"z2","name":"other.site","account":{"id":"acc1","name":"Me"}}]`
+		case "GET /zones/z1/email/routing", "GET /zones/z2/email/routing":
+			res = `{"enabled":true,"status":"ready"}`
+		case "GET /zones/z1/email/routing/rules":
+			res = `[{"id":"r1","name":"contact","enabled":true,"priority":0,"matchers":[{"type":"literal","field":"to","value":"Contact@nashop.store"}],"actions":[{"type":"forward","value":["shop@gmail.com"]}]},
+				{"id":"r2","name":"sales","enabled":true,"priority":1,"matchers":[{"type":"literal","field":"to","value":"sales@nashop.store"}],"actions":[{"type":"forward","value":["a@gmail.com","b@gmail.com"]}]}]`
+		case "GET /zones/z2/email/routing/rules", "GET /accounts/acc1/email/routing/addresses", "GET /zones/z1/dns_records":
+			res = `[]`
+		case "GET /zones/z1/email/routing/rules/catch_all":
+			res = `{"enabled":true,"matchers":[{"type":"all"}],"actions":[{"type":"forward","value":["me@gmail.com"]}]}`
+		case "GET /zones/z2/email/routing/rules/catch_all":
+			res = `{"enabled":true,"matchers":[{"type":"all"}],"actions":[{"type":"drop"}]}`
+		case "PUT /zones/z1/email/routing/rules/r1":
+			json.NewDecoder(r.Body).Decode(&disabled)
+		}
+		w.Write([]byte(`{"success":true,"result":` + res + `,"result_info":{"total_pages":1}}`))
+	}))
+	defer cf.Close()
+	s.CloudflareAPI = cf.URL
+	s.SignIn = func(context.Context) (string, string, error) { return "tok", "Me", nil }
+	if _, err := s.UseSignIn(context.Background(), "https://dash.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	ds, err := s.CloudflareDomains(context.Background())
+	if err != nil || len(ds) != 2 || len(ds[0].Rules) != 2 || ds[0].Rules[0].Address != "contact@nashop.store" || ds[0].CatchAll.To[0] != "me@gmail.com" || ds[0].Routing != "on" {
+		t.Fatalf("domains: %+v %v", ds, err)
+	}
+	steps, err := s.Adopt(context.Background(), "z1")
+	if err != nil {
+		t.Fatal(steps, err)
+	}
+	contact, err := s.addressByEmail("contact@nashop.store")
+	if err != nil || contact.ForwardMode != "custom" || contact.ForwardTo[0] != "shop@gmail.com" {
+		t.Fatalf("contact: %+v %v", contact, err)
+	}
+	if sales, _ := s.addressByEmail("sales@nashop.store"); len(sales.ForwardTo) != 2 {
+		t.Fatalf("sales: %+v", sales)
+	}
+	d, _ := s.domainByName("nashop.store")
+	if !d.CatchAll || d.CatchAllTo != contact.ID || d.ForwardTo[0] != "me@gmail.com" || d.ZoneID != "z1" {
+		t.Fatalf("domain: %+v", d)
+	}
+	if res, _ := s.Ingest(Inbound{Rcpt: "anything@nashop.store"}, msg("x@ex.com", "anything@nashop.store", "hi", "", "x")); !res.Stored || res.Forward[0] != "me@gmail.com" {
+		t.Fatalf("mail to any address must keep arriving: %+v", res)
+	}
+	if disabled == nil || disabled["enabled"] != false || disabled["matchers"] == nil {
+		t.Fatalf("the old contact rule was not turned off (kept whole): %v", disabled)
+	}
+	joined := strings.Join(calls, "\n")
+	if !strings.Contains(joined, "PUT /zones/z1/email/routing/rules/catch_all") || strings.Contains(joined, "DELETE") {
+		t.Fatalf("calls: %s", joined)
+	}
+	if _, err := s.Adopt(context.Background(), "nope"); err == nil {
+		t.Fatal("adopted a zone that is not in the account")
+	}
+	// Adopting again changes nothing and adds nothing twice.
+	if _, err := s.Adopt(context.Background(), "z1"); err != nil {
+		t.Fatal(err)
+	}
+	if as, _ := s.Addresses(); len(as) != 2 {
+		t.Fatalf("addresses after a second adopt: %d", len(as))
 	}
 }

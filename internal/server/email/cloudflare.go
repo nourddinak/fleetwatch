@@ -355,7 +355,9 @@ func (s *Service) edgeRoutes() (map[string]any, []string, error) {
 	return map[string]any{"v": 1, "d": d, "a": a}, all, nil
 }
 
+// edgeChanged: a domain or address changed. Browsers refetch; the Worker's routes follow.
 func (s *Service) edgeChanged() {
+	s.changed()
 	select {
 	case s.edgeSoon <- struct{}{}:
 	default:
@@ -528,6 +530,7 @@ func (s *Service) Setup(ctx context.Context, domainID string) ([]string, error) 
 		return did, fmt.Errorf("pointing the catch-all at the Worker: %w", err)
 	}
 	did = append(did, "sent every address of "+d.Name+" to the Worker (catch-all rule)")
+	did = append(did, s.handOver(ctx, cl, zone, c.Worker)...)
 	if dm, err := cl.txt(ctx, zone, "_dmarc."+d.Name); err == nil && len(dm) == 0 {
 		if _, err := cl.call(ctx, http.MethodPost, "/zones/"+zone+"/dns_records", map[string]any{"type": "TXT", "name": "_dmarc." + d.Name, "content": "v=DMARC1; p=none", "ttl": 1}, nil); err == nil {
 			did = append(did, "added a DMARC record (p=none: report only)")

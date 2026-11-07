@@ -28,12 +28,12 @@ type Result struct {
 }
 
 // resolve finds the address a recipient means: itself (me+anything@ is me@), or the
-// domain's catch-all.
-func (s *Service) resolve(rcpt string) (Address, Domain, string) {
+// domain's catch-all (catchAll true).
+func (s *Service) resolve(rcpt string) (a Address, d Domain, reject string, catchAll bool) {
 	rcpt = strings.ToLower(strings.TrimSpace(rcpt))
 	at := strings.LastIndexByte(rcpt, '@')
 	if at <= 0 {
-		return Address{}, Domain{}, "No such address."
+		return Address{}, Domain{}, "No such address.", false
 	}
 	tries := []string{rcpt}
 	if plus := strings.IndexByte(rcpt[:at], '+'); plus > 0 {
@@ -43,24 +43,24 @@ func (s *Service) resolve(rcpt string) (Address, Domain, string) {
 		if a, err := s.addressByEmail(t); err == nil {
 			d, _ := s.Domain(a.DomainID)
 			if a.Disabled || !a.Receive {
-				return a, d, "This address does not accept mail."
+				return a, d, "This address does not accept mail.", false
 			}
-			return a, d, ""
+			return a, d, "", false
 		}
 	}
 	var id string
 	if s.db.QueryRow(`SELECT id FROM mail_domains WHERE name = ?`, rcpt[at+1:]).Scan(&id) != nil {
-		return Address{}, Domain{}, "No such address."
+		return Address{}, Domain{}, "No such address.", false
 	}
-	d, _ := s.Domain(id)
+	d, _ = s.Domain(id)
 	if !d.CatchAll {
-		return Address{}, d, "No such address."
+		return Address{}, d, "No such address.", false
 	}
 	a, err := s.Address(d.CatchAllTo)
 	if err != nil || a.Disabled {
-		return Address{}, d, "No such address."
+		return Address{}, d, "No such address.", false
 	}
-	return a, d, ""
+	return a, d, "", true
 }
 
 // Ingest files one raw message. It returns only after the message is on disk and in
@@ -71,12 +71,15 @@ func (s *Service) Ingest(in Inbound, raw []byte) (Result, error) {
 		res.Reject = "Message too large (25 MiB at most)."
 		return res, nil
 	}
-	a, d, reject := s.resolve(in.Rcpt)
+	a, d, reject, catchAll := s.resolve(in.Rcpt)
 	if reject != "" {
 		res.Reject = reject
 		return res, nil
 	}
 	res.Forward = forwardFor(a, d)
+	if catchAll { // mail to an address that does not exist: the domain's copies (as the Worker does)
+		res.Forward = d.ForwardTo
+	}
 	sum := sha256.Sum256(raw)
 	hash := hex.EncodeToString(sum[:])
 	box := a.Mailbox()
