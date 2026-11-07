@@ -26,7 +26,6 @@ import (
 	"fleetwatch/internal/server/db"
 	"fleetwatch/internal/server/dbtool"
 	"fleetwatch/internal/server/docker"
-	"fleetwatch/internal/server/emails"
 	"fleetwatch/internal/server/fleet"
 	"fleetwatch/internal/server/incidents"
 	"fleetwatch/internal/server/live"
@@ -78,7 +77,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	appSvc.OnViews = func(id string, v []apps.View) { detector.Apps(id, v, time.Now()) }
 	srv := httptest.NewTLSServer(New(Deps{UI: ui, Version: "test", DB: d, Auth: svc, Fleet: hub, Metrics: store, Bus: bus, Apps: appSvc, AppMetrics: appStore, Logs: logStore, Commands: cmdSvc,
 		Incidents: incStore, Detector: detector, Notify: notify.New(d, box, bus), Tokens: tokens.New(d), Status: testStatus(d, incStore, hub, appSvc), Maint: maint, OnCall: testOnCall(d, incStore, svc), Mobile: testPhones(d, svc),
-		Databases: dbtool.New(), Docker: testDocker(d, box, bus), Emails: emails.NewService(d, box, nil, bus, t.TempDir())}))
+		Databases: dbtool.New(), Docker: testDocker(d, box, bus)}))
 	t.Cleanup(func() { cancel(); hub.Shutdown(); srv.Close() })
 	return srv
 }

@@ -1,7 +1,7 @@
 import { ConfirmPrompt } from "./ConfirmPrompt";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, AlarmClock, AlertOctagon, Container, Database, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Mail, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
+import { Activity, AlarmClock, AlertOctagon, Container, Database, DatabaseBackup, Bell, Boxes, Check, Gauge, Globe, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, PhoneCall, Plus, Puzzle, Radar, Radio, Rocket, ScrollText, Search, Server, Settings, ShieldCheck, Sun, Users, X } from "lucide-react";
 import { Portal } from "../pages/Portal";
 import { useStore } from "../store/store";
 import { cn } from "../utils/cn";
@@ -140,7 +140,6 @@ function Shell() {
       { to: "/applications", label: "Applications", icon: Boxes },
       { to: "/sites", label: "Sites", icon: Rocket },
       { to: "/docker", label: "Docker", icon: Container },
-      { to: "/emails", label: "Emails", icon: Mail },
       ...(owner ? [{ to: "/databases", label: "Databases", icon: Database }] : []),
       { to: "/domains", label: "Domains", icon: Globe },
       { to: "/integrations", label: "Integrations", icon: Puzzle },
